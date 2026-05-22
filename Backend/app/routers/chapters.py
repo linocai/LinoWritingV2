@@ -1,0 +1,328 @@
+from __future__ import annotations
+
+import json
+from collections.abc import Iterator
+from queue import Empty, Queue
+from threading import Thread
+
+from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+from sqlalchemy import delete, func, select
+from sqlalchemy.orm import Session
+
+from app.agents.extractor import ExtractorAgent
+from app.agents.prompt_expander import PromptExpanderAgent
+from app.agents.writer import WriterAgent
+from app.db import get_db
+from app.errors import AppError, conflict, not_found, upstream
+from app.llm.base import LLMClient, get_llm_client
+from app.llm.errors import LLMError
+from app.models.book import Book
+from app.models.chapter import Chapter
+from app.models.common import utc_now
+from app.models.timeline_event import TimelineEvent
+from app.schemas.chapter import ChapterCreate, ChapterPatch, ChapterRead, ChapterSummary
+from app.services.agent_logging import log_agent_call, now_ms
+from app.services.chapter_state import ensure_chapter_status
+from app.services.context_pack import build_expander_context, build_extractor_context, build_writer_context
+from app.services.extractor_apply import apply_extractor_output
+
+router = APIRouter(tags=["chapters"])
+KEEPALIVE_SECONDS = 15
+
+
+@router.get("/books/{book_id}/chapters")
+def list_chapters(book_id: str, db: Session = Depends(get_db)) -> dict[str, list[ChapterSummary]]:
+    _ensure_book(db, book_id)
+    chapters = db.scalars(select(Chapter).where(Chapter.book_id == book_id).order_by(Chapter.index)).all()
+    return {"items": [ChapterSummary.model_validate(chapter) for chapter in chapters]}
+
+
+@router.post("/books/{book_id}/chapters", response_model=ChapterRead, status_code=status.HTTP_201_CREATED)
+def create_chapter(book_id: str, payload: ChapterCreate, db: Session = Depends(get_db)) -> ChapterRead:
+    _ensure_book(db, book_id)
+    max_index = db.scalar(select(func.max(Chapter.index)).where(Chapter.book_id == book_id)) or 0
+    chapter = Chapter(book_id=book_id, index=max_index + 1, title=payload.title, user_prompt=payload.user_prompt)
+    db.add(chapter)
+    db.commit()
+    db.refresh(chapter)
+    return ChapterRead.model_validate(chapter)
+
+
+@router.get("/chapters/{chapter_id}", response_model=ChapterRead)
+def get_chapter(chapter_id: str, db: Session = Depends(get_db)) -> ChapterRead:
+    return ChapterRead.model_validate(_get_chapter(db, chapter_id))
+
+
+@router.patch("/chapters/{chapter_id}", response_model=ChapterRead)
+def patch_chapter(chapter_id: str, payload: ChapterPatch, db: Session = Depends(get_db)) -> ChapterRead:
+    chapter = _get_chapter(db, chapter_id)
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        if isinstance(value, BaseModel):
+            value = value.model_dump(exclude_none=True)
+        setattr(chapter, key, value)
+    chapter.updated_at = utc_now()
+    db.commit()
+    db.refresh(chapter)
+    return ChapterRead.model_validate(chapter)
+
+
+@router.delete("/chapters/{chapter_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_chapter(chapter_id: str, db: Session = Depends(get_db)) -> Response:
+    chapter = _get_chapter(db, chapter_id)
+    db.delete(chapter)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/chapters/{chapter_id}/expand", response_model=ChapterRead)
+def expand_chapter(
+    chapter_id: str,
+    force: bool = Query(default=False),
+    db: Session = Depends(get_db),
+    llm: LLMClient = Depends(get_llm_client),
+) -> ChapterRead:
+    chapter = _get_chapter(db, chapter_id)
+    if not force:
+        ensure_chapter_status(chapter, {"draft", "prompt_ready"}, "expand")
+    book = _get_book(db, chapter.book_id)
+    context = build_expander_context(db, book, chapter)
+    started = now_ms()
+    try:
+        structured_prompt = PromptExpanderAgent(llm).expand(context)
+        chapter.structured_prompt = structured_prompt
+        chapter.status = "prompt_ready"
+        chapter.updated_at = utc_now()
+        log_agent_call(
+            db,
+            chapter_id=chapter.id,
+            agent_name="expander",
+            input_data=context,
+            output_data=structured_prompt,
+            started_at=started,
+        )
+        db.commit()
+    except (LLMError, ValueError) as exc:
+        db.rollback()
+        log_agent_call(
+            db,
+            chapter_id=chapter.id,
+            agent_name="expander",
+            input_data=context,
+            started_at=started,
+            error=str(exc),
+        )
+        db.commit()
+        raise upstream(str(exc), retryable=getattr(exc, "retryable", False)) from exc
+    db.refresh(chapter)
+    return ChapterRead.model_validate(chapter)
+
+
+@router.post("/chapters/{chapter_id}/write")
+def write_chapter(
+    chapter_id: str,
+    db: Session = Depends(get_db),
+    llm: LLMClient = Depends(get_llm_client),
+) -> StreamingResponse:
+    chapter = _get_chapter(db, chapter_id)
+    ensure_chapter_status(chapter, {"prompt_ready", "draft_ready"}, "write")
+    book = _get_book(db, chapter.book_id)
+    context = build_writer_context(db, book, chapter)
+    previous_status = chapter.status
+    chapter.status = "writing"
+    chapter.updated_at = utc_now()
+    db.commit()
+
+    return StreamingResponse(
+        _write_stream(db, chapter.id, previous_status, context, llm),
+        media_type="text/event-stream",
+    )
+
+
+@router.post("/chapters/{chapter_id}/finalize")
+def finalize_chapter(
+    chapter_id: str,
+    db: Session = Depends(get_db),
+    llm: LLMClient = Depends(get_llm_client),
+) -> dict[str, object]:
+    chapter = _get_chapter(db, chapter_id)
+    ensure_chapter_status(chapter, {"draft_ready"}, "finalize")
+    book = _get_book(db, chapter.book_id)
+    context = build_extractor_context(db, book, chapter)
+    started = now_ms()
+    try:
+        extractor_output = ExtractorAgent(llm).extract(context)
+        updated_character_ids, added_event_ids = apply_extractor_output(db, chapter, extractor_output)
+        log_agent_call(
+            db,
+            chapter_id=chapter.id,
+            agent_name="extractor",
+            input_data=context,
+            output_data=extractor_output,
+            started_at=started,
+        )
+        db.commit()
+    except (LLMError, AppError, ValueError) as exc:
+        db.rollback()
+        log_agent_call(
+            db,
+            chapter_id=chapter.id,
+            agent_name="extractor",
+            input_data=context,
+            started_at=started,
+            error=str(exc),
+        )
+        db.commit()
+        if isinstance(exc, AppError):
+            raise
+        raise upstream(str(exc), retryable=getattr(exc, "retryable", False)) from exc
+    db.refresh(chapter)
+    return {
+        "chapter": ChapterRead.model_validate(chapter),
+        "updated_character_ids": updated_character_ids,
+        "added_event_ids": added_event_ids,
+    }
+
+
+@router.post("/chapters/{chapter_id}/reopen", response_model=ChapterRead)
+def reopen_chapter(chapter_id: str, db: Session = Depends(get_db)) -> ChapterRead:
+    chapter = _get_chapter(db, chapter_id)
+    ensure_chapter_status(chapter, {"finalized"}, "reopen")
+    db.execute(delete(TimelineEvent).where(TimelineEvent.chapter_id == chapter.id))
+    chapter.summary = None
+    chapter.status = "draft_ready"
+    chapter.updated_at = utc_now()
+    db.commit()
+    db.refresh(chapter)
+    return ChapterRead.model_validate(chapter)
+
+
+def _write_stream(
+    db: Session,
+    chapter_id: str,
+    previous_status: str,
+    context: dict[str, object],
+    llm: LLMClient,
+) -> Iterator[str]:
+    started = now_ms()
+    parts: list[str] = []
+    chars = 0
+    restored_or_completed = False
+    try:
+        yield _sse("started", {"chapter_id": chapter_id})
+        queue: Queue[tuple[str, object]] = Queue()
+
+        def produce_tokens() -> None:
+            try:
+                for token in WriterAgent(llm).stream(context):
+                    queue.put(("token", token))
+                queue.put(("done", None))
+            except Exception as exc:
+                queue.put(("error", exc))
+
+        Thread(target=produce_tokens, daemon=True).start()
+
+        while True:
+            try:
+                event_type, payload = queue.get(timeout=KEEPALIVE_SECONDS)
+            except Empty:
+                yield ": keepalive\n\n"
+                continue
+            if event_type == "done":
+                break
+            if event_type == "error":
+                raise payload  # type: ignore[misc]
+            token = str(payload)
+            parts.append(token)
+            chars += len(token)
+            yield _sse("token", {"text": token})
+            yield _sse("progress", {"chars": chars})
+        draft_text = "".join(parts)
+        chapter = _get_chapter(db, chapter_id)
+        chapter.draft_text = draft_text
+        chapter.status = "draft_ready"
+        chapter.updated_at = utc_now()
+        log_agent_call(
+            db,
+            chapter_id=chapter.id,
+            agent_name="writer",
+            input_data=context,
+            output_data=draft_text,
+            started_at=started,
+        )
+        db.commit()
+        db.refresh(chapter)
+        restored_or_completed = True
+        yield _sse("done", {"chapter": ChapterRead.model_validate(chapter).model_dump(mode="json")})
+    except Exception as exc:
+        db.rollback()
+        chapter = _get_chapter(db, chapter_id)
+        chapter.status = previous_status
+        chapter.updated_at = utc_now()
+        log_agent_call(
+            db,
+            chapter_id=chapter.id,
+            agent_name="writer",
+            input_data=context,
+            output_data="".join(parts) if parts else None,
+            started_at=started,
+            error=str(exc),
+        )
+        db.commit()
+        restored_or_completed = True
+        error = upstream(str(exc), retryable=getattr(exc, "retryable", True))
+        yield _sse(
+            "error",
+            {
+                "error": {
+                    "kind": error.kind,
+                    "message": error.message,
+                    "retryable": error.retryable,
+                    "details": error.details,
+                }
+            },
+        )
+    finally:
+        if not restored_or_completed:
+            db.rollback()
+            try:
+                chapter = _get_chapter(db, chapter_id)
+                if chapter.status == "writing":
+                    chapter.status = previous_status
+                    chapter.updated_at = utc_now()
+                    log_agent_call(
+                        db,
+                        chapter_id=chapter.id,
+                        agent_name="writer",
+                        input_data=context,
+                        output_data="".join(parts) if parts else None,
+                        started_at=started,
+                        error="stream cancelled before completion",
+                    )
+                    db.commit()
+            except Exception:
+                db.rollback()
+
+
+def _sse(event: str, data: dict[str, object]) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
+
+
+def _ensure_book(db: Session, book_id: str) -> None:
+    if db.get(Book, book_id) is None:
+        raise not_found("Book not found")
+
+
+def _get_book(db: Session, book_id: str) -> Book:
+    book = db.get(Book, book_id)
+    if book is None:
+        raise not_found("Book not found")
+    return book
+
+
+def _get_chapter(db: Session, chapter_id: str) -> Chapter:
+    chapter = db.get(Chapter, chapter_id)
+    if chapter is None:
+        raise not_found("Chapter not found")
+    return chapter

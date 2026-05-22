@@ -1,0 +1,57 @@
+import XCTest
+@testable import LinoWriting
+
+final class SSEClientTests: XCTestCase {
+
+    func test_parser_yieldsTokenAndDone() throws {
+        let chapterJSON = """
+        {"id":"c1","book_id":"b1","index":1,"title":null,"user_prompt":null,"structured_prompt":null,"draft_text":"全文","summary":null,"status":"draft_ready","created_at":"2026-05-22T10:00:00Z","updated_at":"2026-05-22T10:00:00Z"}
+        """
+        let stream = """
+        : keepalive\n\nevent: started\ndata: {"chapter_id":"c1"}\n\nevent: token\ndata: {"text":"hello "}\n\nevent: token\ndata: {"text":"world"}\n\nevent: progress\ndata: {"chars":11}\n\nevent: done\ndata: {"chapter": \(chapterJSON)}\n\n
+        """
+
+        let parser = SSEParser()
+        let events = parser.consume(buffer: stream)
+        // Expected: started, token, token, progress, done — keepalive skipped.
+        XCTAssertEqual(events.count, 5)
+        if case .started(let id) = events[0] { XCTAssertEqual(id, "c1") } else { XCTFail() }
+        if case .token(let t) = events[1] { XCTAssertEqual(t, "hello ") } else { XCTFail() }
+        if case .token(let t) = events[2] { XCTAssertEqual(t, "world") } else { XCTFail() }
+        if case .progress(let chars) = events[3] { XCTAssertEqual(chars, 11) } else { XCTFail() }
+        if case .done(let chapter) = events[4] { XCTAssertEqual(chapter.status, .draftReady) } else { XCTFail() }
+    }
+
+    func test_parser_handlesCRLFAndChunkedDelivery() {
+        let parser = SSEParser()
+        // First chunk: half of a message ending without blank line.
+        let part1 = "event: token\r\ndata: {\"text\":\"abc\"}"
+        let events1 = parser.consume(buffer: part1)
+        XCTAssertTrue(events1.isEmpty)
+        // Second chunk completes the message with a blank line, then starts a new one.
+        let part2 = "\r\n\r\nevent: token\r\ndata: {\"text\":\"def\"}\r\n\r\n"
+        let events2 = parser.consume(buffer: part2)
+        XCTAssertEqual(events2.count, 2)
+    }
+
+    func test_parser_ignoresUnknownEvent() {
+        let parser = SSEParser()
+        let events = parser.consume(buffer: "event: nope\ndata: {\"x\":1}\n\n")
+        XCTAssertEqual(events.count, 1)
+        if case .other(let name, _) = events[0] { XCTAssertEqual(name, "nope") }
+        else { XCTFail("expected .other") }
+    }
+
+    func test_parser_errorEvent() {
+        let parser = SSEParser()
+        let payload = """
+        {"error":{"kind":"upstream","message":"LLM 502","retryable":true}}
+        """
+        let buffer = "event: error\ndata: \(payload)\n\n"
+        let events = parser.consume(buffer: buffer)
+        XCTAssertEqual(events.count, 1)
+        if case .error(let err) = events[0] {
+            XCTAssertTrue(err.retryable)
+        } else { XCTFail("expected .error") }
+    }
+}
