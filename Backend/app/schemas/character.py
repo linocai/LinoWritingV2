@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from app.schemas.common import UtcDatetime
 
 
 class CharacterCreate(BaseModel):
@@ -29,5 +30,5 @@ class CharacterRead(BaseModel):
     role: str | None
     frozen_fields: dict[str, Any]
     live_fields: dict[str, Any]
-    created_at: datetime
-    updated_at: datetime
+    created_at: UtcDatetime
+    updated_at: UtcDatetime

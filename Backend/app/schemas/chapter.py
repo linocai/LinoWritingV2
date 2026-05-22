@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from app.schemas.common import UtcDatetime
 from app.schemas.structured_prompt import StructuredPrompt
 
 ChapterStatus = Literal["draft", "prompt_ready", "writing", "draft_ready", "finalized"]
@@ -29,7 +29,7 @@ class ChapterSummary(BaseModel):
     index: int
     title: str | None
     status: ChapterStatus
-    updated_at: datetime
+    updated_at: UtcDatetime
 
 
 class ChapterRead(BaseModel):
@@ -44,5 +44,5 @@ class ChapterRead(BaseModel):
     draft_text: str | None
     summary: str | None
     status: ChapterStatus
-    created_at: datetime
-    updated_at: datetime
+    created_at: UtcDatetime
+    updated_at: UtcDatetime

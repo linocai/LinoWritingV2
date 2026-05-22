@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime
-
 from pydantic import BaseModel, ConfigDict
+
+from app.schemas.common import UtcDatetime
 
 
 class BookCreate(BaseModel):
@@ -27,6 +27,6 @@ class BookRead(BaseModel):
     style_directive: str | None
     chapter_count: int
     character_count: int
-    created_at: datetime
-    updated_at: datetime
-    last_opened_at: datetime | None
+    created_at: UtcDatetime
+    updated_at: UtcDatetime
+    last_opened_at: UtcDatetime | None

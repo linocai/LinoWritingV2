@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
+
+from app.schemas.common import UtcDatetime
 
 TimelineEventType = Literal[
     "action",
@@ -25,7 +26,7 @@ class TimelineEventRead(BaseModel):
     chapter_index: int
     event_type: TimelineEventType
     event_text: str
-    created_at: datetime
+    created_at: UtcDatetime
 
 
 class AgentLogRead(BaseModel):
@@ -40,4 +41,4 @@ class AgentLogRead(BaseModel):
     tokens_in: int | None
     tokens_out: int | None
     error: str | None
-    created_at: datetime
+    created_at: UtcDatetime
