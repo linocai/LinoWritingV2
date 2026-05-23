@@ -47,19 +47,20 @@ class ProviderKeyRead(BaseModel):
     updated_at: UtcDatetime
 
 
-class ActiveProviderKeySummary(BaseModel):
-    """Compact summary of the active provider key for the settings endpoint."""
-
-    id: str
-    key_label: str
-    provider_hint: str | None
-    model_name: str
-    api_key: str
-
-
 class SystemSettingsRead(BaseModel):
+    """Flat shape of the active-provider-key endpoint response.
+
+    Plan §5.E.4 explicitly specifies "id + 摘要(provider_hint / key_label /
+    model_name / 末 4 位)" — flat, not nested. The previous nested shape
+    (active_provider_key: ProviderKeyRead | None) made the frontend's
+    flat Codable model fail to decode anything but the id.
+    """
+
     active_provider_key_id: str | None
-    active_provider_key: ActiveProviderKeySummary | None = None
+    key_label: str | None = None
+    provider_hint: str | None = None
+    model_name: str | None = None
+    api_key_mask: str | None = None  # "****xxxx" or None when no active key
 
 
 class ActiveProviderKeyUpdate(BaseModel):

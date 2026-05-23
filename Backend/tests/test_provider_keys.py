@@ -74,15 +74,19 @@ def test_delete_active_key_resets_active_setting(client, auth_headers):
     delete = client.delete(f"/api/v1/provider_keys/{created['id']}", headers=auth_headers)
     assert delete.status_code == 204
 
-    # Active should be reset to null
+    # Active should be reset to null. Plan §5.A.4 flat shape:
+    # the whole summary collapses to active_provider_key_id=None.
     active = client.get("/api/v1/settings/active_provider_key", headers=auth_headers)
     assert active.status_code == 200
     body = active.json()
     assert body["active_provider_key_id"] is None
-    assert body["active_provider_key"] is None
+    assert body.get("key_label") is None
+    assert body.get("api_key_mask") is None
 
 
 def test_set_active_returns_summary_with_masked_key(client, auth_headers):
+    """E-3 reviewer fix: the response is a *flat* summary, not a nested
+    {active_provider_key: {...}}. Wire field is api_key_mask, never api_key."""
     created = _create_key(client, auth_headers, api_key="abcdef-tail-LAST")
     response = client.put(
         "/api/v1/settings/active_provider_key",
@@ -92,12 +96,13 @@ def test_set_active_returns_summary_with_masked_key(client, auth_headers):
     assert response.status_code == 200
     body = response.json()
     assert body["active_provider_key_id"] == created["id"]
-    summary = body["active_provider_key"]
-    assert summary["id"] == created["id"]
-    assert summary["model_name"] == "grok-4"
-    assert summary["provider_hint"] == "xai"
-    assert summary["key_label"] == "主 Grok"
-    assert summary["api_key"] == "****LAST"
+    assert body["model_name"] == "grok-4"
+    assert body["provider_hint"] == "xai"
+    assert body["key_label"] == "主 Grok"
+    assert body["api_key_mask"] == "****LAST"
+    # Make absolutely sure the wire never carries a full key field.
+    assert "api_key" not in body
+    assert "active_provider_key" not in body
 
 
 def test_set_active_with_unknown_id_returns_404(client, auth_headers):
@@ -115,7 +120,8 @@ def test_get_active_when_unset_returns_null(client, auth_headers):
     assert response.status_code == 200
     body = response.json()
     assert body["active_provider_key_id"] is None
-    assert body["active_provider_key"] is None
+    assert body.get("key_label") is None
+    assert body.get("api_key_mask") is None
 
 
 def test_list_without_auth_returns_401(client):

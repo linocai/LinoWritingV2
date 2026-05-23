@@ -30,6 +30,7 @@ final class AppEnvironment: ObservableObject {
     private(set) lazy var chaptersStore: ChaptersStore = ChaptersStore(api: apiClient, errorBus: errorBus)
     private(set) lazy var chapterEditorStore: ChapterEditorStore = ChapterEditorStore(api: apiClient, errorBus: errorBus)
     private(set) lazy var timelineStore: TimelineStore = TimelineStore(api: apiClient, errorBus: errorBus)
+    private(set) lazy var providerKeysStore: ProviderKeysStore = ProviderKeysStore(api: apiClient, errorBus: errorBus)
 
     init(
         keychain: KeychainStore = .shared,

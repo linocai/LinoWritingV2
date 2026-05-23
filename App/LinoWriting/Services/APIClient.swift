@@ -33,6 +33,14 @@ public protocol APIClientProtocol: Sendable {
 
     // Admin
     func listAgentLogs(chapterId: String?, limit: Int) async throws -> [AgentLog]
+
+    // Provider keys (§5.E.4)
+    func listProviderKeys() async throws -> [ProviderKey]
+    func createProviderKey(_ payload: ProviderKeyCreate) async throws -> ProviderKey
+    func updateProviderKey(id: String, payload: ProviderKeyUpdate) async throws -> ProviderKey
+    func deleteProviderKey(id: String) async throws
+    func getActiveProviderKey() async throws -> ActiveProviderKeySummary
+    func setActiveProviderKey(id: String) async throws -> ActiveProviderKeySummary
 }
 
 /// Concrete URLSession-backed client.
@@ -303,6 +311,46 @@ public final class APIClient: APIClientProtocol, @unchecked Sendable {
         let req = try makeRequest(method: "GET", path: "/api/v1/admin/logs", query: q)
         let resp: ListResponse<AgentLog> = try await send(req, as: ListResponse<AgentLog>.self)
         return resp.items
+    }
+
+    // MARK: - Provider Keys (§5.E.4)
+
+    public func listProviderKeys() async throws -> [ProviderKey] {
+        let req = try makeRequest(method: "GET", path: "/api/v1/provider_keys")
+        let resp: ListResponse<ProviderKey> = try await send(req, as: ListResponse<ProviderKey>.self)
+        return resp.items
+    }
+
+    public func createProviderKey(_ payload: ProviderKeyCreate) async throws -> ProviderKey {
+        let req = try makeRequest(method: "POST",
+                                  path: "/api/v1/provider_keys",
+                                  body: body(payload))
+        return try await send(req, as: ProviderKey.self)
+    }
+
+    public func updateProviderKey(id: String, payload: ProviderKeyUpdate) async throws -> ProviderKey {
+        let req = try makeRequest(method: "PATCH",
+                                  path: "/api/v1/provider_keys/\(id)",
+                                  body: body(payload))
+        return try await send(req, as: ProviderKey.self)
+    }
+
+    public func deleteProviderKey(id: String) async throws {
+        let req = try makeRequest(method: "DELETE", path: "/api/v1/provider_keys/\(id)")
+        try await sendNoBody(req)
+    }
+
+    public func getActiveProviderKey() async throws -> ActiveProviderKeySummary {
+        let req = try makeRequest(method: "GET", path: "/api/v1/settings/active_provider_key")
+        return try await send(req, as: ActiveProviderKeySummary.self)
+    }
+
+    public func setActiveProviderKey(id: String) async throws -> ActiveProviderKeySummary {
+        let payload = ActiveProviderKeyUpdate(providerKeyId: id)
+        let req = try makeRequest(method: "PUT",
+                                  path: "/api/v1/settings/active_provider_key",
+                                  body: body(payload))
+        return try await send(req, as: ActiveProviderKeySummary.self)
     }
 }
 

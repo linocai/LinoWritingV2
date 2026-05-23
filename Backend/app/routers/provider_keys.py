@@ -10,7 +10,6 @@ from app.models.common import utc_now
 from app.models.provider_key import ProviderKey
 from app.models.system_settings import SystemSettings
 from app.schemas.provider_key import (
-    ActiveProviderKeySummary,
     ActiveProviderKeyUpdate,
     ProviderKeyCreate,
     ProviderKeyRead,
@@ -79,15 +78,12 @@ def get_active_provider_key(db: Session = Depends(get_db)) -> SystemSettingsRead
     settings_row = _get_or_create_system_settings(db)
     active_id = settings_row.active_provider_key_id
     if active_id is None:
-        return SystemSettingsRead(active_provider_key_id=None, active_provider_key=None)
+        return SystemSettingsRead(active_provider_key_id=None)
     key = db.get(ProviderKey, active_id)
     if key is None:
         # Stale FK (shouldn't normally happen, but treat as not-set).
-        return SystemSettingsRead(active_provider_key_id=None, active_provider_key=None)
-    return SystemSettingsRead(
-        active_provider_key_id=key.id,
-        active_provider_key=_to_summary(key),
-    )
+        return SystemSettingsRead(active_provider_key_id=None)
+    return _summary_for(key)
 
 
 @router.put("/settings/active_provider_key", response_model=SystemSettingsRead)
@@ -102,10 +98,7 @@ def set_active_provider_key(
     settings_row.active_provider_key_id = key.id
     settings_row.updated_at = utc_now()
     db.commit()
-    return SystemSettingsRead(
-        active_provider_key_id=key.id,
-        active_provider_key=_to_summary(key),
-    )
+    return _summary_for(key)
 
 
 def _get_provider_key(db: Session, provider_key_id: str) -> ProviderKey:
@@ -137,11 +130,16 @@ def _to_read(key: ProviderKey) -> ProviderKeyRead:
     )
 
 
-def _to_summary(key: ProviderKey) -> ActiveProviderKeySummary:
-    return ActiveProviderKeySummary(
-        id=key.id,
+def _summary_for(key: ProviderKey) -> SystemSettingsRead:
+    """Flat active-key summary (plan §5.E.4).
+
+    The renamed field ``api_key_mask`` makes it unambiguous at the wire level
+    that this value is masked (e.g. ``****1234``) and never the full key.
+    """
+    return SystemSettingsRead(
+        active_provider_key_id=key.id,
         key_label=key.key_label,
         provider_hint=key.provider_hint,
         model_name=key.model_name,
-        api_key=mask_api_key(key.api_key),
+        api_key_mask=mask_api_key(key.api_key),
     )

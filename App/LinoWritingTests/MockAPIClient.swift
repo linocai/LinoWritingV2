@@ -9,6 +9,8 @@ public final class MockAPIClient: APIClientProtocol, @unchecked Sendable {
     public var chapters: [Chapter] = []
     public var timelineEvents: [TimelineEvent] = []
     public var agentLogs: [AgentLog] = []
+    public var providerKeys: [ProviderKey] = []
+    public var activeProviderKeyId: String?
 
     public var calls: [String] = []
 
@@ -282,5 +284,92 @@ public final class MockAPIClient: APIClientProtocol, @unchecked Sendable {
         recordCall("listAgentLogs")
         try maybeThrow()
         return Array(agentLogs.prefix(limit))
+    }
+
+    // MARK: - Provider Keys
+
+    private func mask(_ apiKey: String) -> String {
+        // Match the backend's `****xxxx` masking rule (last 4 chars).
+        let tail = apiKey.suffix(4)
+        return "****\(tail)"
+    }
+
+    public func listProviderKeys() async throws -> [ProviderKey] {
+        recordCall("listProviderKeys")
+        try maybeThrow()
+        return providerKeys
+    }
+
+    public func createProviderKey(_ payload: ProviderKeyCreate) async throws -> ProviderKey {
+        recordCall("createProviderKey")
+        try maybeThrow()
+        let key = ProviderKey(
+            id: UUID().uuidString,
+            keyLabel: payload.keyLabel,
+            providerHint: payload.providerHint,
+            baseUrl: payload.baseUrl,
+            apiKey: mask(payload.apiKey),
+            modelName: payload.modelName,
+            createdAt: Date(),
+            updatedAt: Date()
+        )
+        providerKeys.append(key)
+        return key
+    }
+
+    public func updateProviderKey(id: String, payload: ProviderKeyUpdate) async throws -> ProviderKey {
+        recordCall("updateProviderKey")
+        try maybeThrow()
+        guard let idx = providerKeys.firstIndex(where: { $0.id == id }) else {
+            throw AppError.notFound("provider_key")
+        }
+        var key = providerKeys[idx]
+        if let v = payload.keyLabel { key.keyLabel = v }
+        if let v = payload.providerHint { key.providerHint = v }
+        if let v = payload.baseUrl { key.baseUrl = v }
+        if let v = payload.apiKey { key.apiKey = mask(v) }
+        if let v = payload.modelName { key.modelName = v }
+        key.updatedAt = Date()
+        providerKeys[idx] = key
+        return key
+    }
+
+    public func deleteProviderKey(id: String) async throws {
+        recordCall("deleteProviderKey")
+        try maybeThrow()
+        providerKeys.removeAll { $0.id == id }
+        if activeProviderKeyId == id { activeProviderKeyId = nil }
+    }
+
+    public func getActiveProviderKey() async throws -> ActiveProviderKeySummary {
+        recordCall("getActiveProviderKey")
+        try maybeThrow()
+        guard let id = activeProviderKeyId,
+              let key = providerKeys.first(where: { $0.id == id }) else {
+            return ActiveProviderKeySummary()
+        }
+        return ActiveProviderKeySummary(
+            activeProviderKeyId: key.id,
+            keyLabel: key.keyLabel,
+            providerHint: key.providerHint,
+            modelName: key.modelName,
+            apiKeyMask: key.apiKey
+        )
+    }
+
+    public func setActiveProviderKey(id: String) async throws -> ActiveProviderKeySummary {
+        recordCall("setActiveProviderKey")
+        try maybeThrow()
+        guard let key = providerKeys.first(where: { $0.id == id }) else {
+            throw AppError.notFound("provider_key")
+        }
+        activeProviderKeyId = id
+        return ActiveProviderKeySummary(
+            activeProviderKeyId: key.id,
+            keyLabel: key.keyLabel,
+            providerHint: key.providerHint,
+            modelName: key.modelName,
+            apiKeyMask: key.apiKey
+        )
     }
 }
