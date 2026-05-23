@@ -92,8 +92,9 @@ def client(session_factory: sessionmaker[Session]) -> Iterator[TestClient]:
         api_token=TEST_TOKEN,
         database_url="sqlite+pysqlite://",
     )
+    # v0.6+: get_llm_client is a DB-driven dependency; tests stub it directly
+    # so we never need a real ProviderKey row for the happy path.
     app.dependency_overrides[get_llm_client] = lambda: MockLLMClient()
-    app.state.llm_client = MockLLMClient()
 
     with TestClient(app) as test_client:
         yield test_client

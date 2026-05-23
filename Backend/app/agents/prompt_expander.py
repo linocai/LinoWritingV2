@@ -21,12 +21,13 @@ must_happen / must_not_happen 必须具体、可验证。
         self.llm = llm
 
     def expand(self, context: dict[str, Any]) -> dict[str, Any]:
+        # v0.6+: model selection follows the active ProviderKey's ``model_name``;
+        # the old per-agent ``model_name_fast`` override has been removed.
         result = self.llm.complete_json(
             system=self.system_prompt,
             user=json.dumps(context, ensure_ascii=False, default=str),
             schema=StructuredPrompt.model_json_schema(),
             temperature=0.4,
-            model=context.get("model_name_fast"),
         )
         prompt = StructuredPrompt.model_validate(result).model_dump(exclude_none=True)
         if not (prompt.get("chapter_goal") or "").strip():

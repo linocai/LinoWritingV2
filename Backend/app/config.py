@@ -15,7 +15,6 @@ class Settings(BaseSettings):
     grok_api_key: str | None = None
     grok_base_url: str = "https://api.x.ai/v1"
     model_name: str = "grok-4"
-    model_name_fast: str = "grok-4-mini"
 
     log_level: str = "INFO"
     cors_origins: str = Field(default="*", validation_alias="CORS_ORIGINS")

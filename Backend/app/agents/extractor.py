@@ -64,10 +64,11 @@ summary 需要 200 字内，第三人称客观叙述本章发生了什么。
         self.llm = llm
 
     def extract(self, context: dict[str, Any]) -> dict[str, Any]:
+        # v0.6+: model selection follows the active ProviderKey's ``model_name``;
+        # the old per-agent ``model_name_fast`` override has been removed.
         return self.llm.complete_json(
             system=self.system_prompt,
             user=json.dumps(context, ensure_ascii=False, default=str),
             schema=EXTRACTOR_SCHEMA,
             temperature=0.2,
-            model=context.get("model_name_fast"),
         )

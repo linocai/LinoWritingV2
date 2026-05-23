@@ -143,3 +143,66 @@ def test_patch_unknown_id_returns_404(client, auth_headers):
         json={"key_label": "x"},
     )
     assert response.status_code == 404
+
+
+def test_list_when_empty_returns_empty_items(client, auth_headers):
+    response = client.get("/api/v1/provider_keys", headers=auth_headers)
+    assert response.status_code == 200
+    assert response.json() == {"items": []}
+
+
+def test_repeated_put_same_active_id_is_idempotent(client, auth_headers):
+    created = _create_key(client, auth_headers)
+    first = client.put(
+        "/api/v1/settings/active_provider_key",
+        headers=auth_headers,
+        json={"provider_key_id": created["id"]},
+    )
+    second = client.put(
+        "/api/v1/settings/active_provider_key",
+        headers=auth_headers,
+        json={"provider_key_id": created["id"]},
+    )
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.json()["active_provider_key_id"] == created["id"]
+
+
+def test_delete_non_active_key_does_not_clear_active(client, auth_headers):
+    active = _create_key(client, auth_headers, key_label="active one")
+    other = _create_key(
+        client,
+        auth_headers,
+        key_label="bystander",
+        api_key="sk-other-OTHE",
+    )
+    # Activate the first key.
+    set_active = client.put(
+        "/api/v1/settings/active_provider_key",
+        headers=auth_headers,
+        json={"provider_key_id": active["id"]},
+    )
+    assert set_active.status_code == 200
+
+    # Delete the unrelated (non-active) key.
+    delete = client.delete(
+        f"/api/v1/provider_keys/{other['id']}",
+        headers=auth_headers,
+    )
+    assert delete.status_code == 204
+
+    # active_provider_key_id must still point at the original key.
+    current = client.get("/api/v1/settings/active_provider_key", headers=auth_headers)
+    assert current.status_code == 200
+    assert current.json()["active_provider_key_id"] == active["id"]
+
+
+def test_patch_with_empty_api_key_is_rejected(client, auth_headers):
+    created = _create_key(client, auth_headers)
+    response = client.patch(
+        f"/api/v1/provider_keys/{created['id']}",
+        headers=auth_headers,
+        json={"api_key": ""},
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["kind"] == "validation"

@@ -11,7 +11,6 @@ from app.auth import require_bearer_token
 from app.config import get_settings
 from app.db import SessionLocal
 from app.errors import install_exception_handlers
-from app.llm.grok import GrokClient
 from app.routers import admin, books, chapters, characters, health, provider_keys
 from app.services.env_provider_migration import migrate_env_provider_key
 
@@ -31,7 +30,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(title="Lino Writing v2 Backend", version="0.5.0", lifespan=_lifespan)
-    app.state.llm_client = GrokClient(settings)
+    # NB: LLM client is no longer instantiated at startup. Each request that
+    # needs LLM access now calls ``build_llm_client(db)`` via the
+    # ``get_llm_client`` dependency, which reads the active ``ProviderKey``
+    # row from the database. See app/llm/factory.py.
 
     app.add_middleware(
         CORSMiddleware,
