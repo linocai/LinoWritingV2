@@ -129,9 +129,10 @@ LinoWritingV2/
 | **B** | 字段级 dot indicator（v0.5 残留） | 🟡 粗线 | §5.B |
 | **C** | TimelineEvent 编辑（v0.5 残留） | 🟡 粗线 | §5.C |
 | **D** | Admin Log Panel UI（v0.5 残留） | 🟡 粗线 | §5.D |
-| **E** | 多模型支持（Grok 之外加 Claude / GPT 等） | 🔵 待讨论 | — |
+| **E** | 多 LLM Key 与多 provider 支持（App 内管理） | 🟢 就绪 | §5.E |
 | **F** | 章节/全书导出（markdown / txt） | 🔵 待讨论 | — |
 | **J** | 全文搜索 | 🔵 待讨论 | — |
+| **K** | 响应式布局 + 苹果风美学升级 | 🟢 就绪 | §5.K |
 
 剔除项（不进路线图）：
 - ⚫ G. 卷/章节分组
@@ -144,21 +145,41 @@ LinoWritingV2/
 
 ### 4.1 v0.6 — 规划中
 
-**目标**：待定。
+**目标**：试运营就绪版。让 app 在多窗口尺寸下美观、支持 App 内填写多家 LLM Key、能导入用户已写的章节让 Writer 学到本人文风。
 
-**清单**：（待用户从 §3 候选池勾选）
+**清单**：
 
 ```
-[ ] A
-[ ] B
-[ ] C
-[ ] D
-[ ] E
-[ ] F
-[ ] J
+[x] A — 前文导入 + 文风学习（§5.A）
+[x] E — 多 LLM Key 与多 provider 支持（§5.E）
+[x] K — 响应式布局 + 苹果风美学升级（§5.K）
+
+[ ] B / C / D / F / J — 推后到 v0.7+
 ```
 
-**Phase 拆分**：迭代清单定型后，由 planner 在此补充每个候选项的 Phase。
+**Phase 排序**：
+
+| 序号 | Phase | 依赖 | 可并行 | 说明 |
+|---|---|---|---|---|
+| 1 | **E-1** 后端 provider_keys 数据层 | — | — | 数据库基石，先打 |
+| 2 | **E-2** 后端 LLM client 工厂 + 三家 provider | E-1 | — | 所有 LLM 调用切换到 factory，per-request 实例化 |
+| 3 | **A-1** 后端 chapter import + style_samples | E-2 | — | A 需要 LLM 通路稳定（Extractor 会走 factory） |
+| 4 | **K-1** 前端响应式断点 | — | ✅ 可与 E-1/E-2/A-1 并行 | 纯前端，不碰契约 |
+| 5 | **K-2** 前端 Material + Toolbar + Window | K-1 | — | 视觉打磨 |
+| 6 | **K-3** 前端动画 + 字体 + Toast | K-2 | — | 微观打磨 |
+| 7 | **E-3** 前端 LLM Providers UI | E-2 | ✅ 可与 K-2/K-3 并行 | SettingsView 重构 |
+| 8 | **A-2** 前端 import 按钮 + Sheet | A-1 + K-2 | — | 等 toolbar 风格定型后做按钮 |
+
+**关键约束**：
+- E-2 完成前不能开始 A-1（A-1 的 import 路径要走新 factory）
+- K-1 必须先于 K-2（断点逻辑定型后再做 Material 视觉）
+- 发版前 E-3 + A-2 都必须完成（试运营要 Key 管理 UI 与导入入口）
+
+**发版同步清单**（提醒）：
+- 前端 `App/project.yml` 的 `MARKETING_VERSION` → `0.6`
+- 后端 `Backend/pyproject.toml` + `Backend/app/main.py` + `Backend/app/routers/health.py` + `Backend/tests/test_auth.py` → `0.6.0`
+- 本文档 §7 变更日志加新条目
+- git commit 标 `v0.6: …`
 
 ---
 
@@ -318,6 +339,218 @@ Alembic 迁移脚本：`add_chapter_source.py`，对存量章节回填 `'agent'`
 
 ---
 
+### 5.E 多 LLM Key 与多 provider 支持 🟢
+
+#### 5.E.1 动机
+
+- v0.5 LLM Key 在后端 `.env` 里（`GROK_API_KEY`），用户改 Key 必须 SSH 上服务器
+- 试运营场景下用户需要随时换 Key（限额、轮换、不同书用不同 provider）
+- 同时支持 Grok / Claude / OpenAI 三家，因为 Grok 还在快速迭代，单家锁定风险高
+
+#### 5.E.2 设计决策（已拍板）
+
+| 决策点 | 选择 |
+|---|---|
+| Key 存储位置 | **上传到后端数据库**（前端 SettingsView 调端点写入） |
+| 多 Key 语义 | **多 provider + 同 provider 多 Key**（二维：provider × N keys） |
+| active 选择粒度 | **全局一个 active key**（不做 Book/Agent 级别） |
+| Key 加密 | v0.6 **明文存储**（单用户私人 backend，简化）；v0.7+ 可加 KMS / Vault |
+
+#### 5.E.3 数据模型
+
+**新增表 `provider_keys`**：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `id` | UUID PK | |
+| `provider` | TEXT NOT NULL | `'grok'` \| `'claude'` \| `'openai'`，预留扩展 |
+| `key_label` | TEXT NOT NULL | 用户起的别名，如 "主 Grok"、"备用 Grok"、"Claude Sonnet" |
+| `api_key` | TEXT NOT NULL | 明文（v0.6） |
+| `base_url` | TEXT | 可选，自定义 endpoint（如代理/中转） |
+| `model_name` | TEXT NOT NULL | 该 Key 默认调用的 model（如 `grok-4`、`claude-sonnet-4-5`、`gpt-5`） |
+| `created_at` | TIMESTAMPTZ NOT NULL | |
+| `updated_at` | TIMESTAMPTZ NOT NULL | |
+
+**新增表 `system_settings`**（单行配置，未来可扩）：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `id` | INT PK (固定 1) | |
+| `active_provider_key_id` | UUID FK → provider_keys.id ON DELETE SET NULL | 当前 active key |
+| `updated_at` | TIMESTAMPTZ NOT NULL | |
+
+Alembic 迁移：`add_provider_keys_and_settings.py`。首次启动时如果 `.env` 里仍有 `GROK_API_KEY` 且 `provider_keys` 空，自动迁移成一条记录并设为 active（兼容 v0.5 部署）。
+
+#### 5.E.4 后端 API
+
+**新端点**：
+
+```
+GET    /api/v1/provider_keys             → list (api_key 返回末 4 位掩码)
+POST   /api/v1/provider_keys             → create
+PATCH  /api/v1/provider_keys/{id}        → update (label / model / base_url; api_key 可选)
+DELETE /api/v1/provider_keys/{id}        → delete (若被 active 引用则先解绑或拒绝)
+
+GET    /api/v1/settings/active_provider_key   → 当前 active key 的 id + 摘要
+PUT    /api/v1/settings/active_provider_key   → body: { provider_key_id } 设为 active
+```
+
+掩码规则：`api_key` 列表返回时仅显示 `****xxxx`（末 4 位），完整 key 仅在创建/更新请求体里传输，**永远不在响应里回传**。
+
+#### 5.E.5 LLM Client 工厂改造
+
+- `Backend/app/llm/base.py` 保持 Protocol 不变（`complete` / `complete_json` / `complete_stream`）
+- `Backend/app/llm/grok.py` 已有，重构构造函数：接收 `provider_key: ProviderKey` 实例而非 `settings`
+- 新增 `Backend/app/llm/claude.py` — Anthropic Messages API 适配
+- 新增 `Backend/app/llm/openai.py` — OpenAI Responses/Chat API 适配
+- 新增 `Backend/app/llm/factory.py`：
+  ```python
+  def build_llm_client(db: Session) -> LLMClient:
+      active_key = load_active_provider_key(db)
+      if active_key is None:
+          raise UpstreamError("no_active_llm_key")
+      match active_key.provider:
+          case "grok": return GrokClient(active_key)
+          case "claude": return ClaudeClient(active_key)
+          case "openai": return OpenAIClient(active_key)
+  ```
+- 调用方改造：原来 `request.app.state.llm_client`（startup 单例）改成 **per-request 实例化**。每个需要 LLM 的 router (`chapters/expand`、`chapters/write`、`chapters/finalize`、`chapters/import`) 注入 `db` session 后调用 `build_llm_client(db)`。
+- SSE 路径需要把 LLM client 提前实例化，避免流式响应中途读 DB。
+
+#### 5.E.6 前端变更
+
+- `App/LinoWriting/Models/ProviderKey.swift` 新增 Codable DTO
+- `App/LinoWriting/Services/APIClient.swift` 新增 6 个端点方法
+- `App/LinoWriting/Stores/AppStore.swift` 或新增 `ProviderKeysStore` 管理列表与 active 状态
+- `SettingsView.swift` 重构为 **TabView**（macOS）/ Form sections（iOS）：
+  - **Connection** tab：保留 backend URL + API token（即 v0.5 现有内容）
+  - **LLM Providers** tab：列出已有 keys（label / provider / model / 末 4 位） + 添加 / 编辑 / 删除 / 设为 active（单选 radio）
+- 新增 `ProviderKeyEditSheet`：provider 选择器、label 输入、api_key SecureField、base_url 可选、model_name 输入
+
+#### 5.E.7 Phase 拆分
+
+**Phase E-1：后端数据层**
+1. Alembic 迁移 `provider_keys` + `system_settings`
+2. SQLAlchemy 模型 + Pydantic schemas
+3. CRUD endpoints + active key 端点
+4. `.env` 兼容性迁移（首次启动自动导入 `GROK_API_KEY`）
+5. pytest 覆盖：CRUD / 掩码 / 删除 active 行为 / .env 迁移
+
+**Phase E-2：后端 LLM 工厂**
+1. `llm/factory.py` 与 per-request 实例化
+2. 重构 GrokClient 构造签名
+3. 新增 ClaudeClient（依赖 `anthropic` Python SDK，pyproject 加依赖）
+4. 新增 OpenAIClient（依赖 `openai` Python SDK）
+5. 所有调用方（routers/chapters.py 等）切换到 factory
+6. pytest 覆盖：三家 provider 的 mock client 都能跑通 expand/write/extract 路径
+
+**Phase E-3：前端 UI**
+1. APIClient + Store + Models
+2. SettingsView 重构为 Tab
+3. ProviderKeyEditSheet + 列表 UI
+4. XCTest 覆盖：store 层 CRUD + active 切换
+
+---
+
+### 5.K 响应式布局 + 苹果风美学升级 🟢
+
+#### 5.K.1 动机
+
+v0.5 baseline 审计结论：
+- 窗口最小 1000×640，缩到 1100-1300 区间挤得难看
+- 全栈零 Material，无景深，纯不透明色
+- 全 app 仅 2 处动画，状态切换硬切
+- Toolbar 是裸 ToolbarItem，无编辑器风格
+- 字体全 system 默认，没有"写作工具"调性
+
+试运营前必须让 app 在不同窗口尺寸下都美观，并具备同类专业写作工具（Pages / Bear / Ulysses）的视觉品质。
+
+#### 5.K.2 设计清单（已拍板）
+
+| 维度 | v0.5 | v0.6 目标 |
+|---|---|---|
+| 窗口最小尺寸 | 1000×640 | **880×580** |
+| 三栏列宽 | 固定 sidebar 320 / detail 480 | 弹性区间 + 断点折叠 |
+| Material | 无 | Sidebar `.regularMaterial`、RightPanel `.thinMaterial` |
+| Toolbar | 裸 ToolbarItem | `.toolbarRole(.editor)` + `.toolbarBackground(.automatic, .visible)` |
+| 动画 | 2 处 | 全局 `.animation(.smooth, value:)` + 视图切换 `.transition` |
+| 字体 | 全 system sans | 章节正文可在 Settings 切 sans/serif（默认 serif） |
+| Window style | 默认 | `.windowToolbarStyle(.unifiedCompact(showsTitle: false))` |
+| Hover | 无 | macOS pointer hover 抬升 + shadow 加深 |
+| ErrorBanner | 整条红色横幅 | 右下角 Toast + `.thinMaterial` 圆角胶囊 |
+
+#### 5.K.3 响应式断点
+
+```
+窗口宽度        Sidebar      Editor       RightPanel
+≥ 1100         展开          展开          展开
+800 ~ 1099     展开          展开          折叠成右抽屉（toolbar 按钮唤起 sheet）
+< 800          折叠成菜单     展开          折叠成右抽屉
+```
+
+实现要点：
+- `WorkspaceView` 使用 `GeometryReader` 监听容器宽度（或 `@Environment(\.horizontalSizeClass)` 在 iOS 上）
+- 折叠后保留状态：用户再放大窗口时自动展开
+- iOS 已有的 sheet 模式可直接复用（`RightPanel` 抽屉化）
+- 列宽改为 `.navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 360)` 给 Sidebar 更宽容；Editor 不设 max；RightPanel `min: 300, ideal: 340, max: 460`
+
+#### 5.K.4 美学具体改动
+
+**Material 层化**
+- `Sidebar` (`ChapterListView`)：`.background(.regularMaterial)`
+- `RightPanel` (`RightPanelView`)：`.background(.thinMaterial)`
+- 主编辑区：保持窗口默认背景（让 Material 形成对比）
+- 章节卡 / 角色卡：`.background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))`
+
+**Toolbar**
+- `WorkspaceView`：`.toolbarRole(.editor)` + `.toolbarBackground(.automatic)` 让 toolbar 随滚动渐变出实底
+- 章节编辑器内的"展开提纲"、"导入文本"、"finalize"按钮统一改 `.buttonStyle(.bordered)` + SF Symbol prefix
+
+**Window style**（macOS only）
+- `LinoWritingApp.swift`：`.windowToolbarStyle(.unifiedCompact(showsTitle: false))` 让标题栏与 toolbar 融合
+- `.windowResizability(.contentMinSize)` 配合 `.frame(minWidth: 880, minHeight: 580)`
+
+**全局动画**
+- ChapterEditor 状态切换：`.animation(.smooth(duration: 0.35), value: chapter.status)`
+- 章节切换：`.transition(.asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity), removal: .opacity))`
+- StatusBadge：`.contentTransition(.numericText())` 让状态文字过渡平滑
+
+**字体**
+- `Settings` 加 `editorFontDesign: 'sans' | 'serif'`（默认 serif）
+- Step3_DraftView 与正文区域用 `.font(.system(.body, design: editorFontDesign == .serif ? .serif : .default))`
+- 标题保持 sans
+
+**Toast 错误条**
+- 新建 `Views/Components/Toast.swift`：右下角浮窗，`.thinMaterial` + RoundedRectangle 16pt 圆角
+- ErrorBanner 重构为 Toast 形态（保留 3s 自动消失 / 401 长留逻辑）
+
+**Hover / Press**
+- BookCard / ChapterListView 行：`.onHover { isHovered = $0 }` + 抬升 + shadow
+- `.pointerStyle(.link)` 让光标变指针手势（macOS 14+）
+
+#### 5.K.5 Phase 拆分
+
+**Phase K-1：响应式断点**
+1. 降窗口最小到 880×580，列宽改弹性
+2. WorkspaceView 加 width-based 折叠逻辑（< 1100 RightPanel 抽屉、< 800 Sidebar 菜单）
+3. 复用 iOS sheet 实现做 macOS 抽屉
+4. XCTest 不强求（UI 改动），但人工验证 6 个窗口尺寸点：880 / 1000 / 1100 / 1280 / 1440 / 1920
+
+**Phase K-2：Material + Toolbar + Window**
+1. Sidebar / RightPanel / 卡片 Material 层化
+2. `.toolbarRole(.editor)` + `.toolbarBackground` 全面套
+3. `.windowToolbarStyle(.unifiedCompact)` + `.windowResizability(.contentMinSize)`
+4. Hover / Press 微交互
+5. ErrorBanner 重构为 Toast
+
+**Phase K-3：动画 + 字体**
+1. 全局 `.animation(.smooth, value:)` 套关键状态字段
+2. 章节切换 transition
+3. Settings 加 `editorFontDesign` 选项 + Step3_DraftView / 正文区切换实现
+4. StatusBadge contentTransition
+
+---
+
 ## 6. 历史文档索引
 
 | 文件 | 用途 | 状态 |
@@ -335,3 +568,4 @@ Alembic 迁移脚本：`add_chapter_source.py`，对存量章节回填 `'agent'`
 | 日期 | 文档版本 | 变更摘要 |
 |---|---|---|
 | 2026-05-23 | v0.6-draft | 初版。从双契约工作流收口为 PROJECT_PLAN 单一行动依据；导入 + 文风学习方案落 §5.A；候选池建立。 |
+| 2026-05-23 | v0.6-draft | 追加 §5.E（多 LLM Key + 多 provider，App 内管理）与 §5.K（响应式布局 + 苹果风美学）详案。v0.6 迭代清单定型为 A + E + K，Phase 排序 + 并行关系落 §4.1。 |
