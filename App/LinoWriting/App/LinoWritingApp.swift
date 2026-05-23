@@ -16,9 +16,10 @@ struct LinoWritingApp: App {
                 .environmentObject(environment.chapterEditorStore)
                 .environmentObject(environment.timelineStore)
                 .environmentObject(environment.errorBus)
-                .frame(minWidth: 1000, minHeight: 640)
+                .frame(minWidth: 880, minHeight: 580)
         }
         #if os(macOS)
+        .windowResizability(.contentMinSize)
         .commands {
             CommandGroup(replacing: .appSettings) {
                 Button("设置...") { environment.appStore.showSettings = true }
