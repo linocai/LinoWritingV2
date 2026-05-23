@@ -46,8 +46,13 @@ public struct WorkspaceView: View {
 
     @ViewBuilder
     private func macOSLayout(width: CGFloat) -> some View {
-        let showRightPanelInline = width >= Self.wideBreakpoint
-        let showSidebarInline = width >= Self.mediumBreakpoint
+        // K-1 follow-up (🟡 1): on the first frame `GeometryReader` may report
+        // width == 0, which would briefly classify the layout as narrow and
+        // collapse the sidebar. Treat zero/negative width as "still measuring"
+        // and assume the wide layout to avoid the flicker.
+        let resolvedWidth = width > 0 ? width : Self.wideBreakpoint
+        let showRightPanelInline = resolvedWidth >= Self.wideBreakpoint
+        let showSidebarInline = resolvedWidth >= Self.mediumBreakpoint
 
         Group {
             if showRightPanelInline {
@@ -68,24 +73,40 @@ public struct WorkspaceView: View {
                 columnVisibility = .all
             } else {
                 // Narrow layout — collapse the sidebar; sheet button takes over.
+                // (K-1 follow-up 🟡 4: with width < mediumBreakpoint we force
+                //  `.detailOnly` so the user cannot drag the sidebar edge open.
+                //  NavigationSplitView still owns the binding, but width-based
+                //  onChange will keep snapping it back if dragged.)
                 columnVisibility = .detailOnly
             }
         }
         .onAppear {
             // Establish the initial column visibility for the current width
-            // (onChange does not fire on first render).
-            columnVisibility = showSidebarInline ? .all : .detailOnly
+            // (onChange does not fire on first render). Skip when width is
+            // not yet measured — the first real onChange will set it.
+            if width > 0 {
+                columnVisibility = showSidebarInline ? .all : .detailOnly
+            }
         }
+        // Sheet dismiss is safe because all in-sheet editing (chapter list
+        // selection, right-panel character/timeline/summary edits) is
+        // auto-saved by the underlying stores. There is no draft buffer that
+        // would be lost when the sheet closes. (K-1 follow-up 🟡 2.)
         .sheet(isPresented: $showingSidebarSheet) {
             sidebarSheet
+                // K-1 follow-up (🟡 3): dismiss the sidebar sheet when the
+                // user picks a chapter from inside it. Scoping the onChange
+                // to the sheet body keeps the dismiss semantics local rather
+                // than entangled with the global selection listener below.
+                .onChange(of: chaptersStore.selectedChapterId) { _, _ in
+                    showingSidebarSheet = false
+                }
         }
         .sheet(isPresented: $showingRightPanelSheetMac) {
             rightPanelSheet
         }
         .onChange(of: chaptersStore.selectedChapterId) { _, newId in
             if let id = newId { Task { await chapterEditorStore.load(chapterId: id) } }
-            // Picking a chapter from the sidebar sheet should close it.
-            if showingSidebarSheet { showingSidebarSheet = false }
         }
         .onChange(of: chapterEditorStore.chapter?.id) { _, _ in
             updateTimelineSelection()
@@ -106,6 +127,8 @@ public struct WorkspaceView: View {
         .navigationSplitViewStyle(.balanced)
         .navigationTitle(book.title)
         .toolbar { commonToolbar(showSidebarInline: true, showRightPanelInline: true) }
+        .toolbarRole(.editor)
+        .toolbarBackground(.automatic, for: .windowToolbar)
     }
 
     /// Width < 1100. Right panel is drawer-only. When `showSidebarInline` is
@@ -122,6 +145,8 @@ public struct WorkspaceView: View {
         .toolbar {
             commonToolbar(showSidebarInline: showSidebarInline, showRightPanelInline: false)
         }
+        .toolbarRole(.editor)
+        .toolbarBackground(.automatic, for: .windowToolbar)
     }
 
     @ToolbarContentBuilder
@@ -214,6 +239,8 @@ public struct WorkspaceView: View {
             .sheet(isPresented: $showingRightPanel) {
                 RightPanelView(tab: $rightPanelTab).padding()
             }
+            .toolbarRole(.editor)
+            .toolbarBackground(.automatic, for: .navigationBar)
         }
         .onChange(of: chaptersStore.selectedChapterId) { _, newId in
             if let id = newId { Task { await chapterEditorStore.load(chapterId: id) } }

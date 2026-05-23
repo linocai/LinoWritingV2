@@ -41,6 +41,7 @@ public struct RightPanelView: View {
             Divider()
             content
         }
+        .background(.thinMaterial)
     }
 
     @ViewBuilder

@@ -70,7 +70,7 @@ LinoWriting/
 - ✓ `TimelineTabView`（v0.5 只读）
 - ✓ `SummariesTabView`（已完成章节摘要列表，点击跳转）
 - ✓ `WorldSettingTabView`（双 markdown 文本框 + 失焦保存）
-- ✓ `ErrorBanner` 全局错误条，3s 自动消失，401 长留
+- ✓ `Toast` 右下角胶囊（`.thinMaterial`），3s 自动消失，401 长留
 
 ## 已对接端点（API contract §3.2）
 

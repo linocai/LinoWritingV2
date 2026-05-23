@@ -35,31 +35,51 @@ public struct ChapterToolbar: View {
     private var primaryActionButtons: some View {
         switch chapter.status {
         case .draft:
-            Button("扩写", action: expand)
-                .buttonStyle(.borderedProminent)
-                .disabled(chapterEditorStore.isExpanding || (chapter.userPrompt ?? "").isEmpty)
+            Button(action: expand) {
+                Label("展开提纲", systemImage: "wand.and.stars")
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(chapterEditorStore.isExpanding || (chapter.userPrompt ?? "").isEmpty)
         case .promptReady:
             HStack(spacing: 6) {
-                Button("重新扩写") { Task { _ = await chapterEditorStore.expand(force: true); refreshList() } }
-                    .buttonStyle(.bordered)
-                Button("写作", action: startWriting)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(chapter.structuredPrompt?.chapterGoal.isEmpty != false)
+                Button {
+                    Task { _ = await chapterEditorStore.expand(force: true); refreshList() }
+                } label: {
+                    Label("重新展开", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.bordered)
+                Button(action: startWriting) {
+                    Label("写作", systemImage: "pencil.line")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(chapter.structuredPrompt?.chapterGoal.isEmpty != false)
             }
         case .writing:
-            Button("取消写作") { chapterEditorStore.cancelStream() }
-                .buttonStyle(.bordered)
+            Button {
+                chapterEditorStore.cancelStream()
+            } label: {
+                Label("取消写作", systemImage: "stop.circle")
+            }
+            .buttonStyle(.bordered)
         case .draftReady:
             HStack(spacing: 6) {
-                Button("重新生成", action: startWriting)
-                    .buttonStyle(.bordered)
-                Button("完成", action: finalize)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(chapterEditorStore.isFinalizing)
+                Button(action: startWriting) {
+                    Label("重新生成", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.bordered)
+                Button(action: finalize) {
+                    Label("完成", systemImage: "checkmark.seal")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(chapterEditorStore.isFinalizing)
             }
         case .finalized:
-            Button("重新打开") { Task { _ = await chapterEditorStore.reopen(); refreshList() } }
-                .buttonStyle(.bordered)
+            Button {
+                Task { _ = await chapterEditorStore.reopen(); refreshList() }
+            } label: {
+                Label("重新打开", systemImage: "arrow.uturn.backward")
+            }
+            .buttonStyle(.bordered)
         }
     }
 

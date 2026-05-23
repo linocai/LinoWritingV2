@@ -95,9 +95,9 @@ public struct TimelineTabView: View {
             Text(event.eventText)
                 .font(.callout)
         }
-        .padding(10)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
     }
 
     private func initializeIfNeeded() {

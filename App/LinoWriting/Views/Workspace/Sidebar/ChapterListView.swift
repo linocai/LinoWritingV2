@@ -5,6 +5,7 @@ public struct ChapterListView: View {
     @EnvironmentObject var chapterEditorStore: ChapterEditorStore
 
     @State private var pendingDeleteId: String?
+    @State private var hoveredChapterId: String?
 
     public init() {}
 
@@ -16,6 +17,7 @@ public struct ChapterListView: View {
             Divider()
             footer
         }
+        .background(.regularMaterial)
         .sheet(isPresented: $chaptersStore.showNewChapterSheet) {
             NewChapterSheet()
         }
@@ -59,7 +61,8 @@ public struct ChapterListView: View {
     }
 
     private func row(chapter: ChapterSummary) -> some View {
-        HStack(spacing: 6) {
+        let isHovered = hoveredChapterId == chapter.id
+        return HStack(spacing: 6) {
             Text("第 \(chapter.index) 章")
                 .font(.callout.weight(.medium))
                 .foregroundStyle(.primary)
@@ -75,6 +78,16 @@ public struct ChapterListView: View {
             StatusBadge(chapter.status)
         }
         .padding(.vertical, 2)
+        .padding(.horizontal, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(isHovered ? Color.primary.opacity(0.06) : Color.clear)
+        )
+        #if os(macOS)
+        .onHover { hovering in
+            hoveredChapterId = hovering ? chapter.id : (hoveredChapterId == chapter.id ? nil : hoveredChapterId)
+        }
+        #endif
     }
 
     private var footer: some View {

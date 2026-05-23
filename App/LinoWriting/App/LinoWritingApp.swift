@@ -16,10 +16,18 @@ struct LinoWritingApp: App {
                 .environmentObject(environment.chapterEditorStore)
                 .environmentObject(environment.timelineStore)
                 .environmentObject(environment.errorBus)
+                // K-1 follow-up (🟡 5): window-wide minimum size kept here
+                // for the macOS window resizer (`.windowResizability` reads
+                // it). The shelf can present itself at narrower widths than
+                // the workspace; future work may push this minimum into
+                // `WorkspaceView` only and shrink the shelf minimum, but
+                // moving it requires `.windowResizability(.contentSize)`
+                // semantics changes that are out of K-2 scope.
                 .frame(minWidth: 880, minHeight: 580)
         }
         #if os(macOS)
         .windowResizability(.contentMinSize)
+        .windowToolbarStyle(.unifiedCompact(showsTitle: false))
         .commands {
             CommandGroup(replacing: .appSettings) {
                 Button("设置...") { environment.appStore.showSettings = true }

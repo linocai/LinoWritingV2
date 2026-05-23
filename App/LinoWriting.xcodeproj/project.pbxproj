@@ -26,8 +26,8 @@
 		42F8E9AF29895D7FD6FCFF5D /* InlineEditableDict.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8AC4B715D37906D4775007F1 /* InlineEditableDict.swift */; };
 		47F95D1C18E926236771490B /* WorldSettingTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7F462605433D42F3CFEB77E /* WorldSettingTabView.swift */; };
 		4B89292096EB5FBC1F0BC910 /* TimelineStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45916ED6DA845B318F084239 /* TimelineStore.swift */; };
+		52625E1EB9F616610E33FE33 /* Toast.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B54D55130EA315C7EE9BDD3 /* Toast.swift */; };
 		5A80C721F1724D63BC8B3B48 /* AppStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 995F5BDA6A5D1274715E1DC4 /* AppStore.swift */; };
-		674390D3819C608E0F0A3C14 /* ErrorBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12D8FFA053DD3CFADCBD4B23 /* ErrorBanner.swift */; };
 		6BE988D9030B67E4CBE9B65A /* InlineEditableText.swift in Sources */ = {isa = PBXBuildFile; fileRef = D06E847EE4E2FD95F326E922 /* InlineEditableText.swift */; };
 		6C7AE12D238C23EF8E9C9244 /* SSEClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E1C91690D492CF7A7B18086 /* SSEClient.swift */; };
 		722CC4BBD3EB02C07F74556F /* SSEClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF097B90043258DA067B33D7 /* SSEClientTests.swift */; };
@@ -79,7 +79,6 @@
 /* Begin PBXFileReference section */
 		00014DE449CF5813785CAAAE /* Settings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Settings.swift; sourceTree = "<group>"; };
 		0CA8641AEBD078362C13CFEC /* NewChapterSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewChapterSheet.swift; sourceTree = "<group>"; };
-		12D8FFA053DD3CFADCBD4B23 /* ErrorBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ErrorBanner.swift; sourceTree = "<group>"; };
 		12E0898A481E7BE65AB535C4 /* InlineEditableTags.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineEditableTags.swift; sourceTree = "<group>"; };
 		1CA7A47A6871A13EC540945E /* Step2_StructuredPromptView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Step2_StructuredPromptView.swift; sourceTree = "<group>"; };
 		1E6F32D725AE4A2282B1B71A /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
@@ -99,6 +98,7 @@
 		4E1C91690D492CF7A7B18086 /* SSEClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSEClient.swift; sourceTree = "<group>"; };
 		57FEEF176E8A04434A70B8F4 /* MockAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockAPIClient.swift; sourceTree = "<group>"; };
 		5A1940EB3F6408EF2A087323 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		5B54D55130EA315C7EE9BDD3 /* Toast.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Toast.swift; sourceTree = "<group>"; };
 		6E1A95792F4074A542705A2A /* Book.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Book.swift; sourceTree = "<group>"; };
 		72444369BA6CA87B9EA0293F /* StatusBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBadge.swift; sourceTree = "<group>"; };
 		73C97B43B64880265CE9E5E9 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
@@ -145,11 +145,11 @@
 			isa = PBXGroup;
 			children = (
 				7BC492920B9E8880FD492888 /* DotIndicator.swift */,
-				12D8FFA053DD3CFADCBD4B23 /* ErrorBanner.swift */,
 				8AC4B715D37906D4775007F1 /* InlineEditableDict.swift */,
 				12E0898A481E7BE65AB535C4 /* InlineEditableTags.swift */,
 				D06E847EE4E2FD95F326E922 /* InlineEditableText.swift */,
 				72444369BA6CA87B9EA0293F /* StatusBadge.swift */,
+				5B54D55130EA315C7EE9BDD3 /* Toast.swift */,
 			);
 			path = Components;
 			sourceTree = "<group>";
@@ -458,7 +458,6 @@
 				0185146B5183AA34FC92CC37 /* CharactersStore.swift in Sources */,
 				3A6074DF63E085139A91BAA8 /* CodecFactory.swift in Sources */,
 				DDA51FE21DA32553EDA19FFC /* DotIndicator.swift in Sources */,
-				674390D3819C608E0F0A3C14 /* ErrorBanner.swift in Sources */,
 				F235C2F080FC1BFB8C1F5694 /* ErrorBus.swift in Sources */,
 				DA06F1D070994F13591AB5BB /* ErrorMapping.swift in Sources */,
 				42F8E9AF29895D7FD6FCFF5D /* InlineEditableDict.swift in Sources */,
@@ -486,6 +485,7 @@
 				AD23A813E413729FC8614CDB /* TimelineEvent.swift in Sources */,
 				4B89292096EB5FBC1F0BC910 /* TimelineStore.swift in Sources */,
 				0614F49DE94787D0E1CDB1C5 /* TimelineTabView.swift in Sources */,
+				52625E1EB9F616610E33FE33 /* Toast.swift in Sources */,
 				B3D2A7F3385EF6E79E332CDD /* WorkspaceView.swift in Sources */,
 				47F95D1C18E926236771490B /* WorldSettingTabView.swift in Sources */,
 			);

@@ -61,9 +61,9 @@ public struct SummariesTabView: View {
                 .font(.callout)
                 .foregroundStyle(.primary)
         }
-        .padding(10)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
         .task {
             // Prefer the in-memory editor chapter if it matches; else fetch.
             if let live = chapterEditorStore.chapter, live.id == summary.id, let s = live.summary {

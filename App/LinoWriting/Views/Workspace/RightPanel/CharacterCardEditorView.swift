@@ -22,6 +22,8 @@ public struct CharacterCardEditorView: View {
 
     public var body: some View {
         ScrollView {
+            // Card-shaped container parallel to TimelineTabView / SummariesTabView
+            // (PROJECT_PLAN §5.K.4 第一段：角色卡也用 regularMaterial).
             VStack(alignment: .leading, spacing: 16) {
                 header
                 if charactersStore.pendingHighlightIds.contains(character.id) {
@@ -43,6 +45,9 @@ public struct CharacterCardEditorView: View {
                 liveSection
             }
             .padding(14)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
         }
         .onAppear {
             // Visiting clears the highlight.

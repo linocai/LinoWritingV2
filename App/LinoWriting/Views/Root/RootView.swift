@@ -7,9 +7,9 @@ public struct RootView: View {
     public init() {}
 
     public var body: some View {
-        ZStack(alignment: .top) {
+        ZStack(alignment: .bottomTrailing) {
             content
-            ErrorBanner()
+            Toast()
         }
         .sheet(isPresented: $appStore.showSettings) {
             SettingsView()

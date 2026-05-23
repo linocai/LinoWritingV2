@@ -116,13 +116,10 @@ public struct StepCard<Content: View>: View {
             }
         }
         .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color.secondary.opacity(0.05))
-        )
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
         .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(Color.secondary.opacity(0.18), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(Color.secondary.opacity(0.12), lineWidth: 1)
         )
         .onAppear {
             if collapsed { isExpanded = false }

@@ -1,7 +1,12 @@
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 
 public struct BookCardView: View {
     public let book: Book
+
+    @State private var isHovered: Bool = false
 
     public init(book: Book) { self.book = book }
 
@@ -22,7 +27,11 @@ public struct BookCardView: View {
                         .padding(12)
                 )
                 .aspectRatio(3.0/4.0, contentMode: .fit)
-                .shadow(color: .black.opacity(0.15), radius: 4, y: 1)
+                .shadow(
+                    color: .black.opacity(isHovered ? 0.25 : 0.15),
+                    radius: isHovered ? 8 : 4,
+                    y: isHovered ? 3 : 1
+                )
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(book.title)
@@ -35,6 +44,17 @@ public struct BookCardView: View {
             }
         }
         .padding(.bottom, 4)
+        .offset(y: isHovered ? -2 : 0)
+        #if os(macOS)
+        .onHover { hovering in
+            isHovered = hovering
+            if hovering {
+                NSCursor.pointingHand.push()
+            } else {
+                NSCursor.pop()
+            }
+        }
+        #endif
     }
 
     private var footnote: String {
