@@ -11,11 +11,24 @@ public struct CharacterCardListView: View {
         VStack(spacing: 0) {
             picker
             Divider()
-            if let character = charactersStore.selected() {
-                CharacterCardEditorView(character: character)
-            } else {
-                emptyState
+            // PROJECT_PLAN §5.K.4 (全局动画 — 角色卡切换): same transition
+            // language as the chapter editor — `.id()` rebuilds the editor
+            // sub-tree per character, asymmetric move/opacity gives a soft
+            // slide-in. Outer `.animation(.smooth, value:)` keyed on the
+            // selected id is what drives the transition.
+            Group {
+                if let character = charactersStore.selected() {
+                    CharacterCardEditorView(character: character)
+                        .id(character.id)
+                        .transition(.asymmetric(
+                            insertion: .move(edge: .trailing).combined(with: .opacity),
+                            removal: .opacity
+                        ))
+                } else {
+                    emptyState
+                }
             }
+            .animation(.smooth(duration: 0.3), value: charactersStore.selected()?.id)
         }
         .sheet(isPresented: $charactersStore.showNewCharacterSheet) {
             NewCharacterSheet()

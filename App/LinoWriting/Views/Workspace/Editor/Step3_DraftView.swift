@@ -8,6 +8,13 @@ public struct Step3_DraftView: View {
     @State private var draft: String = ""
     @State private var isExpanded: Bool = true
 
+    // PROJECT_PLAN §5.K.4 (字体): the body editor obeys the user's serif/sans
+    // preference. Defaults to "serif" (set on `Settings.editorFontDesign` and
+    // documented there). Reading via `@AppStorage` here gives live updates
+    // when the value changes in another view — no manual notification path
+    // needed. Titles remain sans (`ChapterToolbar`), only body changes.
+    @AppStorage(Settings.editorFontDesignKey) private var fontDesignRaw: String = EditorFontDesign.serif.rawValue
+
     public init(chapter: Chapter) { self.chapter = chapter }
 
     private var visible: Bool {
@@ -19,6 +26,13 @@ public struct Step3_DraftView: View {
 
     private var readOnly: Bool {
         chapter.status == .finalized || chapter.status == .writing
+    }
+
+    /// Parses the persisted raw string back into the SwiftUI font design.
+    /// Falls back to serif if the stored value is unrecognised (e.g. a
+    /// downgrade from a future enum case).
+    private var bodyFontDesign: Font.Design {
+        (EditorFontDesign(rawValue: fontDesignRaw) ?? .serif).fontDesign
     }
 
     public var body: some View {
@@ -55,6 +69,20 @@ public struct Step3_DraftView: View {
                 if case .streaming = chapterEditorStore.writingState { return }
                 draft = new
             }
+            .onDisappear {
+                // K-3 follow-up (reviewer 🟡 #3): `ChapterEditorView` now uses
+                // `.id(chapter.id)` to drive its asymmetric transition, which
+                // tears this view down on chapter switch and would silently
+                // drop any unsaved edits. Flush dirty drafts here so the user
+                // never loses work just because they navigated away. The
+                // store is an EnvironmentObject and outlives this view, so
+                // the Task survives even though `self` does not.
+                guard !readOnly,
+                      chapter.status == .draftReady,
+                      draft != (chapter.draftText ?? "") else { return }
+                let pending = draft
+                Task { await chapterEditorStore.patchDraftText(pending) }
+            }
         }
     }
 
@@ -76,7 +104,7 @@ public struct Step3_DraftView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 Text(buffer.isEmpty ? "等待 Agent 输出…" : buffer)
-                    .font(.system(.body, design: .serif))
+                    .font(.system(.body, design: bodyFontDesign))
                     .lineSpacing(6)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(12)
@@ -97,7 +125,7 @@ public struct Step3_DraftView: View {
 
     private var editorView: some View {
         TextEditor(text: $draft)
-            .font(.system(.body, design: .serif))
+            .font(.system(.body, design: bodyFontDesign))
             .lineSpacing(6)
             .scrollContentBackground(.hidden)
             .frame(minHeight: 320, maxHeight: 720)
