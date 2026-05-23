@@ -22,7 +22,13 @@ from app.models.book import Book
 from app.models.chapter import Chapter
 from app.models.common import utc_now
 from app.models.timeline_event import TimelineEvent
-from app.schemas.chapter import ChapterCreate, ChapterPatch, ChapterRead, ChapterSummary
+from app.schemas.chapter import (
+    ChapterCreate,
+    ChapterImportRequest,
+    ChapterPatch,
+    ChapterRead,
+    ChapterSummary,
+)
 from app.services.agent_logging import log_agent_call, now_ms
 from app.services.chapter_state import ensure_chapter_status
 from app.services.context_pack import build_expander_context, build_extractor_context, build_writer_context
@@ -149,6 +155,94 @@ def finalize_chapter(
     chapter = _get_chapter(db, chapter_id)
     ensure_chapter_status(chapter, {"draft_ready"}, "finalize")
     book = _get_book(db, chapter.book_id)
+    context = build_extractor_context(db, book, chapter)
+    started = now_ms()
+    try:
+        extractor_output = ExtractorAgent(llm).extract(context)
+        updated_character_ids, added_event_ids = apply_extractor_output(db, chapter, extractor_output)
+        log_agent_call(
+            db,
+            chapter_id=chapter.id,
+            agent_name="extractor",
+            input_data=context,
+            output_data=extractor_output,
+            started_at=started,
+        )
+        db.commit()
+    except (LLMError, AppError, ValueError) as exc:
+        db.rollback()
+        log_agent_call(
+            db,
+            chapter_id=chapter.id,
+            agent_name="extractor",
+            input_data=context,
+            started_at=started,
+            error=str(exc),
+        )
+        db.commit()
+        if isinstance(exc, AppError):
+            raise
+        raise upstream(str(exc), retryable=getattr(exc, "retryable", False)) from exc
+    db.refresh(chapter)
+    return {
+        "chapter": ChapterRead.model_validate(chapter),
+        "updated_character_ids": updated_character_ids,
+        "added_event_ids": added_event_ids,
+    }
+
+
+@router.post("/chapters/{chapter_id}/import")
+def import_chapter(
+    chapter_id: str,
+    payload: ChapterImportRequest,
+    db: Session = Depends(get_db),
+    llm: LLMClient = Depends(get_llm_client),
+) -> dict[str, object]:
+    """Import user-authored chapter text and (optionally) run Extractor on it.
+
+    Mirrors the response envelope of ``POST /chapters/{id}/finalize`` so the
+    frontend can treat it as a finalize-equivalent transition. Pre-condition:
+    chapter must not already be ``finalized`` (409 otherwise).
+    """
+    chapter = _get_chapter(db, chapter_id)
+    # Plan §5.A.4 white-list: any non-finalized state EXCEPT 'writing'.
+    # 'writing' is deliberately excluded — importing mid-stream would race the
+    # SSE writer worker, which would later flip status back to draft_ready and
+    # overwrite the imported draft_text. Users must cancel or finish the
+    # stream first. See A-1 reviewer report.
+    ensure_chapter_status(
+        chapter,
+        {"draft", "prompt_ready", "draft_ready"},
+        "import",
+    )
+    book = _get_book(db, chapter.book_id)
+
+    # Always write the user's draft + mark source. title/summary only if provided.
+    chapter.draft_text = payload.draft_text
+    if payload.title is not None:
+        chapter.title = payload.title
+    if payload.summary is not None:
+        chapter.summary = payload.summary
+    chapter.source = "imported"
+    chapter.updated_at = utc_now()
+
+    if not payload.run_extractor:
+        # Skip Extractor — finalize directly. If caller supplied no summary,
+        # leave whatever was already there (may be None). Extractor path below
+        # is the canonical way to fill summary + timeline + live_fields.
+        chapter.status = "finalized"
+        chapter.updated_at = utc_now()
+        db.commit()
+        db.refresh(chapter)
+        return {
+            "chapter": ChapterRead.model_validate(chapter),
+            "updated_character_ids": [],
+            "added_event_ids": [],
+        }
+
+    # run_extractor=True — reuse the same path finalize uses.
+    # Flush so context_pack sees the freshly-written draft_text.
+    db.flush()
     context = build_extractor_context(db, book, chapter)
     started = now_ms()
     try:

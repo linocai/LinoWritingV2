@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.common import UtcDatetime
 from app.schemas.structured_prompt import StructuredPrompt
 
 ChapterStatus = Literal["draft", "prompt_ready", "writing", "draft_ready", "finalized"]
+ChapterSource = Literal["agent", "imported"]
 
 
 class ChapterCreate(BaseModel):
@@ -22,6 +23,13 @@ class ChapterPatch(BaseModel):
     draft_text: str | None = None
 
 
+class ChapterImportRequest(BaseModel):
+    draft_text: str = Field(..., min_length=1)
+    title: str | None = None
+    summary: str | None = None
+    run_extractor: bool = True
+
+
 class ChapterSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -29,6 +37,7 @@ class ChapterSummary(BaseModel):
     index: int
     title: str | None
     status: ChapterStatus
+    source: ChapterSource
     updated_at: UtcDatetime
 
 
@@ -44,5 +53,6 @@ class ChapterRead(BaseModel):
     draft_text: str | None
     summary: str | None
     status: ChapterStatus
+    source: ChapterSource
     created_at: UtcDatetime
     updated_at: UtcDatetime

@@ -10,6 +10,12 @@ from app.models.chapter import Chapter
 from app.models.character import Character
 from app.models.timeline_event import TimelineEvent
 
+# Style-sample knobs for WriterAgent's "参考前文文风" block.
+# Both agent-written and imported finalized chapters feed this — the goal is
+# pure stylistic reference, regardless of how the chapter was produced.
+STYLE_SAMPLES_CHAPTER_COUNT = 2
+STYLE_SAMPLES_CHARS_PER_SIDE = 400
+
 
 def build_expander_context(db: Session, book: Book, chapter: Chapter) -> dict[str, Any]:
     return {
@@ -43,6 +49,13 @@ def build_writer_context(db: Session, book: Book, chapter: Chapter) -> dict[str,
         "characters": [_character_full(character) for character in selected],
         "timelines": timelines,
         "recent_summaries": _recent_summaries(db, book.id, chapter.index, limit=2),
+        "style_samples": _style_samples(
+            db,
+            book.id,
+            chapter.index,
+            limit=STYLE_SAMPLES_CHAPTER_COUNT,
+            chars_per_side=STYLE_SAMPLES_CHARS_PER_SIDE,
+        ),
     }
 
 
@@ -60,6 +73,50 @@ def build_extractor_context(db: Session, book: Book, chapter: Chapter) -> dict[s
 
 def _book_characters(db: Session, book_id: str) -> list[Character]:
     return list(db.scalars(select(Character).where(Character.book_id == book_id).order_by(Character.created_at)).all())
+
+
+def _style_samples(
+    db: Session,
+    book_id: str,
+    before_index: int,
+    *,
+    limit: int,
+    chars_per_side: int,
+) -> list[dict[str, Any]]:
+    """Latest N finalized chapters' draft_text excerpts for stylistic reference.
+
+    agent-written vs imported chapters are treated identically — we only require
+    ``status='finalized'`` and a non-empty ``draft_text``.
+
+    Overlap rule for short chapters: if ``len(draft_text) <= 2 * chars_per_side``
+    (head and tail would overlap), we emit the full text as ``head`` and leave
+    ``tail`` as an empty string — avoids feeding the same span twice.
+    """
+    rows = db.scalars(
+        select(Chapter)
+        .where(
+            Chapter.book_id == book_id,
+            Chapter.index < before_index,
+            Chapter.status == "finalized",
+            Chapter.draft_text.is_not(None),
+        )
+        .order_by(Chapter.index.desc())
+        .limit(limit)
+    ).all()
+    samples: list[dict[str, Any]] = []
+    for chapter in reversed(rows):
+        text = chapter.draft_text or ""
+        if not text:
+            continue
+        if len(text) <= 2 * chars_per_side:
+            # Short chapter — head holds the full draft, tail collapses to ''.
+            head = text
+            tail = ""
+        else:
+            head = text[:chars_per_side]
+            tail = text[-chars_per_side:]
+        samples.append({"chapter_index": chapter.index, "head": head, "tail": tail})
+    return samples
 
 
 def _recent_summaries(db: Session, book_id: str, before_index: int, *, limit: int) -> list[dict[str, Any]]:

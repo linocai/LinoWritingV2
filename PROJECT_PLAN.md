@@ -227,7 +227,8 @@ Alembic 迁移脚本：`add_chapter_source.py`，对存量章节回填 `'agent'`
 ```
 
 约束：
-- 章节当前 `status` ∈ {`idea_only`, `prompt_expanded`, `writing`}（即未 finalized）
+- 章节当前 `status` ∈ {`draft`, `prompt_ready`, `draft_ready`}（即未 finalized 且未在 SSE 写作流中）
+- `writing` 状态**不允许** import — SSE writer worker 与 import 路径会 race(stream 完成时会把 status 翻回 `draft_ready` 并覆盖 draft_text)。前端在 `writing` 状态下应禁用导入按钮,提示用户先取消或等待流结束
 - 否则返回 `409 conflict`
 
 行为：

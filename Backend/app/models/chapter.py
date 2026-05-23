@@ -25,6 +25,7 @@ class Chapter(Base):
     draft_text: Mapped[str | None] = mapped_column(Text)
     summary: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(32), default="draft", nullable=False)
+    source: Mapped[str] = mapped_column(String(32), default="agent", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
