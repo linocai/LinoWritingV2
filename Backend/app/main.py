@@ -12,7 +12,7 @@ from app.routers import admin, books, chapters, characters, health
 
 def create_app() -> FastAPI:
     settings = get_settings()
-    app = FastAPI(title="Lino Writing v2 Backend", version="0.1.0")
+    app = FastAPI(title="Lino Writing v2 Backend", version="0.5.0")
     app.state.llm_client = GrokClient(settings)
 
     app.add_middleware(

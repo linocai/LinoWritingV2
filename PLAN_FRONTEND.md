@@ -3,7 +3,7 @@
 > 本文档是前端施工 Agent 的唯一行动依据。
 > 标注 `[SHARED]` 的章节与 `PLAN_BACKEND.md` **逐字相同**——这是前后端的契约层。修改任何 SHARED 章节前，必须同步修改另一份文档；否则两侧会南辕北辙。
 >
-> 文档版本：v0.1（定稿）
+> 文档版本：v0.5（定稿）
 > 关联文档：`PLAN_BACKEND.md`
 
 ---
@@ -591,7 +591,7 @@ LinoWritingV2/App/
 - 倒序，按 `created_at desc`，分页 `before=<created_at>` 加载更多。
 - 每条 event 可编辑 `event_text` 与 `event_type`（PATCH 走 `/timeline_events/{id}`——后端补一个 PATCH 端点，加进 §3.2 时同步两边文档；首版可不开，后端先不实现，前端先只读）。
 
-> **注**：v0.1 首版**只读时间线**即可。"编辑事件"作为后续迭代。Integrator 校验时如未在 §3.2 出现 timeline PATCH 端点，前端按只读处理。
+> **注**：v0.5 仍为**只读时间线**。"编辑事件"作为后续迭代。Integrator 校验时如未在 §3.2 出现 timeline PATCH 端点，前端按只读处理。
 
 ### 6.7 摘要 tab
 

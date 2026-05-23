@@ -1,4 +1,4 @@
-# LinoWriting (前端，v0.1)
+# LinoWriting (前端，v0.5)
 
 SwiftUI 实现的 Mac/iOS 双平台原生 App，对接 `PLAN_FRONTEND.md` 描述的后端 API。
 
@@ -67,7 +67,7 @@ LinoWriting/
 - ✓ `ChapterEditorView` + `ChapterToolbar` + Step 1/2/3 卡片
 - ✓ `RightPanelView` 4 tab：角色卡 / 时间线 / 摘要 / 世界设定
 - ✓ `CharacterCardEditorView`（inline 文档式编辑，含冻结/活动分区与小红点）
-- ✓ `TimelineTabView`（v0.1 只读）
+- ✓ `TimelineTabView`（v0.5 只读）
 - ✓ `SummariesTabView`（已完成章节摘要列表，点击跳转）
 - ✓ `WorldSettingTabView`（双 markdown 文本框 + 失焦保存）
 - ✓ `ErrorBanner` 全局错误条，3s 自动消失，401 长留
@@ -85,10 +85,10 @@ LinoWriting/
 | `POST /chapters/{id}/reopen` | ✓ | |
 | `GET /admin/logs` | ✓ | APIClient 已暴露，UI 尚未做调试面板 |
 
-## 已知偏差与 v0.2 待办
+## 已知偏差与后续待办
 
 - **小红点：** 当前是「整卡级」标记（按 plan 的简化版方案），未做到字段级。`pendingHighlightIds` 在 finalize 后写入，用户点击该角色时清除。
-- **Timeline 编辑：** v0.1 仅做只读列表，PATCH 端点尚未在 §3.2 出现，前端不实现编辑入口。
+- **Timeline 编辑：** v0.5 仍为只读列表，PATCH 端点尚未在 §3.2 出现，前端不实现编辑入口。
 - **Summary 详情加载：** 摘要 tab 通过 `ChaptersStore.ensureSummary` 按需 `GET /chapters/{id}` 拉详细内容；正式后端如果 `ChapterSummary` 直接含 summary 字段，可去掉这层。
 - **Admin Log Panel：** APIClient 已经把 `listAgentLogs` 暴露，但 UI 没做单独的调试视图（plan §6 未列）。需要时再叠一层。
 - **代码签名：** project.yml 配置了 `CODE_SIGNING_ALLOWED: NO`，方便本机/CI 跑测试。云上分发前需要切回 Automatic 并提供 Team。
