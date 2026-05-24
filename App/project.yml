@@ -31,7 +31,11 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.lino.linowriting.LinoWriting
-        PRODUCT_NAME: LinoWriting
+        PRODUCT_NAME: LinoI
+        # Keep the Swift module name as LinoWriting so internal imports
+        # (`@testable import LinoWriting` etc.) and 52 source files don't
+        # need a sweeping rename just because the app bundle is now LinoI.
+        PRODUCT_MODULE_NAME: LinoWriting
         INFOPLIST_FILE: LinoWriting/Resources/Info.plist
         ENABLE_PREVIEWS: YES
         GENERATE_INFOPLIST_FILE: NO
@@ -53,5 +57,5 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.lino.linowriting.LinoWritingTests
         BUNDLE_LOADER: "$(TEST_HOST)"
-        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/LinoWriting.app/Contents/MacOS/LinoWriting"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/LinoI.app/Contents/MacOS/LinoI"
         GENERATE_INFOPLIST_FILE: YES

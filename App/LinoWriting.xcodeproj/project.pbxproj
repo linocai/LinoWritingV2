@@ -548,7 +548,8 @@
 				INFOPLIST_FILE = LinoWriting/Resources/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks @executable_path/Frameworks";
 				PRODUCT_BUNDLE_IDENTIFIER = com.lino.linowriting.LinoWriting;
-				PRODUCT_NAME = LinoWriting;
+				PRODUCT_MODULE_NAME = LinoWriting;
+				PRODUCT_NAME = LinoI;
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SUPPORTS_MACCATALYST = NO;
@@ -617,7 +618,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.5;
+				MARKETING_VERSION = 0.6;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -682,7 +683,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.5;
+				MARKETING_VERSION = 0.6;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -706,7 +707,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.lino.linowriting.LinoWritingTests;
 				SDKROOT = macosx;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/LinoWriting.app/Contents/MacOS/LinoWriting";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/LinoI.app/Contents/MacOS/LinoI";
 			};
 			name = Release;
 		};
@@ -723,7 +724,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.lino.linowriting.LinoWritingTests;
 				SDKROOT = macosx;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/LinoWriting.app/Contents/MacOS/LinoWriting";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/LinoI.app/Contents/MacOS/LinoI";
 			};
 			name = Debug;
 		};
@@ -738,7 +739,8 @@
 				INFOPLIST_FILE = LinoWriting/Resources/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks @executable_path/Frameworks";
 				PRODUCT_BUNDLE_IDENTIFIER = com.lino.linowriting.LinoWriting;
-				PRODUCT_NAME = LinoWriting;
+				PRODUCT_MODULE_NAME = LinoWriting;
+				PRODUCT_NAME = LinoI;
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SUPPORTS_MACCATALYST = NO;
