@@ -12,6 +12,11 @@ settings:
   base:
     SWIFT_VERSION: "5.10"
     SWIFT_STRICT_CONCURRENCY: minimal
+    # Build phase doesn't sign(Manual + 无 team 在 Xcode 14+ 上会被阻拦)。
+    # Ad-hoc 签名在 build 完成之后用 codesign 命令补:
+    #   codesign --force --deep --sign - /path/to/LinoI.app
+    # 这样 macOS Keychain 能把 LinoI 识别为受信任 app,避免每次启动
+    # 都弹"是否允许 LinoI 访问钥匙串项"的授权窗。
     CODE_SIGN_STYLE: Manual
     CODE_SIGNING_REQUIRED: NO
     CODE_SIGNING_ALLOWED: NO
