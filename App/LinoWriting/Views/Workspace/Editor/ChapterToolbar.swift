@@ -2,6 +2,10 @@ import SwiftUI
 
 public struct ChapterToolbar: View {
     let chapter: Chapter
+    /// Owner (ChapterEditorView) flips this to true when the user taps
+    /// "导入文本". The sheet is hosted on the parent so it survives toolbar
+    /// re-renders triggered by `chapter.status` changes mid-import.
+    let onImportTap: () -> Void
 
     @EnvironmentObject var chapterEditorStore: ChapterEditorStore
     @EnvironmentObject var chaptersStore: ChaptersStore
@@ -9,8 +13,9 @@ public struct ChapterToolbar: View {
 
     @State private var titleDraft: String
 
-    public init(chapter: Chapter) {
+    public init(chapter: Chapter, onImportTap: @escaping () -> Void = {}) {
         self.chapter = chapter
+        self.onImportTap = onImportTap
         _titleDraft = State(initialValue: chapter.title ?? "")
     }
 
@@ -25,10 +30,31 @@ public struct ChapterToolbar: View {
                 .onChange(of: chapter.title ?? "") { _, new in titleDraft = new }
             StatusBadge(chapter.status)
             Spacer()
+            // PROJECT_PLAN §5.A.6 / §5.A.7: "导入文本" sits parallel to
+            // "展开提纲" / "写作" etc. Hidden in `writing` (SSE race per A-1
+            // reviewer) and `finalized` (chapter immutable). Visible in
+            // draft / prompt_ready / draft_ready — the backend white-list.
+            if canImport {
+                Button(action: onImportTap) {
+                    Label("导入文本", systemImage: "square.and.arrow.down")
+                }
+                .buttonStyle(.bordered)
+                .disabled(chapterEditorStore.isImporting)
+                .help("把已写好的章节正文导入，并可选择让 Agent 提取角色更新和时间线")
+            }
             primaryActionButtons
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 10)
+    }
+
+    /// Whitelist mirrors the backend's `ensure_chapter_status` set
+    /// in `POST /chapters/{id}/import` — see PROJECT_PLAN §5.A.4.
+    private var canImport: Bool {
+        switch chapter.status {
+        case .draft, .promptReady, .draftReady: return true
+        case .writing, .finalized: return false
+        }
     }
 
     @ViewBuilder

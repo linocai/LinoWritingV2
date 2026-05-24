@@ -66,6 +66,16 @@ public struct ChapterListView: View {
             Text("第 \(chapter.index) 章")
                 .font(.callout.weight(.medium))
                 .foregroundStyle(.primary)
+            // PROJECT_PLAN §5.A.6 nice-to-have: a subtle marker for
+            // imported chapters so users can tell at a glance which rows
+            // came from their own pasted text vs. the Agent's draft.
+            if chapter.source == .imported {
+                Image(systemName: "square.and.arrow.down")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .help("用户导入的章节")
+                    .accessibilityLabel("用户导入")
+            }
             if let title = chapter.title, !title.isEmpty {
                 Text("·")
                     .foregroundStyle(.tertiary)

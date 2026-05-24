@@ -13,7 +13,7 @@ public struct Step3_DraftView: View {
     // documented there). Reading via `@AppStorage` here gives live updates
     // when the value changes in another view — no manual notification path
     // needed. Titles remain sans (`ChapterToolbar`), only body changes.
-    @AppStorage(Settings.editorFontDesignKey) private var fontDesignRaw: String = EditorFontDesign.serif.rawValue
+    @AppStorage(Settings.editorFontDesignKey) private var fontDesignRaw: String = EditorFontDesign.default.rawValue
 
     public init(chapter: Chapter) { self.chapter = chapter }
 
@@ -32,7 +32,7 @@ public struct Step3_DraftView: View {
     /// Falls back to serif if the stored value is unrecognised (e.g. a
     /// downgrade from a future enum case).
     private var bodyFontDesign: Font.Design {
-        (EditorFontDesign(rawValue: fontDesignRaw) ?? .serif).fontDesign
+        (EditorFontDesign(rawValue: fontDesignRaw) ?? .default).fontDesign
     }
 
     public var body: some View {

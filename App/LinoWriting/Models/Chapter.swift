@@ -18,16 +18,58 @@ public enum ChapterStatus: String, Codable, CaseIterable, Sendable {
     }
 }
 
+/// Provenance marker — whether the chapter body came from the Agent (default)
+/// or was imported by the user via the §5.A import flow.
+///
+/// Backend ships this on every `chapter_read` / `chapter_summary` payload
+/// (PROJECT_PLAN §5.A.3). Decoding falls back to `.agent` for any legacy
+/// payload that omits the field (Swift's `Codable` default-value semantics
+/// kick in through the `init(from:)` override below).
+public enum ChapterSource: String, Codable, Sendable {
+    case agent
+    case imported
+}
+
 public struct ChapterSummary: Codable, Equatable, Identifiable, Sendable, Hashable {
     public let id: String
     public let index: Int
     public var title: String?
     public var status: ChapterStatus
+    public var source: ChapterSource
     public var updatedAt: Date
 
     enum CodingKeys: String, CodingKey {
-        case id, index, title, status
+        case id, index, title, status, source
         case updatedAt = "updated_at"
+    }
+
+    public init(
+        id: String,
+        index: Int,
+        title: String? = nil,
+        status: ChapterStatus,
+        source: ChapterSource = .agent,
+        updatedAt: Date
+    ) {
+        self.id = id
+        self.index = index
+        self.title = title
+        self.status = status
+        self.source = source
+        self.updatedAt = updatedAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(String.self, forKey: .id)
+        self.index = try c.decode(Int.self, forKey: .index)
+        self.title = try c.decodeIfPresent(String.self, forKey: .title)
+        self.status = try c.decode(ChapterStatus.self, forKey: .status)
+        // PROJECT_PLAN §5.A.6: tolerate older backends / cached payloads that
+        // predate the `source` column — default to `.agent` so the UI never
+        // shows a phantom "imported" badge.
+        self.source = try c.decodeIfPresent(ChapterSource.self, forKey: .source) ?? .agent
+        self.updatedAt = try c.decode(Date.self, forKey: .updatedAt)
     }
 }
 
@@ -41,6 +83,7 @@ public struct Chapter: Codable, Equatable, Identifiable, Sendable, Hashable {
     public var draftText: String?
     public var summary: String?
     public var status: ChapterStatus
+    public var source: ChapterSource
     public var createdAt: Date
     public var updatedAt: Date
 
@@ -51,7 +94,7 @@ public struct Chapter: Codable, Equatable, Identifiable, Sendable, Hashable {
         case userPrompt = "user_prompt"
         case structuredPrompt = "structured_prompt"
         case draftText = "draft_text"
-        case summary, status
+        case summary, status, source
         case createdAt = "created_at"
         case updatedAt = "updated_at"
     }
@@ -66,6 +109,7 @@ public struct Chapter: Codable, Equatable, Identifiable, Sendable, Hashable {
         draftText: String? = nil,
         summary: String? = nil,
         status: ChapterStatus,
+        source: ChapterSource = .agent,
         createdAt: Date,
         updatedAt: Date
     ) {
@@ -78,12 +122,37 @@ public struct Chapter: Codable, Equatable, Identifiable, Sendable, Hashable {
         self.draftText = draftText
         self.summary = summary
         self.status = status
+        self.source = source
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
 
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(String.self, forKey: .id)
+        self.bookId = try c.decode(String.self, forKey: .bookId)
+        self.index = try c.decode(Int.self, forKey: .index)
+        self.title = try c.decodeIfPresent(String.self, forKey: .title)
+        self.userPrompt = try c.decodeIfPresent(String.self, forKey: .userPrompt)
+        self.structuredPrompt = try c.decodeIfPresent(StructuredPrompt.self, forKey: .structuredPrompt)
+        self.draftText = try c.decodeIfPresent(String.self, forKey: .draftText)
+        self.summary = try c.decodeIfPresent(String.self, forKey: .summary)
+        self.status = try c.decode(ChapterStatus.self, forKey: .status)
+        // PROJECT_PLAN §5.A.6: legacy payload fallback — see `ChapterSummary`.
+        self.source = try c.decodeIfPresent(ChapterSource.self, forKey: .source) ?? .agent
+        self.createdAt = try c.decode(Date.self, forKey: .createdAt)
+        self.updatedAt = try c.decode(Date.self, forKey: .updatedAt)
+    }
+
     public var summaryShape: ChapterSummary {
-        ChapterSummary(id: id, index: index, title: title, status: status, updatedAt: updatedAt)
+        ChapterSummary(
+            id: id,
+            index: index,
+            title: title,
+            status: status,
+            source: source,
+            updatedAt: updatedAt
+        )
     }
 }
 
@@ -129,6 +198,56 @@ public struct ChapterPatchRequest: Codable, Sendable {
 }
 
 public struct FinalizeResult: Codable, Sendable {
+    public let chapter: Chapter
+    public let updatedCharacterIds: [String]
+    public let addedEventIds: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case chapter
+        case updatedCharacterIds = "updated_character_ids"
+        case addedEventIds = "added_event_ids"
+    }
+}
+
+/// Request body for `POST /api/v1/chapters/{id}/import` (PROJECT_PLAN §5.A.4).
+///
+/// `draftText` is required. `title` and `summary` overwrite existing values
+/// when present (left as `nil` to keep current values). `runExtractor`
+/// defaults to `true` — the import sheet exposes this as a "导入后让 Agent
+/// 提取角色更新和时间线" toggle.
+public struct ChapterImportRequest: Codable, Sendable {
+    public var draftText: String
+    public var title: String?
+    public var summary: String?
+    public var runExtractor: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case draftText = "draft_text"
+        case title
+        case summary
+        case runExtractor = "run_extractor"
+    }
+
+    public init(
+        draftText: String,
+        title: String? = nil,
+        summary: String? = nil,
+        runExtractor: Bool = true
+    ) {
+        self.draftText = draftText
+        self.title = title
+        self.summary = summary
+        self.runExtractor = runExtractor
+    }
+}
+
+/// Response envelope from `POST /api/v1/chapters/{id}/import`.
+///
+/// Mirrors `FinalizeResult` exactly — backend §5.A.4 guarantees the same
+/// `{ chapter, updated_character_ids, added_event_ids }` shape so the
+/// frontend can treat import as a finalize-equivalent transition (chapter
+/// ends in `finalized` status with `source == .imported`).
+public struct ChapterImportResponse: Codable, Sendable {
     public let chapter: Chapter
     public let updatedCharacterIds: [String]
     public let addedEventIds: [String]

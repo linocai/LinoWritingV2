@@ -30,6 +30,7 @@ public protocol APIClientProtocol: Sendable {
     func writeStream(chapterId: String) -> AsyncThrowingStream<SSEEvent, Error>
     func finalize(chapterId: String) async throws -> FinalizeResult
     func reopen(chapterId: String) async throws -> Chapter
+    func importChapter(id: String, payload: ChapterImportRequest) async throws -> ChapterImportResponse
 
     // Admin
     func listAgentLogs(chapterId: String?, limit: Int) async throws -> [AgentLog]
@@ -301,6 +302,21 @@ public final class APIClient: APIClientProtocol, @unchecked Sendable {
                                   path: "/api/v1/chapters/\(chapterId)/reopen",
                                   body: "{}".data(using: .utf8))
         return try await send(req, as: Chapter.self)
+    }
+
+    /// `POST /api/v1/chapters/{id}/import` — see PROJECT_PLAN §5.A.4.
+    ///
+    /// 409 is the expected status when the backend's status white-list rejects
+    /// the chapter (current state ∉ {draft, prompt_ready, draft_ready}). The
+    /// error message from the body is preserved by `ErrorMapping` so the
+    /// import sheet can surface it via `ErrorBus` without translating.
+    public func importChapter(id: String, payload: ChapterImportRequest) async throws -> ChapterImportResponse {
+        let req = try makeRequest(
+            method: "POST",
+            path: "/api/v1/chapters/\(id)/import",
+            body: body(payload)
+        )
+        return try await send(req, as: ChapterImportResponse.self)
     }
 
     // MARK: - Admin

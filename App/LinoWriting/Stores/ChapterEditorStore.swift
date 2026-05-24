@@ -17,9 +17,12 @@ public final class ChapterEditorStore: ObservableObject {
     @Published public private(set) var writingState: WritingState = .idle
     @Published public private(set) var isExpanding: Bool = false
     @Published public private(set) var isFinalizing: Bool = false
+    @Published public private(set) var isImporting: Bool = false
 
-    /// IDs the latest finalize call modified — exposed for the right panel highlight.
-    @Published public private(set) var lastFinalizeUpdatedCharacterIds: [String] = []
+    /// IDs the latest finalize OR import call modified — exposed for the
+    /// right panel highlight. Both code paths write here because the
+    /// downstream dot-indicator UX is identical: "Agent touched these cards".
+    @Published public private(set) var lastUpdatedCharacterIds: [String] = []
 
     private let api: APIClientProtocol
     private let errorBus: ErrorBus
@@ -54,7 +57,8 @@ public final class ChapterEditorStore: ObservableObject {
         writingState = .idle
         isExpanding = false
         isFinalizing = false
-        lastFinalizeUpdatedCharacterIds = []
+        isImporting = false
+        lastUpdatedCharacterIds = []
     }
 
     // MARK: Inline edits
@@ -190,7 +194,7 @@ public final class ChapterEditorStore: ObservableObject {
         do {
             let result = try await api.finalize(chapterId: chapter.id)
             self.chapter = result.chapter
-            self.lastFinalizeUpdatedCharacterIds = result.updatedCharacterIds
+            self.lastUpdatedCharacterIds = result.updatedCharacterIds
             return result
         } catch let error as AppError {
             errorBus.publish(error)
@@ -206,6 +210,37 @@ public final class ChapterEditorStore: ObservableObject {
             let updated = try await api.reopen(chapterId: chapter.id)
             self.chapter = updated
             return updated
+        } catch let error as AppError {
+            errorBus.publish(error)
+        } catch {
+            errorBus.publish(.transport(error.localizedDescription))
+        }
+        return nil
+    }
+
+    /// Imports user-authored chapter text via `POST /chapters/{id}/import`
+    /// (PROJECT_PLAN §5.A.4 / §5.A.6).
+    ///
+    /// On success the chapter ends in `finalized` status with
+    /// `source == .imported`. When `run_extractor=true` (the sheet's default)
+    /// the response also carries any character/timeline IDs the Extractor
+    /// touched — mirrors `finalize()`'s payload, so callers can fan out the
+    /// dependent-store refreshes identically (see `ChapterToolbar`).
+    ///
+    /// Returns the full response so callers can highlight `updated_character_ids`
+    /// and refresh stores. Returns `nil` on failure; the error is already
+    /// published to `ErrorBus`.
+    public func importChapter(_ payload: ChapterImportRequest) async -> ChapterImportResponse? {
+        guard let chapter else { return nil }
+        isImporting = true
+        defer { isImporting = false }
+        do {
+            let result = try await api.importChapter(id: chapter.id, payload: payload)
+            self.chapter = result.chapter
+            // Mirror finalize's side-effect: the right panel highlights any
+            // characters whose live_fields the Extractor changed.
+            self.lastUpdatedCharacterIds = result.updatedCharacterIds
+            return result
         } catch let error as AppError {
             errorBus.publish(error)
         } catch {

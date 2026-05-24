@@ -11,6 +11,12 @@ public enum EditorFontDesign: String, Codable, CaseIterable, Sendable {
     case sans = "sans"
     case serif = "serif"
 
+    /// Single source of truth for the default font design.
+    /// Use this anywhere a fallback is needed (corrupt UserDefaults value,
+    /// fresh install, downgrade from a future enum case).
+    /// A-2 reviewer 🟡 #1: avoids three views hardcoding `.serif` separately.
+    public static let `default`: EditorFontDesign = .serif
+
     /// Maps to SwiftUI `Font.Design`. `EditorFontDesign` is the persisted
     /// shape; `Font.Design` is the value views feed to `.font(.system(...))`.
     public var fontDesign: Font.Design {
@@ -71,7 +77,7 @@ public final class Settings: @unchecked Sendable {
         get {
             guard let raw = defaults.string(forKey: Self.editorFontDesignKey),
                   let parsed = EditorFontDesign(rawValue: raw) else {
-                return .serif
+                return .default
             }
             return parsed
         }

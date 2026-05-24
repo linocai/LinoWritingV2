@@ -3,7 +3,7 @@
 > 本文档是 v0.6 起的**单一项目行动依据**。前端、后端、契约层全部合并在此。
 > v0.1–v0.5 期间使用 `PLAN_FRONTEND.md` / `PLAN_BACKEND.md` 双契约工作流，作为 v0.5 契约存档保留，不再更新。
 >
-> 文档版本：v0.6-draft
+> 文档版本：v0.6（已发布）
 > 关联存档：`PLAN_FRONTEND.md`（v0.5 前端契约存档）、`PLAN_BACKEND.md`（v0.5 后端契约存档）
 
 ---
@@ -40,35 +40,42 @@
 
 ---
 
-## 1. 当前版本状态 (v0.5 — 已发布)
+## 1. 当前版本状态 (v0.6 — 已发布)
 
-### 1.1 已实现能力
+### 1.1 v0.6 新增能力(在 v0.5 基础上)
 
-**前端（SwiftUI macOS 14+ / iOS 17+）**
-- 书架（多书隔离，封面色、最近打开排序）
-- 3 栏 Workspace（macOS NavigationSplitView / iOS 抽屉式 RightPanel）
-- 5 步章节编辑器（idea → 展开提纲 → 写作 → 审阅 → finalize）
-- SSE 流式写作（started/token/progress/done/error）
-- 角色卡 inline 文档式编辑（frozen/live 双区 + 卡片级 dot indicator）
-- 右栏 4 tab：角色卡 / 时间线 / 摘要 / 世界设定
-- ErrorBanner（3s 自动消失，401 长留）
-- Keychain 存储 backend URL + API token
-- 测试：17 个（APIClient / SSEClient / Stores）
+**前端**
+- 响应式三档窗口断点(< 800 / 800-1099 / ≥ 1100):窄屏自动折叠 Sidebar / RightPanel 成 sheet,最小窗口降到 880×580 [§5.K.3]
+- 苹果风美学:Sidebar `.regularMaterial` + RightPanel `.thinMaterial`、`.toolbarRole(.editor)`、`.windowToolbarStyle(.unifiedCompact)`、章节卡 / 角色卡 / 时间线卡 Material 化 [§5.K.4]
+- 全局 `.smooth` 动画:状态切换 / 章节切换 / 角色卡切换 / StatusBadge contentTransition [§5.K.4]
+- 章节正文字体可切 serif/sans(`Settings.editorFontDesign`,默认 serif) [§5.K.4]
+- Toast 错误条(右下角 `.thinMaterial` 胶囊,取代 v0.5 ErrorBanner) [§5.K.4]
+- BookCard / ChapterList row hover 抬升 + macOS pointing-hand cursor [§5.K.4]
+- App 内 LLM Provider 管理(Connection / LLM Providers 两 tab,增删改 + 设 active,Preset 一键预填 xAI / OpenAI / OpenRouter / DeepSeek / Custom) [§5.E.6]
+- 章节"导入文本"入口(ChapterToolbar 按钮 → ImportChapterSheet,可选跑 Extractor,imported 章节在 sidebar 加角标) [§5.A.6]
+- 测试:34 个 XCTest(17 v0.5 + 10 ProviderKeys + 6 ChaptersStore import + 1 nil-encoding regression)
 
-**后端（FastAPI + SQLAlchemy 2.0 + Postgres + Alembic）**
-- 5 张业务表 + 1 张调试表（books / characters / chapters / timeline_events / agent_logs）
-- 23 个 API 端点，全部 `/api/v1` Bearer auth
-- 3 个 Agent：PromptExpander / Writer (SSE 流式) / Extractor (JSON)
-- Grok LLM 客户端（OpenAI 兼容协议，retry + timeout）
-- Context Pack 装配（按章节出场角色筛选 / 最近 2 章摘要 / 全部时间线）
-- Extractor → live_fields/timeline/summary 事务性写入
-- 测试：12 个（in-memory SQLite + MockLLMClient）
+**后端**
+- `provider_keys` + `system_settings` 数据层 + 6 个 CRUD/active 端点(api_key 永末 4 位掩码,`api_key_mask` 字段命名清晰) [§5.E.3 / §5.E.4]
+- LLM client 工厂(per-request 实例化,`OpenAICompatibleClient` 单一实现 — 任意 OpenAI 兼容 endpoint 都能接入) [§5.E.5]
+- `.env` 兼容性迁移(首次启动从 `GROK_API_KEY` 自动播种 active key,保护 v0.5 部署) [§5.E.7]
+- `POST /chapters/{id}/import` 端点(响应与 finalize 同 shape,严守 status 白名单避免 SSE race) [§5.A.4]
+- Writer context_pack 加 `style_samples`(最近 2 章 head 400 + tail 400 字,agent 与 imported 章节一视同仁) [§5.A.5]
+- `chapter.source` 字段(`'agent' | 'imported'`) [§5.A.3]
+- 测试:57 个 pytest(12 v0.5 + 14 provider_keys + 8 llm_factory + 9 chapter_import + 5 style_samples + 4 writer_prompt + 4 env_migration + 1 SSE no-key regression)
 
-### 1.2 v0.5 已知残留 todo（移入升级候选池）
+### 1.2 v0.5 能力(继承,无变更)
 
-- 字段级 dot indicator（当前是卡片级简化版） → §3 B
-- TimelineEvent 编辑（当前只读） → §3 C
-- Admin Log Panel UI（APIClient 已暴露 `listAgentLogs`，UI 缺） → §3 D
+**前端**:书架、3 栏 Workspace、5 步章节编辑器、SSE 流式写作、角色卡 inline 编辑、右栏 4 tab、Keychain。
+
+**后端**:5 张业务表 + 1 张调试表、23 个 v0.5 端点(总 29 个 with v0.6 新增)、3 个 Agent、Context Pack 装配、Extractor 事务性写入。
+
+### 1.3 v0.6 已知残留 todo(移入升级候选池)
+
+- 字段级 dot indicator(当前是卡片级简化版) → §3 B
+- TimelineEvent 编辑(当前只读) → §3 C
+- Admin Log Panel UI(APIClient 已暴露 `listAgentLogs`,UI 缺) → §3 D
+- A-2 reviewer 留下的 4 个非阻塞 🟡(import 副作用编排 helper / Sheet load-then-dismiss 顺序 / errorBus 断言风格 / 880×580 窗口下 sheet 显示 GUI 验证) — 留 v0.6.1
 - 上线前需把 `CODE_SIGNING_ALLOWED: NO` 切回 Automatic
 
 ---
@@ -143,19 +150,29 @@ LinoWritingV2/
 
 ## 4. 当前迭代
 
-### 4.1 v0.6 — 规划中
+### 4.1 v0.6 — ✅ 已发布
 
-**目标**：试运营就绪版。让 app 在多窗口尺寸下美观、支持 App 内填写多家 LLM Key、能导入用户已写的章节让 Writer 学到本人文风。
+**目标**：试运营就绪版。让 app 在多窗口尺寸下美观、支持 App 内填写多家 LLM Key、能导入用户已写的章节让 Writer 学到本人文风。**目标达成**。
 
 **清单**：
 
 ```
-[x] A — 前文导入 + 文风学习（§5.A）
-[x] E — 多 LLM Key 管理（OpenAI-compatible 统一协议，§5.E）
-[x] K — 响应式布局 + 苹果风美学升级（§5.K）
+[x] A — 前文导入 + 文风学习（§5.A）        ✅ A-1 + A-2 全过
+[x] E — 多 LLM Key 管理 OpenAI-compatible  ✅ E-1 + E-2 + E-3 全过
+[x] K — 响应式布局 + 苹果风美学升级（§5.K）✅ K-1 + K-2 + K-3 全过
 
 [ ] B / C / D / F / J — 推后到 v0.7+
 ```
+
+**实际 Phase 落地时间线**(commit 顺序):
+- `f6c02c0` E-1 后端 provider_keys 数据层
+- `4a9e948` E-2 后端 LLM client 工厂 + OpenAI-compatible 单实现
+- `87a95c2` K-1 前端响应式断点
+- `8da4472` A-1 后端 chapter import + style_samples
+- `c14b267` K-2 前端 Material + Toolbar + Toast
+- `1248cad` K-3 前端动画 + serif 字体 + StatusBadge transition
+- `9431c7e` E-3 前端 LLM Providers UI
+- `<this commit>` A-2 前端 import 按钮 + Sheet + v0.6 发版同步
 
 **Phase 排序**：
 
@@ -591,3 +608,5 @@ v0.5 baseline 审计结论：
 - 变更内容：`.frame(minWidth: 880, minHeight: 580)` 仍保留在 `LinoWritingApp` 的 `WindowGroup` 上（未挪至 `WorkspaceView`），并在源码中加注释说明原因。
 - 变更原因：`.windowResizability(.contentMinSize)` 是从 SwiftUI view minimum size 读取窗口最小尺寸的；如果把 frame 挪到 `WorkspaceView`，书架时窗口的最小尺寸就无人约束，属于 macOS window 行为变更，超出 K-2 视觉打磨范围。
 - 影响范围：Phase K-2；后续若要做"书架窗口可更窄"需独立讨论 `.windowResizability` 取值与首选 minimum 来源。
+
+| 2026-05-23 | **v0.6 发布** | A + E + K 三块全部落地。8 个 Phase 一次跑通(E-1 → E-2 → K-1 → A-1 → K-2 → K-3 → E-3 → A-2),每个 Phase 都走完 planner-builder-reviewer 三步。版本号 5 处同步到 `0.6.0`(`App/project.yml MARKETING_VERSION` + `Backend/pyproject.toml` + `app/main.py` + `routers/health.py` + `tests/test_auth.py`)。测试基线 v0.5 末:12 pytest + 17 XCTest → v0.6 末:57 pytest + 34 XCTest。一个跨 phase 的契约修复值得记录:E-3 reviewer 发现 `GET /api/v1/settings/active_provider_key` 后端实际返回的嵌套 shape 与前端预期的 flat shape 不一致(plan §5.E.4 明文要 flat),修后端 router 让其对齐 plan。 |

@@ -5,6 +5,11 @@ public struct ChapterEditorView: View {
     @EnvironmentObject var chaptersStore: ChaptersStore
     @EnvironmentObject var charactersStore: CharactersStore
 
+    /// Sheet binding for the §5.A import flow. Lives on the outer view so it
+    /// persists across the toolbar re-render that happens when the chapter
+    /// transitions to `finalized` mid-submit.
+    @State private var showImportSheet: Bool = false
+
     public init() {}
 
     public var body: some View {
@@ -32,6 +37,22 @@ public struct ChapterEditorView: View {
         // `.animation(.smooth, value:)` keyed on the same id, SwiftUI would
         // skip the .transition phase.
         .animation(.smooth(duration: 0.3), value: chapterEditorStore.chapter?.id)
+        // PROJECT_PLAN §5.A.7 Phase A-2: import sheet host. Hosting it here
+        // (rather than inside the toolbar) means the sheet content sees the
+        // outer environment objects and survives toolbar rebuilds.
+        .sheet(isPresented: $showImportSheet) {
+            if let chapter = chapterEditorStore.chapter {
+                ImportChapterSheet(chapter: chapter)
+            }
+        }
+        // A-2 reviewer 🟡 #5: if the chapter gets cleared from under us while
+        // the sheet is open (e.g. user navigates away, store reset), an empty
+        // sheet would render without a cancel button. Force-dismiss instead.
+        .onChange(of: chapterEditorStore.chapter?.id) { _, newId in
+            if newId == nil && showImportSheet {
+                showImportSheet = false
+            }
+        }
     }
 
     private var emptyState: some View {
@@ -47,7 +68,7 @@ public struct ChapterEditorView: View {
     @ViewBuilder
     private func content(for chapter: Chapter) -> some View {
         VStack(spacing: 0) {
-            ChapterToolbar(chapter: chapter)
+            ChapterToolbar(chapter: chapter, onImportTap: { showImportSheet = true })
             Divider()
             ScrollView {
                 VStack(spacing: 18) {

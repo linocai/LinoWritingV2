@@ -19,6 +19,11 @@ public final class MockAPIClient: APIClientProtocol, @unchecked Sendable {
     public var onWrite: ((String) -> [SSEEvent])?
     public var onFinalize: ((String) -> FinalizeResult)?
     public var onReopen: ((String) -> Chapter)?
+    public var onImport: ((String, ChapterImportRequest) -> ChapterImportResponse)?
+
+    /// Captures the last `importChapter` payload so tests can assert that the
+    /// Swift-side encoding (e.g. `runExtractor` → `run_extractor`) survived.
+    public var lastImportPayload: ChapterImportRequest?
 
     public var errorToThrow: AppError?
 
@@ -278,6 +283,29 @@ public final class MockAPIClient: APIClientProtocol, @unchecked Sendable {
         c.updatedAt = Date()
         chapters[idx] = c
         return c
+    }
+
+    public func importChapter(id: String, payload: ChapterImportRequest) async throws -> ChapterImportResponse {
+        recordCall("importChapter")
+        lastImportPayload = payload
+        try maybeThrow()
+        if let onImport { return onImport(id, payload) }
+        guard let idx = chapters.firstIndex(where: { $0.id == id }) else {
+            throw AppError.notFound("chapter")
+        }
+        var c = chapters[idx]
+        c.draftText = payload.draftText
+        if let t = payload.title { c.title = t }
+        if let s = payload.summary { c.summary = s }
+        c.source = .imported
+        c.status = .finalized
+        c.updatedAt = Date()
+        chapters[idx] = c
+        return ChapterImportResponse(
+            chapter: c,
+            updatedCharacterIds: [],
+            addedEventIds: []
+        )
     }
 
     public func listAgentLogs(chapterId: String?, limit: Int) async throws -> [AgentLog] {
