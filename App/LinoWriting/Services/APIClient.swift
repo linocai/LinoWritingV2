@@ -36,7 +36,12 @@ public protocol APIClientProtocol: Sendable {
     func adminResetChapter(id: String, targetStatus: ChapterStatus) async throws -> Chapter
 
     // Admin
-    func listAgentLogs(chapterId: String?, limit: Int) async throws -> [AgentLog]
+    func listAgentLogs(
+        chapterId: String?,
+        agentName: String?,
+        limit: Int,
+        before: Date?
+    ) async throws -> [AgentLog]
 
     // Provider keys (§5.E.4)
     func listProviderKeys() async throws -> [ProviderKey]
@@ -372,9 +377,23 @@ public final class APIClient: APIClientProtocol, @unchecked Sendable {
 
     // MARK: - Admin
 
-    public func listAgentLogs(chapterId: String?, limit: Int) async throws -> [AgentLog] {
+    public func listAgentLogs(
+        chapterId: String?,
+        agentName: String?,
+        limit: Int,
+        before: Date?
+    ) async throws -> [AgentLog] {
         var q: [URLQueryItem] = [URLQueryItem(name: "limit", value: String(limit))]
         if let chapterId { q.append(URLQueryItem(name: "chapter_id", value: chapterId)) }
+        if let agentName { q.append(URLQueryItem(name: "agent_name", value: agentName)) }
+        if let before {
+            // v0.7 §5.D — match the `before` formatting used by listTimeline so
+            // the backend's `datetime` parser accepts it without surprises
+            // (`+00:00` offset + fractional seconds, ISO-8601).
+            let f = ISO8601DateFormatter()
+            f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            q.append(URLQueryItem(name: "before", value: f.string(from: before)))
+        }
         let req = try makeRequest(method: "GET", path: "/api/v1/admin/logs", query: q)
         let resp: ListResponse<AgentLog> = try await send(req, as: ListResponse<AgentLog>.self)
         return resp.items

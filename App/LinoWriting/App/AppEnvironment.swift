@@ -31,6 +31,8 @@ final class AppEnvironment: ObservableObject {
     private(set) lazy var chapterEditorStore: ChapterEditorStore = ChapterEditorStore(api: apiClient, errorBus: errorBus)
     private(set) lazy var timelineStore: TimelineStore = TimelineStore(api: apiClient, errorBus: errorBus)
     private(set) lazy var providerKeysStore: ProviderKeysStore = ProviderKeysStore(api: apiClient, errorBus: errorBus)
+    // v0.7 §5.D / Phase D-log: backs the Settings → "Agent 日志" tab.
+    private(set) lazy var agentLogStore: AgentLogStore = AgentLogStore(api: apiClient, errorBus: errorBus)
 
     init(
         keychain: KeychainStore = .shared,

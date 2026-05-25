@@ -21,7 +21,8 @@ public struct SettingsView: View {
     public var isFirstRun: Bool
 
     /// Tab selector. First-run mode forces `.connection`.
-    private enum Tab: Hashable { case connection, providers, errorLog }
+    /// v0.7 §5.D / Phase D-log adds `.agentLogs` for the Admin Log Panel.
+    private enum Tab: Hashable { case connection, providers, errorLog, agentLogs }
     @State private var tab: Tab = .connection
 
     public init(isFirstRun: Bool = false) {
@@ -41,6 +42,7 @@ public struct SettingsView: View {
                         Text("连接").tag(Tab.connection)
                         Text("LLM Providers").tag(Tab.providers)
                         Text("最近错误").tag(Tab.errorLog)
+                        Text("Agent 日志").tag(Tab.agentLogs)
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
@@ -58,6 +60,8 @@ public struct SettingsView: View {
                             ProviderKeysSettingsView()
                         case .errorLog:
                             ErrorLogSettingsView()
+                        case .agentLogs:
+                            AgentLogSettingsView()
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -610,5 +614,345 @@ private struct ErrorLogRow: View {
                     lineWidth: 1
                 )
         )
+    }
+}
+
+// MARK: - Agent 日志 tab (v0.7 §5.D / Phase D-log)
+
+/// Lists `agent_logs` rows from the backend so the author can audit each
+/// LLM call (input prompt / output preview / latency / status). Replaces
+/// the v0.5 promise that "APIClient already exposes listAgentLogs, UI is
+/// the only thing missing".
+///
+/// Design notes:
+/// - Mirrors the visual rhythm of `ErrorLogSettingsView` (header + content
+///   columns, monospaced time, RoundedRectangle row chrome) so the four
+///   tabs feel like one consistent surface.
+/// - Rows are folded by default. Tapping reveals `inputPreview` and
+///   `outputPreview` in monospaced scrollable boxes. Previews are already
+///   length-capped + sensitive-data-scrubbed on the backend
+///   (`openai_compatible.py`'s 4xx scrub from §5.P.1), so we render them
+///   verbatim.
+/// - Infinite scroll: LazyVStack's `onAppear` on the last row triggers
+///   `loadMore`. Once `hasMore == false` we drop the spinner.
+private struct AgentLogSettingsView: View {
+
+    @EnvironmentObject private var store: AgentLogStore
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+
+            Divider()
+
+            content
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .task {
+            // Only do an initial load when entries is empty so re-opening
+            // the Settings sheet doesn't blow away the user's scroll state.
+            if store.entries.isEmpty {
+                await store.load()
+            }
+        }
+    }
+
+    private var header: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Agent 日志")
+                    .font(.title3.weight(.semibold))
+                Text("回看每次 Expander / Writer / Extractor / 强制重置 调用的 prompt、输出与耗时。点击任一行展开看完整 input/output。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Button {
+                Task { await store.load() }
+            } label: {
+                Label("刷新", systemImage: "arrow.clockwise")
+            }
+            .buttonStyle(.bordered)
+            .disabled(store.isLoading)
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 16)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        VStack(spacing: 0) {
+            filterBar
+                .padding(.horizontal, 20)
+                .padding(.top, 10)
+                .padding(.bottom, 6)
+
+            Divider()
+
+            if store.isLoading && store.entries.isEmpty {
+                ProgressView("加载中…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if store.entries.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "scroll")
+                        .font(.system(size: 32, weight: .light))
+                        .foregroundStyle(.secondary)
+                    Text("还没有 Agent 调用记录")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Text("展开提纲 / 写作 / 提取 后这里会出现条目。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 8) {
+                        ForEach(Array(store.entries.enumerated()), id: \.element.id) { index, entry in
+                            AgentLogRow(entry: entry)
+                                .onAppear {
+                                    // Trigger pagination when the very last
+                                    // row enters the viewport. Guards inside
+                                    // loadMore() already filter dup calls.
+                                    if index == store.entries.count - 1 {
+                                        Task { await store.loadMore() }
+                                    }
+                                }
+                        }
+                        if store.isLoading && !store.entries.isEmpty {
+                            HStack {
+                                Spacer()
+                                ProgressView()
+                                    .controlSize(.small)
+                                Spacer()
+                            }
+                            .padding(.vertical, 8)
+                        } else if !store.hasMore {
+                            Text("— 已是最早的记录 —")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 8)
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 12)
+                }
+            }
+        }
+    }
+
+    private var filterBar: some View {
+        HStack(spacing: 12) {
+            Picker("过滤", selection: filterBinding) {
+                ForEach(AgentLogStore.AgentLogFilter.allCases, id: \.self) { f in
+                    Text(f.displayName).tag(f)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+
+            Spacer()
+        }
+    }
+
+    private var filterBinding: Binding<AgentLogStore.AgentLogFilter> {
+        Binding(
+            get: { store.filter },
+            set: { newValue in
+                Task { await store.setFilter(newValue) }
+            }
+        )
+    }
+}
+
+/// A single `agent_logs` row. Collapsed by default; tap to expand and
+/// reveal the prompt + response previews.
+private struct AgentLogRow: View {
+
+    let entry: AgentLog
+
+    @State private var isExpanded: Bool = false
+
+    private static let timeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
+        return f
+    }()
+
+    private static let dateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "MM-dd"
+        return f
+    }()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            headerButton
+
+            if isExpanded {
+                expandedBody
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 10)
+            }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.gray.opacity(0.05))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(
+                    statusColor.opacity(isError ? 0.25 : 0.08),
+                    lineWidth: 1
+                )
+        )
+    }
+
+    private var headerButton: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                isExpanded.toggle()
+            }
+        } label: {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: statusIcon)
+                    .foregroundStyle(statusColor)
+                    .font(.body)
+                    .frame(width: 22, alignment: .center)
+                    .padding(.top, 1)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text(agentDisplayName)
+                            .font(.callout.weight(.medium))
+                            .foregroundStyle(.primary)
+                        Text(Self.dateFormatter.string(from: entry.createdAt) + " " + Self.timeFormatter.string(from: entry.createdAt))
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                    HStack(spacing: 8) {
+                        Text(isError ? "失败" : "成功")
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(statusColor.opacity(0.15), in: Capsule())
+                            .foregroundStyle(statusColor)
+                        if let ms = entry.latencyMs {
+                            Text("\(ms) ms")
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+                        if let inTok = entry.tokensIn, let outTok = entry.tokensOut {
+                            Text("↑\(inTok) ↓\(outTok)")
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
+                Spacer(minLength: 0)
+
+                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 2)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var expandedBody: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Divider()
+                .padding(.bottom, 2)
+
+            if let err = entry.error, !err.isEmpty {
+                previewBlock(title: "错误", text: err, tint: .red)
+            }
+
+            if let input = entry.inputPreview, !input.isEmpty {
+                previewBlock(title: "Input", text: input, tint: .secondary)
+            } else {
+                emptyBlock(title: "Input")
+            }
+
+            if let output = entry.outputPreview, !output.isEmpty {
+                previewBlock(title: "Output", text: output, tint: .secondary)
+            } else {
+                emptyBlock(title: "Output")
+            }
+        }
+    }
+
+    private func previewBlock(title: String, text: String, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(tint)
+            ScrollView {
+                Text(text)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.primary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+                    .padding(8)
+            }
+            .frame(maxHeight: 160)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color.primary.opacity(0.04))
+            )
+        }
+    }
+
+    private func emptyBlock(title: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text("(空)")
+                .font(.caption.italic())
+                .foregroundStyle(.tertiary)
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color.primary.opacity(0.04))
+                )
+        }
+    }
+
+    private var isError: Bool {
+        // Backend writes `error` only on failure paths; presence ⇒ failure.
+        if let e = entry.error, !e.isEmpty { return true }
+        return false
+    }
+
+    private var statusColor: Color {
+        isError ? Color.red : Color.green
+    }
+
+    private var statusIcon: String {
+        isError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill"
+    }
+
+    /// Map backend `agent_name` to a friendly Chinese label. Keep this
+    /// in lock-step with `AgentLogStore.AgentLogFilter.displayName` so
+    /// the filter Picker label and the row label match (e.g. selecting
+    /// "提取" must surface rows whose label says "提取").
+    private var agentDisplayName: String {
+        switch entry.agentName {
+        case "expander": return "提纲展开"
+        case "writer": return "写作"
+        case "extractor": return "提取"
+        case "admin_reset": return "强制重置"
+        default: return entry.agentName
+        }
     }
 }

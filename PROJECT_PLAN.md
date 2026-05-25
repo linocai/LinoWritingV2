@@ -1300,3 +1300,50 @@ v0.7 最后一笔 commit(发版同步那一笔),与 5 处版本号一起做。
   1. **全书导出**:书架页面 → 鼠标 hover 任意书卡 → 封面右上角浮现一个圆形带 `square.and.arrow.up` 图标的按钮 → 点一下 → NSSavePanel 弹出,默认文件名 `《书名》.md`(包含 Chinese 字符)→ 用户选保存位置 / 改名 → 点 "Save" → MD 文件落在所选目录,内容:H1 书名 + 可选 world_setting blockquote + 所有 finalized 章节(H2 `## 第 N 章 · 标题`),章节间 `---` 分隔;草稿章节默认不在。
   2. **单章导出**:进入某章 ChapterEditor → 工具栏最右 `ellipsis.circle` 三点菜单(P-2 已有的) → 点开 → 第一项 `导出本章`(`square.and.arrow.up` 图标) → 点击 → NSSavePanel 弹出,默认文件名 `第N章·title.md` → 保存 → 文件内容:`### {书名}` 作 caption + `## 第 N 章 · {章节标题}` + 正文。无 title 时 fallback `第N章.md`。
   3. **错误路径**:Bearer 失效或后端不通 → ErrorBus 收到 transport / unauthorized → 右下角 Toast(N 的 i18n message)→ 同样会在 Settings → 最近错误 tab 回看。NSSavePanel 用户取消时无 Toast(取消不是 error)。
+
+### [2026-05-25] Phase D-log Admin Log Panel UI 实施
+
+- 变更内容:
+  - **后端 `routers/admin.py` 扩展两个查询参数**:`agent_name: str | None`(精确匹配,前端 Picker 传 `expander` / `writer` / `extractor` / `admin_reset`)+ `before: datetime | None`(`created_at < before` 的反向分页 cursor,与 `characters.py` 的 timeline 端点同款语义)。原有 `chapter_id` / `limit` 参数保留行为不变,新增过滤叠加在原 query 之上;`ORDER BY created_at DESC` 不动。无 Alembic 迁移(纯 router 层)。
+  - **后端 `tests/test_admin_logs.py` 新增 2 个 pytest**:① `agent_name` 精确过滤(含 `admin_reset` 这个 N 的新值)② `before` cursor 三段分页(limit=2,e5/e4 → e3/e2 → e1)。直接通过 sessionmaker 插原始 `AgentLog` 行,跳过 Agent 跑全流程的代价。
+  - **前端 `Models/AgentLog.swift`**:零改动 — DTO 已经完整(`latencyMs` / `error` / `inputPreview` / `outputPreview` 等),与后端 `AgentLogRead` 对得上。`status` 在前端由 `error` 字段的空/非空派生,不入 DTO,保持后端 schema 简洁。
+  - **前端 `Services/APIClient.swift`**:`listAgentLogs` 签名扩成 `(chapterId:agentName:limit:before:)`,新参数 wire 到 `agent_name` / `before` query;`before` 用与 timeline 相同的 `ISO8601DateFormatter([.withInternetDateTime, .withFractionalSeconds])` 格式化,保证后端 `datetime` 解析无歧义。`MockAPIClient` 同步实现三参过滤(chapterId / agentName / before)。
+  - **前端新建 `Stores/AgentLogStore.swift`**:`@MainActor ObservableObject`,沿 `TimelineStore` 同款模式 — `entries` / `isLoading` / `hasMore` / `filter` 四个 `@Published`,`pageSize` 默认 50。三个 public 方法:`load()`(重置 + 拉第一页)/ `loadMore()`(append 下一页,cursor = `entries.last.createdAt`)/ `setFilter(_:)`(切换 filter 时清空再 load,等于 `hasMore` 的判断只看本次过滤的尾巴)。`hasMore` 用 `page.count < pageSize` 简化判断(与 TimelineStore 一致;边界 case "page == pageSize 且就是最后一页"在下次 loadMore 时多发一次 0 行请求自我修正,作者无感)。错误统一走 `ErrorBus.publish`。新增内嵌 enum `AgentLogFilter`(`.all` / `.expander` / `.writer` / `.extractor` / `.adminReset`),`apiValue` 返 `nil`(.all) / `"expander"` / `"writer"` / `"extractor"` / `"admin_reset"` — `.all` 让 URLQueryItem 缺省;`displayName` 返中文(`"全部"` / `"提纲展开"` / `"写作"` / `"提取"` / `"强制重置"`)。
+  - **前端 `App/AppEnvironment.swift` + `App/LinoWritingApp.swift`**:`agentLogStore: AgentLogStore` lazy 注入 + WindowGroup 注入 `environmentObject`。
+  - **前端 `Views/Root/SettingsView.swift` 加第 4 个 tab "Agent 日志"**:`Tab` enum 加 `.agentLogs` case;segmented Picker 加 `Text("Agent 日志").tag(Tab.agentLogs)`;switch dispatch 新 `AgentLogSettingsView()`。新增私有 `AgentLogSettingsView` + `AgentLogRow` 两个 view:
+    - **Header**:沿用 ErrorLogSettingsView 同款两列布局(标题 + 副标题 + 右上"刷新"按钮);副标题中文解释用途。
+    - **Filter bar**:segmented Picker(5 个 case,与 N 的 Toast 风格一致);切换调 `store.setFilter`。
+    - **List**:`ScrollView` + `LazyVStack`,最后一行 `onAppear` 触发 `loadMore`(`LazyVStack` + `ForEach` 用 `Array(entries.enumerated())` 拿 index 判最后一行);loading 时底部 `ProgressView`,`hasMore == false` 显示"— 已是最早的记录 —"。
+    - **AgentLogRow** 折叠/展开:头部一行 = status 图标(绿 ✓ 或红 ⚠ 由 `error` 字段空/非空派生)+ agent_name 中文映射(`expander → 提纲展开`,`writer → 写作`,`extractor → 提取`,`admin_reset → 强制重置`,unknown → 原字符串)+ 等宽 monospaced `MM-dd HH:mm:ss` 时间戳。第二行 = 状态 capsule("成功"/"失败")+ `latency_ms`(N ms,monospaced)+ token 数(`↑in ↓out`,monospaced,仅在 `tokensIn` 和 `tokensOut` 都非空时显示)。点击行(全行 `Button(.plain)` + `contentShape(Rectangle())`)切换展开 → 露出 error(红色 tint,仅在 error 非空时)+ Input + Output 三个 monospaced ScrollView 块(`maxHeight: 160` + `textSelection(.enabled)`,便于复制 prompt);空 preview 显示 `(空)` 占位。卡片 chrome 沿用 RoundedRectangle + ErrorLogRow 同款 strokeBorder,error 行红描边、成功行 8% primary 描边。
+  - **前端新建 `LinoWritingTests/AgentLogStoreTests.swift`** 9 个 XCTest(plan 要求 ≥5):
+    1. `load_populatesEntriesAndClearsLoadingFlag`
+    2. `loadMore_appendsWithoutDuplicates`(pageSize=3,seed 6,第一页 3 行 → loadMore 后 6 行不重复)
+    3. `setFilter_clearsAndReloadsWithNewAgentName`(seed writer×2 + extractor×4,切到 `.extractor` 只看到 4 行)
+    4. `setFilter_sameValueIsNoop`(相同 filter 不发额外 API)
+    5. `hasMore_flipsFalse_whenServerReturnsShortPage`
+    6. `loadMore_isNoop_whenHasMoreIsFalse`(短路守护)
+    7. `load_publishesErrorOnFailure`(transport 失败走 ErrorBus,isLoading 也 drain)
+    8. `agentLogFilter_apiValue_matchesBackendAgentNameStrings`(契约锁定 4 个值)
+    9. `agentLogFilter_displayNames_areChinese`(锁中文映射)
+- 变更原因:v0.7 §5.D / Phase D-log。`APIClient.listAgentLogs` 自 v0.5 就暴露,但一直没有 UI 入口;调试 Writer 输出 / 排查 Extractor 失败时,作者无法看到原始 prompt + response + 耗时,只能靠 Toast / 终端 backend log。D-log 在 SettingsView 加第 4 个 tab 把这层 admin 能力露给作者。
+- 影响范围:Phase D-log;后端新增 1 个文件(`tests/test_admin_logs.py`),修改 1 个文件(`routers/admin.py`);前端新增 2 个文件(`Stores/AgentLogStore.swift` + `LinoWritingTests/AgentLogStoreTests.swift`),修改 4 个文件(`Services/APIClient.swift` / `LinoWritingTests/MockAPIClient.swift` / `App/AppEnvironment.swift` / `App/LinoWritingApp.swift` / `Views/Root/SettingsView.swift`)。不动 N 的 ErrorBus / 中文模板;不动 F 的 export;不动 O 的 import;不动 v0.7 已 commit 的 P / L / M / C-tl / B-fld 内容;不动 errors.py 的 4xx body 脱敏(N 已落地)— Agent 日志 preview 复用 N 的脱敏成果。
+- 关键判断:
+  - **后端为什么不另开 6 个独立端点 而是叠加 query 参数**:listAgentLogs 已经存在,新加两参向后兼容,对老 caller 零影响;再开端点反而要前端维护多入口。
+  - **`status` 字段不入 DTO 由前端从 `error` 派生**:后端 schema 没有 `status` 列(只有 `error`,失败时非 NULL,成功时 NULL — 这是 v0.5 写入逻辑的现状)。给后端加一个派生 `status` 字段会污染 schema 也不便迁移;前端 `error?.isEmpty == false` 一行判断更轻。
+  - **filter 切换为什么不能 append 而必须 reset**:server-side 过滤 = 不同 slice;append 会保留上一 filter 的行造成视觉混乱。`TimelineStore.setCharacter` 同款模式。
+  - **`hasMore` 简化判断的边界**:`page.count < pageSize` 在"恰好整页 + 最后一页"边界会让用户多触发一次 `loadMore`(API 返 0 行,`hasMore` 翻 false)。代价 = 一次无害网络请求,收益 = 不用做总数 count(后端无该端点)/ 不用做服务端"hasMore" hint(增加契约面积);可接受。
+  - **中文 agent_name 映射在 Store enum + Row view 两处都写**:出于直接性 — Store 的 enum 服务于 Picker / Filter,Row 的 mapping 服务于历史数据展示(且要兜 unknown agent_name → 原字符串);两个目的不同,共享会引入 string compare via enum 的转换层。锁定测试 `agentLogFilter_displayNames_areChinese` 把 enum 这一侧锁住,Row 那一侧两个映射手维护,后续加新 agent 时一并更。
+  - **折叠 / 展开默认折叠**:与作者扫码式审阅习惯一致 — 99% 的行只想知道"哪个 Agent、什么时候、成功还是失败、多长时间";展开看 prompt 才是 1% 排错场景。
+  - **`textSelection(.enabled)` 给 Input/Output 块**:作者排错时常常想复制完整 prompt 到外部工具(ChatGPT / Claude Desktop)对比响应差异,`textSelection` 是该路径的关键。
+- 测试基线:
+  - 后端:F 末 173 pytest → D-log 末 175 pytest(173 baseline 全过 + 2 新),`pytest -W error` 干净。
+  - 前端:F 末 111 XCTest(以本次实跑 baseline 为准,含 O 的 `ChapterSplitterTests`)→ D-log 末 120 XCTest 通过(111 baseline + 9 新),`xcodebuild build` macOS 0 error 0 warning,`xcodebuild test` 0 fail。
+- 未做:Q(发版同步 v0.7.0)还在 v0.7 收尾队列里。
+- 端到端 happy path(用户操作):
+  1. 主菜单 → `设置...`(⌘,) → 弹出 Settings sheet → 顶部 segmented Picker 现在是四个 tab:`连接 / LLM Providers / 最近错误 / Agent 日志`。
+  2. 点 `Agent 日志` → 列表自动加载最近 50 条日志,按时间倒序(最新在顶)。每条:绿色 ✓ 或红色 ⚠ 图标 + Agent 中文名(`写作` / `提取` / `提纲展开` / `强制重置`) + `MM-dd HH:mm:ss` 时间戳;第二行 = 状态 capsule + `1234 ms` 延迟 + `↑500 ↓700` token 数。
+  3. 顶部 segmented Picker 切换 `全部 / 提纲展开 / 写作 / 提取 / 强制重置` → 列表立刻清空 → 重新拉取该 Agent 过去 50 条;切回 `全部` 又看到混合 5 类。
+  4. 点击任意一行 → 折叠展开 → 露出 Input + Output 两块 monospaced 文本(可选中复制),长输入有内层 ScrollView(最多 160pt 高);失败的行还会先显示"错误"块(红色 tint)显示后端落库的 sanitized error message(已经在 v0.7 P-1 的 4xx body 脱敏后入库,看不到泄漏的 LLM key)。
+  5. 滚动到列表底部 → 自动触发下一页(`loadMore` cursor 跟着 `entries.last.createdAt`,无 offset 漂移);没有更多记录时显示 `— 已是最早的记录 —`。
+  6. 右上角 `刷新` 按钮强制 reset + 拉第一页(用户怀疑后端刚写入未刷出时使用)。
+  7. 错误路径:后端 401 或断网 → ErrorBus toast `登录已过期...` 或 `网络异常...`(N 的中文模板) → 同样会出现在 `最近错误` tab 里回看。

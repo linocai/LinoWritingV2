@@ -378,10 +378,25 @@ public final class MockAPIClient: APIClientProtocol, @unchecked Sendable {
         return c
     }
 
-    public func listAgentLogs(chapterId: String?, limit: Int) async throws -> [AgentLog] {
+    public func listAgentLogs(
+        chapterId: String?,
+        agentName: String?,
+        limit: Int,
+        before: Date?
+    ) async throws -> [AgentLog] {
         recordCall("listAgentLogs")
         try maybeThrow()
-        return Array(agentLogs.prefix(limit))
+        var filtered = agentLogs
+        if let chapterId {
+            filtered = filtered.filter { $0.chapterId == chapterId }
+        }
+        if let agentName {
+            filtered = filtered.filter { $0.agentName == agentName }
+        }
+        if let before {
+            filtered = filtered.filter { $0.createdAt < before }
+        }
+        return Array(filtered.prefix(limit))
     }
 
     // MARK: - Provider Keys
