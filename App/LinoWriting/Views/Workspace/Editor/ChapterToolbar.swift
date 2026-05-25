@@ -59,6 +59,27 @@ public struct ChapterToolbar: View {
 
     @ViewBuilder
     private var primaryActionButtons: some View {
+        // SSE in flight overrides the status-based switch: the local
+        // chapter.status can lag the backend by a few hundred ms (it only
+        // flips to .writing when the first stream event lands), and during
+        // that window the .promptReady branch was still rendering the
+        // enabled "写作" button — letting impatient double-clicks fire a
+        // second POST /write that the backend then 409s on. Treat any
+        // running stream as authoritative.
+        if chapterEditorStore.isStreaming {
+            Button {
+                chapterEditorStore.cancelStream()
+            } label: {
+                Label("取消写作", systemImage: "stop.circle")
+            }
+            .buttonStyle(.bordered)
+        } else {
+            statusBasedButtons
+        }
+    }
+
+    @ViewBuilder
+    private var statusBasedButtons: some View {
         switch chapter.status {
         case .draft:
             Button(action: expand) {

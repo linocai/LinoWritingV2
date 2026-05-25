@@ -15,6 +15,16 @@ public final class ChapterEditorStore: ObservableObject {
     @Published public private(set) var chapter: Chapter?
     @Published public private(set) var isLoading: Bool = false
     @Published public private(set) var writingState: WritingState = .idle
+
+    /// True while an SSE write stream is in flight — used by the toolbar
+    /// to short-circuit the chapter.status switch so users can't fire a
+    /// second POST /write before the first one has flipped the backend
+    /// status to "writing". Otherwise rapid double-clicks during the
+    /// 200ms gap before the first token arrives produce 409 Conflicts.
+    public var isStreaming: Bool {
+        if case .streaming = writingState { return true }
+        return false
+    }
     @Published public private(set) var isExpanding: Bool = false
     @Published public private(set) var isFinalizing: Bool = false
     @Published public private(set) var isImporting: Bool = false
