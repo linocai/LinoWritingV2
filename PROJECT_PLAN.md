@@ -124,22 +124,29 @@ LinoWritingV2/
 
 ## 3. 升级候选池
 
-候选项分为 4 种状态：
-- 🟢 **就绪**：方案已讨论，详案见 §5，可随时进 v0.X 清单
+候选项分为 5 种状态：
+- ✅ **已发布**：在某个版本里实施完成
+- 🟢 **就绪**：方案已讨论，详案见 §5，已进 §4 某个迭代
 - 🟡 **粗线**：方向已定，详案待补
 - 🔵 **待讨论**：仅记录方向，未做设计
 - ⚫ **已剔除**：明确不做（不进路线图）
 
 | 编号 | 主题 | 状态 | 详案 |
 |---|---|---|---|
-| **A** | 前文导入 + 文风学习 | 🟢 就绪 | §5.A |
-| **B** | 字段级 dot indicator（v0.5 残留） | 🟡 粗线 | §5.B |
-| **C** | TimelineEvent 编辑（v0.5 残留） | 🟡 粗线 | §5.C |
-| **D** | Admin Log Panel UI（v0.5 残留） | 🟡 粗线 | §5.D |
-| **E** | 多 LLM Key 管理（OpenAI-compatible 统一协议，App 内管理） | 🟢 就绪 | §5.E |
-| **F** | 章节/全书导出（markdown / txt） | 🔵 待讨论 | — |
-| **J** | 全文搜索 | 🔵 待讨论 | — |
-| **K** | 响应式布局 + 苹果风美学升级 | 🟢 就绪 | §5.K |
+| **A** | 前文导入 + 文风学习 | ✅ v0.6 | §5.A |
+| **B** | 字段级 dot indicator | 🟢 v0.7 | §5.B |
+| **C** | TimelineEvent 编辑 | 🟢 v0.7 | §5.C |
+| **D** | Admin Log Panel UI | 🟢 v0.7 | §5.D |
+| **E** | 多 LLM Key 管理（OpenAI-compatible 统一协议，App 内管理） | ✅ v0.6 | §5.E |
+| **F** | 章节/全书导出（markdown / txt） | 🟢 v0.7 | §5.F |
+| **J** | 全文搜索 | 🔵 待讨论（推 v0.8+） | — |
+| **K** | 响应式布局 + 苹果风美学升级 | ✅ v0.6 | §5.K |
+| **L** | 角色卡 narrative 通病修复（分层 + 本章重点 + Writer prompt 改造） | 🟢 v0.7 **主菜** | §5.L |
+| **M** | 多 LLM per-Agent 选择（Writer→Claude / Extractor→Grok 等） | 🟢 v0.7 | §5.M |
+| **N** | 错误中文模板 + ErrorBus history | 🟢 v0.7 | §5.N |
+| **O** | 批量章节导入 | 🟢 v0.7 | §5.O |
+| **P** | v0.7 急修包（SSE cancel / admin reset / Store reset / PATCH 白名单 / 4xx 脱敏） | 🟢 v0.7 | §5.P |
+| **Q** | 文档同步（PROJECT_PLAN §2 + README 漂移修复） | 🟢 v0.7 | §5.Q |
 
 剔除项（不进路线图）：
 - ⚫ G. 卷/章节分组
@@ -197,6 +204,73 @@ LinoWritingV2/
 - 后端 `Backend/pyproject.toml` + `Backend/app/main.py` + `Backend/app/routers/health.py` + `Backend/tests/test_auth.py` → `0.6.0`
 - 本文档 §7 变更日志加新条目
 - git commit 标 `v0.6: …`
+
+---
+
+### 4.2 v0.7 — 规划中
+
+**目标**：试运营深化版。修掉 v0.6 试运营暴露的安全/计费/UX 系统性短板，解决最大的内容质量痛点（Writer 把角色卡当 narrate 检查表），并清掉 v0.5/v0.6 残留 todo 让 v0.7 收尾后能进入"打磨期"。
+
+**清单**：
+
+```
+🥇 主菜
+[ ] L — 角色卡 narrative 通病修复（§5.L）
+
+🔴 必修包（试运营裸奔风险）
+[ ] P — 急修包（SSE cancel / admin reset / Store reset / PATCH 白名单 / 4xx 脱敏，§5.P）
+
+🟡 战略价值
+[ ] M — 多 LLM per-Agent 选择（§5.M）
+[ ] N — 错误中文模板 + ErrorBus history（§5.N）
+[ ] F — 章节/全书导出（§5.F）
+
+🟢 试运营增强
+[ ] O — 批量章节导入（§5.O）
+
+🧹 v0.5/v0.6 旧债清算
+[ ] B — 字段级 dot indicator（§5.B）
+[ ] C — TimelineEvent 编辑（§5.C）
+[ ] D — Admin Log Panel UI（§5.D）
+
+📚 收尾
+[ ] Q — 文档同步（§5.Q）
+```
+
+**Phase 排序**（14 个 Phase，按依赖+并行机会排）：
+
+| 序号 | Phase | 内容 | 依赖 | 可并行 |
+|---|---|---|---|---|
+| 1 | **P-1** 急修后端 | SSE producer cancel hook + L 测试 + LLM 4xx body 脱敏 + ChapterPatch 白名单 | — | ✅ 与 P-2 并行 |
+| 2 | **P-2** 急修前端 | ChapterEditorStore.load 完整 reset + admin_reset 端点 UI | — | ✅ 与 P-1 并行 |
+| 3 | **P-3** admin_reset 端点 | `POST /chapters/{id}/admin_reset` | P-1 | — |
+| 4 | **L-1** 角色卡分层数据模型 | character.author_notes + chapter.focus_traits Alembic 迁移 | — | ✅ 与 P 系列并行 |
+| 5 | **L-2** Expander + Writer prompt 改造 | structured_prompt.focus_traits 推断 + Writer 加 show/tell 反例 + context_pack 合并查询 | L-1 | — |
+| 6 | **L-3** 前端角色卡双区编辑 | CharacterCardEditorView 分 narrative_visible / author_notes 两区 + chapter focus_traits 显示 | L-1 | ✅ 与 L-2 并行 |
+| 7 | **M-1** 多 LLM per-Agent 后端 | provider_keys.agent_role 字段 + factory 按 agent 选 key + UI 兼容性 | — | ✅ 与 L 系列并行 |
+| 8 | **M-2** 多 LLM per-Agent 前端 | SettingsView LLM Providers tab 加"哪个 Agent 用哪个 key" | M-1 | — |
+| 9 | **N** 错误中文模板 + Toast history | Backend 错误消息 i18n + Toast 历史栏 + Settings 里"最近错误"列表 | — | ✅ 与 M / L 并行 |
+| 10 | **F** 章节/全书导出 | `GET /books/{id}/export?format=markdown` + 前端入口 | — | ✅ 与 N / M 并行 |
+| 11 | **O** 批量章节导入 | NewChapterSheet 加 batch mode（按分隔符切分多章） | L-3 之后 | — |
+| 12 | **B-fld** 字段级 dot indicator | Extractor 输出 patch 描述 + 前端字段级红点 | L-1 | — |
+| 13 | **C-tl** TimelineEvent 编辑 | `PATCH /timeline_events/{id}` + 前端 inline 编辑 | — | ✅ 独立 |
+| 14 | **D-log** Admin Log Panel UI | listAgentLogs 已有，仅缺 UI | — | ✅ 独立 |
+| 15 | **Q** 文档同步 + v0.7 发版 | PROJECT_PLAN §2 + App/Backend README 更新 + 5 处版本号 → 0.7.0 | 全部完成 | — |
+
+**关键约束**：
+- **P-1 是 v0.7 第一棒**（SSE cancel 关计费泄漏，每个用户取消都白烧 token，这是 v0.7 最紧迫的事）
+- L-1 数据模型先行，L-2/L-3 可并行
+- B-fld 依赖 L-1（因为角色卡分层会改 schema，B-fld 要适配新结构）
+- M 系列与 L 系列完全独立，可同时跑
+- N / F / D-log / C-tl 都是独立 Phase，可见缝插针
+- O 等 L-3 是因为 UI 与 NewChapterSheet 共享 import 状态机
+
+**发版同步清单**（v0.7 收尾用）：
+- 前端 `App/project.yml` 的 `MARKETING_VERSION` → `0.7`
+- 后端 `Backend/pyproject.toml` + `Backend/app/main.py` + `Backend/app/routers/health.py` + `Backend/tests/test_auth.py` → `0.7.0`
+- 本文档 §7 变更日志加新条目
+- git commit 标 `v0.7: …`
+- LinoI.app 重新打包 + ad-hoc 签名 + 部署 ~/Desktop
 
 ---
 
@@ -312,48 +386,48 @@ Alembic 迁移脚本：`add_chapter_source.py`，对存量章节回填 `'agent'`
 
 ---
 
-### 5.B 字段级 dot indicator 🟡
+### 5.B 字段级 dot indicator 🟢
 
-**v0.5 状态**：卡片级简化版。`pendingHighlightIds` 在 finalize 后写入，用户点击该角色时清除。
+#### 5.B.1 动机
+v0.5/v0.6 是卡片级:Extractor 改任意 `live_fields.{key}` → 整张卡 dot,用户点击卡片消除。粒度太粗,作者看不出 Agent 到底改了哪个字段。
 
-**v0.6+ 目标**：精确到字段级 — Extractor 改了 `live_fields.{key}` 后，UI 在该 key 旁边显示小红点，用户点击/编辑后消除。
+#### 5.B.2 设计决策
+- **后端 Extractor 输出附带 `patch_keys`**:`{ character_updates: [{ id, patch_keys: ["current_status", "knowledge"], patch: {...} }] }`
+- **agent_logs** 已记录每次调用 → 可派生改动,但每次 UI 查询要 JOIN agent_logs 较重 → **存到 character 表**:加 `pending_field_highlights JSONB`(`{key: timestamp_of_change}`),用户点编辑该 field 后清掉对应 key
+- **前端**:`InlineEditableText` / `InlineEditableDict` 渲染时检查 `pendingFieldHighlights[key]`,显示小红点;onCommit 后 PATCH 清掉
 
-**待补设计**：
-- 后端：Extractor 返回结构需要附带"改动了哪些 key"的 patch 描述
-- 前端：CharacterCardEditorView 渲染每个 live field 时检查 patch 元数据
-- 存储：是放 `Character` 表还是 `agent_logs` 派生
-
-→ 待 v0.X 排期时由 planner 补完详案。
-
----
-
-### 5.C TimelineEvent 编辑 🟡
-
-**v0.5 状态**：只读列表。
-
-**v0.6+ 目标**：用户可编辑 `event_text` 和 `event_type`。
-
-**待补设计**：
-- 后端：新增 `PATCH /api/v1/timeline_events/{id}`（schema、auth、错误处理）
-- 前端：TimelineTabView 的每条 event 加 inline 编辑入口
-- 是否允许删除 event（v0.5 不允许）
-
-→ 待 v0.X 排期时由 planner 补完详案。
+#### 5.B.3 依赖
+L-1(角色卡分层迁移)— B-fld 也要改 character schema,合并迁移更干净。
 
 ---
 
-### 5.D Admin Log Panel UI 🟡
+### 5.C TimelineEvent 编辑 🟢
 
-**v0.5 状态**：`APIClient.listAgentLogs` 已可用，无 UI。
+#### 5.C.1 动机
+v0.5/v0.6 时间线只读;作者发现 Extractor 提取错了事件,只能干瞪眼。
 
-**v0.6+ 目标**：调试/开发用的日志面板，列出最近 N 条 Agent 调用（含 prompt、response、耗时、token 数）。
+#### 5.C.2 设计决策
+- **后端新增 `PATCH /api/v1/timeline_events/{id}`**:body `{ event_text?, event_type? }`,白名单字段;不允许改 `character_id` / `chapter_id`(语义不允许跨章节挪事件)
+- **删除事件**:加 `DELETE /api/v1/timeline_events/{id}`(确认删除时弹 alert)
+- **前端 TimelineTabView**:每条 event 加 inline 编辑(双击进入编辑态)+ 右侧 hover 显示删除按钮
+- **审计字段**:事件本身加 `edited_at TIMESTAMPTZ NULL`(区分原始 Agent 提取 vs 用户编辑过的)
 
-**待补设计**：
-- 入口位置（设置页 / 隐藏菜单 / 独立 view）
-- 分页 / 过滤（按 agent type、按 chapter）
-- 是否暴露 raw prompt（敏感性？）
+---
 
-→ 待 v0.X 排期时由 planner 补完详案。
+### 5.D Admin Log Panel UI 🟢
+
+#### 5.D.1 动机
+`APIClient.listAgentLogs` 已暴露;UI 缺。调试 Writer 输出 / 排查 Extractor 失败时,作者需要看原始 prompt + response + 耗时。
+
+#### 5.D.2 设计决策
+- **入口**:SettingsView 加第三个 tab "Agent 日志"(Connection / LLM Providers / Agent Logs)
+- **布局**:List of agent_log entries,每条显示:agent_type + chapter_index + duration_ms + status(ok/error) + 时间;点击展开 input/output preview
+- **分页**:`?limit=50 &before=<created_at>` 按 created_at 倒序滚动
+- **过滤**:顶部 Picker(All / Expander / Writer / Extractor)
+- **隐私**:input/output preview 已经在后端被截断到 ~2K(reviewer 提到 admin/logs 一次查询接近 200KB,需要按 P 系列的脱敏一起做)
+
+#### 5.D.3 依赖
+P-1 急修包里的"4xx body 脱敏"应当先做,确保日志体不含 LLM key / 敏感 token。
 
 ---
 
@@ -579,6 +653,211 @@ v0.5 baseline 审计结论：
 
 ---
 
+### 5.L 角色卡 narrative 通病修复 🟢 **v0.7 主菜**
+
+#### 5.L.1 动机
+
+v0.5 → v0.6 试运营暴露的最严重内容质量问题:**Writer 把角色卡当成"检查表",每段都把每个 trait narrate 一遍**。
+- ❌ "林夕谨慎地观察了四周。" / "刀子嘴豆腐心的他叹了口气。"
+- ❌ 反复在旁白里强调 "他敏锐..." / "他声音简短..."
+
+根因有三层:
+1. **Writer system prompt 误导**:当前写"严格遵守 frozen_fields,角色卡冻结区不能漂移",LLM 误读为"必须显性体现每个 trait 给用户看"
+2. **角色卡 frozen_fields 整份灌进 prompt**:没有"幕后参考"vs"narrate-safe"的区分
+3. **structured_prompt 没指定本章重点**:Writer 试图把所有 trait 都用上,缺乏聚焦
+
+LLM 写作类应用的通病(Sudowrite / NovelAI / Claude 裸用都撞过)。没有 silver bullet,但有组合拳。
+
+#### 5.L.2 设计决策
+
+| 决策点 | 选择 |
+|---|---|
+| 角色卡分层方式 | `frozen_fields` 保持不变;**新增 `author_notes JSONB`** 字段,作者填"演员小抄"型笔记(动机、过往伤、隐秘),Writer 可读但 system prompt 明确说"绝不可直接 narrate 这部分" |
+| `live_fields` 处理 | 不动 — 它本来就是 Extractor 维护的"事实"(知识、状态),narrate 合理 |
+| 本章重点机制 | `structured_prompt` 新增字段 `focus_traits: [string]`(0-2 个 trait 名,如 "core_traits.谨慎"),Expander 自动从 user_prompt 推断,作者可手改 |
+| Writer prompt 改造 | **完全重写** "角色卡使用规则"段,加 show/tell 反例 few-shot;明确"frozen_fields / author_notes 是幕后理解,通过行为 emerge,不要直接 narrate";"focus_traits 是本章可重点 emerge 的特质,其它不刷存在感" |
+| context_pack 合并查询 | 顺手把 reviewer 提的性能问题修了:`_recent_summaries` + `_style_samples` 合并为一次 SQL |
+
+#### 5.L.3 数据模型变更
+
+`characters` 表新增字段:
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `author_notes` | JSONB NOT NULL DEFAULT '{}' | 作者笔记,key-value 自由结构;Writer 读但绝不 narrate |
+
+`chapters` 表 `structured_prompt` JSONB 内部加字段(无 schema 迁移,只是 JSON 结构约定):
+
+```json
+{
+  ...
+  "focus_traits": ["谨慎", "对妹妹的愧疚"]   // 0-2 个,本章重点可 emerge
+}
+```
+
+#### 5.L.4 Expander prompt 改造
+
+`PromptExpanderAgent` 在产出 `structured_prompt` 时:
+- 看用户的 ~50 字 user_prompt
+- 看本章涉及角色的 frozen_fields + author_notes
+- 自动选 0-2 个"本章最相关的 trait"放进 `focus_traits`
+- 作者在前端可见/可改
+
+#### 5.L.5 Writer prompt 改造(核心)
+
+`WriterAgent.system_prompt` 重写,新结构:
+
+```
+# 角色卡使用规则(读懂这条比读对人设更重要)
+
+characters[*] 的 frozen_fields 和 author_notes 是**幕后参考** —
+用来帮你判断角色在情境中如何行动/说话/选择,**不是清单也不是检查表**。
+
+绝不要为了"证明你看了角色卡"而把人格直接说出来:
+- ❌ 反例:"林夕谨慎地观察了四周" / "刀子嘴豆腐心的他叹了口气"
+- ✓ 正例:"林夕在原地站了三息,目光从左到右扫过。" /
+        "他骂了一句脏话,声音很轻。然后把自己的水袋递了过去。"
+
+同一项 trait 在整章里**最多用一次**作为行动驱动,不要反复 narrate。
+不要把字段名(如 "core_traits"、"voice")或字段内容**逐字搬到正文**。
+角色卡是水库,不是必须排空的水桶 — 不自然的 trait 就完全不用。
+
+# 本章重点
+structured_prompt.focus_traits 是本章**可重点 emerge** 的 1-2 个特质,
+其它 trait 保持隐性,不主动展示。
+
+author_notes 是角色的"演员小抄":动机/过往/秘密。这是**纯幕后**,
+正文里**绝不可有任何句子直接转述 author_notes 的内容**。它的作用
+只是让你判断角色在抉择关口会怎么走 — 决定后,只写抉择和行动。
+```
+
+(其余 must_happen / must_not_happen / timelines / 字数 等保持。)
+
+#### 5.L.6 前端变更
+
+- `Character` Codable 加 `authorNotes` 字段
+- `CharacterCardEditorView` 现在的"冻结区 / 活动区"两区 → 改为**三区**:
+  - **冻结区**(frozen_fields):公开人设,可被 narrate
+  - **活动区**(live_fields):Agent 维护的事实
+  - **作者笔记**(author_notes):折叠区,作者点开才显示,标注"仅供 Agent 幕后参考,不会被写入正文"
+- `Step2_StructuredPromptView` 显示并允许编辑 `focus_traits`(从角色 trait 池里 chip 多选)
+
+#### 5.L.7 Phase 拆分
+
+参见 §4.2 Phase 表:**L-1**(数据模型 + 迁移)→ **L-2**(Expander + Writer prompt + context_pack 合并) ∥ **L-3**(前端角色卡分三区 + focus_traits chip)
+
+---
+
+### 5.M 多 LLM per-Agent 选择 🟢
+
+#### 5.M.1 动机
+
+v0.6 只有"全局 active key",所有 Agent(Expander / Writer / Extractor)都走同一个。试运营暴露的问题:
+- Writer 用便宜模型 → 文笔差;用顶级模型 → token 账单爆
+- Extractor 做结构化 JSON 提取,中端模型够用,**没必要用 Claude Opus**
+- Expander 输出短结构化提纲,**任何模型都够**
+
+让每个 Agent 各选 active key,可以**控成本 60-80%** 同时质量不降。
+
+#### 5.M.2 设计决策
+
+- **provider_keys 加可选字段 `agent_role`**:NULL = 通用(回退用);`'writer'` / `'extractor'` / `'expander'` 表示专为该 agent 服务
+- **system_settings 加三个 active 引用**:`active_writer_key_id` / `active_extractor_key_id` / `active_expander_key_id`
+- **factory 改造**:`build_llm_client(db, agent_role)` 按 agent 选 key,fallback 顺序:`active_{agent}_key` → 通用 `active_provider_key`(v0.6 已有的全局 active)→ 报错
+- **前端**:SettingsView LLM Providers tab 每条 key 加 "用于哪个 Agent" 多选;顶部三个 dropdown 选 active(可以同一个 key 选 3 个 role,也可以分开)
+
+#### 5.M.3 向后兼容
+v0.6 用户:三个 agent_role active 全部为 NULL → factory 全部 fallback 到全局 active → 行为与 v0.6 完全一致。
+
+---
+
+### 5.N 错误中文模板 + ErrorBus history 🟢
+
+#### 5.N.1 动机
+
+试运营暴露:
+- "Chapter status 'writing' cannot perform write" 是英文裸消息,作者看不懂
+- Toast 3 秒自动消失,SSE error / Extractor 422 这种长文本闪一下就丢
+- 失败后没有"再试一次"按钮
+
+#### 5.N.2 设计决策
+
+- **后端 `app/errors.py` 加 i18n 模板**:`ConflictError(action="write", status="writing")` → "章节当前正在写作中,无法再次开始写作"
+- **前端 ErrorBus 加 `history: [Notice]`**(@Published,最近 30 条),SettingsView 加第四个 tab "最近错误"
+- Toast 不动(3s 自动消失 / 401 长留),只是"消失后用户能在 SettingsView 回看"
+
+---
+
+### 5.O 批量章节导入 🟢
+
+#### 5.O.1 动机
+
+接入旧稿 50+ 章时,单章导入要重复 50 次 sheet。
+
+#### 5.O.2 设计决策
+
+- NewChapterSheet "导入"tab 加 **"批量模式"** Toggle
+- 开启后:文本框上方提示"用 `第X章` 或 `Chapter X` 作为分隔符";系统按 regex 切分
+- 预览区显示切出多少章、每章字数
+- 提交时:对每章串行调 `POST /chapters/.../import`(进度条显示当前进度)
+- 失败处理:中途某章失败 → 暂停 + 显示错误 + 保留已成功的章节
+
+---
+
+### 5.P v0.7 急修包 🟢 **必修**
+
+#### 5.P.1 子项清单
+
+reviewer 在 v0.7 启动审计中发现的 5 个跨 phase 问题,合并为一个急修 Phase:
+
+1. **D — SSE producer cancel hook**:client 断连 → 后端 daemon thread 通过 `threading.Event` 收到 cancel 信号 → 立即终止 LLM stream → **关计费泄漏**
+2. **L — SSE cancel/disconnect 测试**:配 D 一起做,锁契约
+3. **G — ChapterEditorStore.load 完整 reset @Published**:切章节时清 `lastUpdatedCharacterIds` / `isImporting` / `writingState` 全部,避免上一章状态泄漏到新章节
+4. **A — LLM 上游 4xx body 脱敏 + 截断**:body 含用户内容可能泄露,且 OpenAI-compat 上游 4xx 偶尔回显 header → 入库前过滤敏感 token + 截断到 256B
+5. **F — ChapterPatch 白名单字段**:当前 `PATCH /chapters/{id}` 用 `for k, v in payload.dump()` 裸 setattr,可能误改 status / source → 改成显式白名单 `{title, user_prompt, structured_prompt, draft_text}`
+6. **E — `/chapters/{id}/admin_reset` 端点 + UI 入口**:任意状态 → draft_ready(确认 alert),用于 SSE 中途崩溃 / 状态卡死时自救;UI 在 SettingsView 或章节 toolbar 隐藏菜单
+
+#### 5.P.2 Phase 拆分
+
+- **P-1**(后端):D + L + A + F 都是后端补丁,一笔 commit
+- **P-2**(前端):G + E 的 UI 入口
+- **P-3**(后端):E 的端点(单独拎出来因为可能要加新 router method)
+
+---
+
+### 5.F 章节/全书导出 🟢
+
+#### 5.F.1 动机
+
+写完一本想分享 / 备份 / 投稿。
+
+#### 5.F.2 设计决策
+
+- **后端**:`GET /api/v1/books/{id}/export?format={markdown|txt}`
+  - markdown 包含:书标题(H1)+ 章节(H2 = "第 N 章 · 标题")+ 正文 + 章节间分隔
+  - txt 不带标记,纯正文 + 章节标题
+  - 单章导出:`GET /api/v1/chapters/{id}/export?format=...`
+- **前端**:Bookshelf 书卡 hover 显示"导出"按钮;ChapterEditor 顶部 toolbar 隐藏菜单加"导出本章"
+- 浏览器 / Mac 走 NSSavePanel,默认文件名 `{book_title}.md` / `第N章.md`
+
+---
+
+### 5.Q 文档同步 🟢
+
+#### 5.Q.1 范围
+
+v0.7 收尾时清理累积的文档漂移:
+- PROJECT_PLAN.md §2 项目结构总览(reviewer 指出已经过时,仍写 12 pytest / 17 XCTest / 5 张表)
+- PROJECT_PLAN.md §1.1 v0.6 能力(v0.6.x 急修后部分描述需更新)
+- App/README.md / Backend/README.md(自 v0.5 后未走查,大概率漂移)
+- `Backend/IMPLEMENTATION_STATUS.md`(v0.5 存档,确认是否需要 v0.6 版本)
+
+#### 5.Q.2 时机
+
+v0.7 最后一笔 commit(发版同步那一笔),与 5 处版本号一起做。
+
+---
+
 ## 6. 历史文档索引
 
 | 文件 | 用途 | 状态 |
@@ -610,3 +889,16 @@ v0.5 baseline 审计结论：
 - 影响范围：Phase K-2；后续若要做"书架窗口可更窄"需独立讨论 `.windowResizability` 取值与首选 minimum 来源。
 
 | 2026-05-23 | **v0.6 发布** | A + E + K 三块全部落地。8 个 Phase 一次跑通(E-1 → E-2 → K-1 → A-1 → K-2 → K-3 → E-3 → A-2),每个 Phase 都走完 planner-builder-reviewer 三步。版本号 5 处同步到 `0.6.0`(`App/project.yml MARKETING_VERSION` + `Backend/pyproject.toml` + `app/main.py` + `routers/health.py` + `tests/test_auth.py`)。测试基线 v0.5 末:12 pytest + 17 XCTest → v0.6 末:57 pytest + 34 XCTest。一个跨 phase 的契约修复值得记录:E-3 reviewer 发现 `GET /api/v1/settings/active_provider_key` 后端实际返回的嵌套 shape 与前端预期的 flat shape 不一致(plan §5.E.4 明文要 flat),修后端 router 让其对齐 plan。 |
+
+### [2026-05-24] v0.6.x 试运营急修汇总(commit `4ef4f2c` / `ac258b8` / `40edf39` / `6839879`)
+
+四笔修复,均不动 plan 层面契约:
+- `4ef4f2c` v0.6.1 NewChapterSheet 加导入 tab(A-2 入口前移,跳过填假 prompt 的弯路)
+- `ac258b8` Step3_DraftView 只读分支用 Text 替代 disabled TextEditor(macOS 上 disabled 冻结滚动)
+- `40edf39` ChapterToolbar 用 isStreaming 短路 chapter.status 切换(双击"写作"按钮的 race)
+- `6839879` OpenAICompatibleClient 处理空 `choices` 帧(provider 偶发 metadata 帧导致 IndexError)
+治本根因抽象建议放 v0.7 §5.P 急修包(40edf39 的 chapter.status 单一源问题)。
+
+### [2026-05-24] v0.7 plan 锁定(本文档版本 v0.7-draft)
+
+主菜 L(角色卡 narrative 通病修复)+ 必修包 P(SSE cancel / admin reset / Store reset / PATCH 白名单 / 4xx 脱敏) + 战略价值(M 多 LLM per-Agent / N 错误中文化 / F 导出) + v0.5 旧债清算(B/C/D)+ O 批量导入 + Q 文档同步,共 11 项 / 15 个 Phase。整体审计由 reviewer 完成,发现 3 个 🔴 严重问题(SSE producer 线程泄漏关计费、ChapterEditorStore.load 未重置 lastUpdatedCharacterIds、LLM 4xx body 入库泄漏),全部进 P 急修包,P-1 是 v0.7 第一棒。
