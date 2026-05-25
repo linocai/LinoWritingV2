@@ -3,7 +3,7 @@
 > 本文档是 v0.6 起的**单一项目行动依据**。前端、后端、契约层全部合并在此。
 > v0.1–v0.5 期间使用 `PLAN_FRONTEND.md` / `PLAN_BACKEND.md` 双契约工作流，作为 v0.5 契约存档保留，不再更新。
 >
-> 文档版本：v0.6（已发布）
+> 文档版本：v0.7（已发布）
 > 关联存档：`PLAN_FRONTEND.md`（v0.5 前端契约存档）、`PLAN_BACKEND.md`（v0.5 后端契约存档）
 
 ---
@@ -40,43 +40,64 @@
 
 ---
 
-## 1. 当前版本状态 (v0.6 — 已发布)
+## 1. 当前版本状态 (v0.7 — 已发布)
 
-### 1.1 v0.6 新增能力(在 v0.5 基础上)
+### 1.1 v0.7 新增能力(在 v0.6 基础上)
 
-**前端**
-- 响应式三档窗口断点(< 800 / 800-1099 / ≥ 1100):窄屏自动折叠 Sidebar / RightPanel 成 sheet,最小窗口降到 880×580 [§5.K.3]
-- 苹果风美学:Sidebar `.regularMaterial` + RightPanel `.thinMaterial`、`.toolbarRole(.editor)`、`.windowToolbarStyle(.unifiedCompact)`、章节卡 / 角色卡 / 时间线卡 Material 化 [§5.K.4]
-- 全局 `.smooth` 动画:状态切换 / 章节切换 / 角色卡切换 / StatusBadge contentTransition [§5.K.4]
-- 章节正文字体可切 serif/sans(`Settings.editorFontDesign`,默认 serif) [§5.K.4]
-- Toast 错误条(右下角 `.thinMaterial` 胶囊,取代 v0.5 ErrorBanner) [§5.K.4]
-- BookCard / ChapterList row hover 抬升 + macOS pointing-hand cursor [§5.K.4]
-- App 内 LLM Provider 管理(Connection / LLM Providers 两 tab,增删改 + 设 active,Preset 一键预填 xAI / OpenAI / OpenRouter / DeepSeek / Custom) [§5.E.6]
-- 章节"导入文本"入口(ChapterToolbar 按钮 → ImportChapterSheet,可选跑 Extractor,imported 章节在 sidebar 加角标) [§5.A.6]
-- 测试:34 个 XCTest(17 v0.5 + 10 ProviderKeys + 6 ChaptersStore import + 1 nil-encoding regression)
+**主菜:角色卡 narrative 通病修复(L)**
+- `characters.author_notes JSONB`:作者笔记区(动机/过往伤/秘密),Writer / Expander 看得到但**绝不可 narrate**;Extractor 隔离不看 [§5.L.3 / §5.L.5]
+- `structured_prompt.focus_traits: list[str]`(0-2 个):本章重点 emerge 的特质,Expander 推断 + 作者可改;空时 Writer 不刻意 emerge [§5.L.4 / §5.L.5]
+- Writer system_prompt 重写:show/tell 反例 few-shot + "角色卡是水库不是必须排空的水桶" + author_notes 纯幕后规则 [§5.L.5]
+- context_pack `_recent_summaries` + `_style_samples` 合并为一次 SQL [§5.L.5]
+- 前端角色卡分**三区**(冻结 / 活动 / 作者笔记,默认折叠),Step2 加 focus_traits chip 多选 [§5.L.6]
 
-**后端**
-- `provider_keys` + `system_settings` 数据层 + 6 个 CRUD/active 端点(api_key 永末 4 位掩码,`api_key_mask` 字段命名清晰) [§5.E.3 / §5.E.4]
-- LLM client 工厂(per-request 实例化,`OpenAICompatibleClient` 单一实现 — 任意 OpenAI 兼容 endpoint 都能接入) [§5.E.5]
-- `.env` 兼容性迁移(首次启动从 `GROK_API_KEY` 自动播种 active key,保护 v0.5 部署) [§5.E.7]
-- `POST /chapters/{id}/import` 端点(响应与 finalize 同 shape,严守 status 白名单避免 SSE race) [§5.A.4]
-- Writer context_pack 加 `style_samples`(最近 2 章 head 400 + tail 400 字,agent 与 imported 章节一视同仁) [§5.A.5]
-- `chapter.source` 字段(`'agent' | 'imported'`) [§5.A.3]
-- 测试:57 个 pytest(12 v0.5 + 14 provider_keys + 8 llm_factory + 9 chapter_import + 5 style_samples + 4 writer_prompt + 4 env_migration + 1 SSE no-key regression)
+**必修包(系统级 bug 清扫,P 系列 + 后续修订)**
+- SSE producer cancel hook:用户取消写作时 cancel_event 透传到 httpx socket close,**关计费泄漏** [§5.P.1 D]
+- LLM 上游 4xx body 脱敏:Bearer / sk- / sk-ant- / xai- / AIza 等 6+ 模式 redact + 256 字符截断 [§5.P.1 A]
+- ChapterPatch + CharacterPatch 双层白名单字段:schema + router setattr 防 mass-assignment [§5.P.1 F + L-1 reviewer 🟡 #2]
+- `POST /chapters/{id}/admin_reset` 端点 + UI 三点菜单"强制重置状态"+ 幂等(同状态 no-op,不写 log) [§5.P.1 E]
+- ChapterEditorStore.load 全清 @Published(红点 leak 跨章节修复) [§5.P.1 G]
 
-### 1.2 v0.5 能力(继承,无变更)
+**控成本(多 LLM per-Agent,M)**
+- `provider_keys.agent_role` + `system_settings.active_{writer,extractor,expander}_key_id`:每个 Agent 各自 active key,fallback 通用 [§5.M.2]
+- `GET / PUT /api/v1/settings/active_key/{agent_role}` 参数化端点 [§5.M.4]
+- LLM factory `build_llm_client(db, agent_role=)`:per-agent dispatch + 三态 fallback [§5.M.5]
+- Routers 各 endpoint 注入对应 Agent 的 LLMClient(write→writer, finalize+import→extractor, expand→expander)
+- 前端 SettingsView LLM Providers tab 加 per-agent picker + ProviderKeyEditSheet 加"用途"选择(三态 AgentRoleUpdate enum)+ 兼容性 capsule [§5.M.6]
 
-**前端**:书架、3 栏 Workspace、5 步章节编辑器、SSE 流式写作、角色卡 inline 编辑、右栏 4 tab、Keychain。
+**UX 改善(N + B-fld + C-tl + D-log)**
+- 后端错误中文模板 + i18n_conflict / i18n_not_found / i18n_upstream helpers,14 处 raise 中文化(no_active_llm_key 等 sentinel 搬到 `details.code`) [§5.N]
+- 前端 ErrorBus 加 30 条 FIFO history + SettingsView 新 tab "最近错误"(时间戳 + level + 完整 message + textSelection) [§5.N]
+- 字段级 dot indicator:`character.pending_field_highlights JSONB` + Extractor 写 keys + PATCH live_fields 自动清 + InlineEditableText/Dict/Tags 加 showHighlight [§5.B]
+- TimelineEvent 编辑 / 删除:`PATCH/DELETE /api/v1/timeline_events/{id}` + edited_at 字段 + TimelineTabView 双击 inline 编辑 + hover × 删除 [§5.C]
+- SettingsView 第 4 tab "Agent 日志":listAgentLogs UI,按 agent_name 过滤 + cursor 分页 + 折叠展开看 input/output preview [§5.D]
 
-**后端**:5 张业务表 + 1 张调试表、23 个 v0.5 端点(总 29 个 with v0.6 新增)、3 个 Agent、Context Pack 装配、Extractor 事务性写入。
+**章节生命周期(A 系列扩展 + F + O)**
+- 章节/全书导出 markdown / txt:`GET /books/{id}/export?format=` + `GET /chapters/{id}/export`,RFC 5987 中文 filename;Bookshelf 卡 hover 导出 + ChapterToolbar 三点菜单"导出本章"+ macOS NSSavePanel [§5.F]
+- 批量章节导入:NewChapterSheet "批量模式" toggle + ChapterSplitter(5 regex 优先级 + minChapters 防误判)+ 串行 createAndImport + 进度 / 失败汇总 sheet [§5.O]
 
-### 1.3 v0.6 已知残留 todo(移入升级候选池)
+### 1.2 测试基线
 
-- 字段级 dot indicator(当前是卡片级简化版) → §3 B
-- TimelineEvent 编辑(当前只读) → §3 C
-- Admin Log Panel UI(APIClient 已暴露 `listAgentLogs`,UI 缺) → §3 D
-- A-2 reviewer 留下的 4 个非阻塞 🟡(import 副作用编排 helper / Sheet load-then-dismiss 顺序 / errorBus 断言风格 / 880×580 窗口下 sheet 显示 GUI 验证) — 留 v0.6.1
-- 上线前需把 `CODE_SIGNING_ALLOWED: NO` 切回 Automatic
+- **后端 pytest**:175 个(v0.6 末 57 → v0.7 末 +118)`-W error` 干净
+- **前端 XCTest**:120 个(v0.6 末 34 → v0.7 末 +86)
+- 全部 phase 走完 planner-builder-reviewer 三角工作流
+
+### 1.3 v0.7 已知残留(留 v0.7.x / v0.8+)
+
+各 phase reviewer 留下的 🔵 非阻塞建议,均不影响发版:
+- M-2 灰显视觉(Picker.menu 选项级 disable 不支持) / reloadBoth 部分失败语义
+- C-tl Step3 dirty draft 切章节自动 flush(已加 .onDisappear 兜底)
+- D-log MockAPIClient 排序 / infinite-scroll 防抖 / setFilter 竞态 / agent_name 白名单
+- F 5xx body 对称处理 / iOS UIDocumentPicker 真正 await
+- O batch cancel 按钮 / failure skeleton chapter 文档化
+- N 老英文 helper(`conflict / not_found / upstream`)v0.8 收回
+- 上线公测前需把 `CODE_SIGNING_ALLOWED: NO` 切回 Automatic(Apple Developer 证书)
+
+### 1.4 v0.5 / v0.6 历史能力(继承)
+
+**v0.5**:书架、3 栏 Workspace、5 步章节编辑器、SSE 流式写作、角色卡 inline 编辑、右栏 4 tab、Keychain;5 张业务表 + 1 张调试表 + 23 个端点、3 个 Agent、Context Pack 装配、Extractor 事务性写入。
+
+**v0.6 新增(已发布)**:响应式三档窗口断点、苹果风美学(Material / `.toolbarRole(.editor)` / `.windowToolbarStyle(.unifiedCompact)`)、全局动画、serif/sans 字体切换、Toast 错误条、Provider Key App 内管理(单 active)、章节"导入文本"入口 [详见 §5.A / §5.E / §5.K]
 
 ---
 
@@ -89,33 +110,34 @@ LinoWritingV2/
 ├── PLAN_BACKEND.md            ← v0.5 后端契约存档
 │
 ├── App/                       ← SwiftUI 前端
-│   ├── project.yml            ← xcodegen 配置，版本号在此
+│   ├── project.yml            ← xcodegen 配置，版本号在此(0.7)
 │   ├── LinoWriting.xcodeproj  ← 生成产物
 │   ├── LinoWriting/
-│   │   ├── App/               ← @main, AppEnvironment (DI)
-│   │   ├── Models/            ← 11 个 Codable DTO
-│   │   ├── Services/          ← APIClient, SSEClient, Keychain, ErrorMapping, Settings
-│   │   ├── Stores/            ← 7 个 ObservableObject
-│   │   ├── Views/             ← Root, Bookshelf, Workspace, Components
+│   │   ├── App/               ← @main, AppEnvironment (DI),11 个 Store 注入
+│   │   ├── Models/            ← 14 个 Codable DTO(Book/Chapter/Character/TimelineEvent/StructuredPrompt/ProviderKey/AgentLog/ExportFormat 等)
+│   │   ├── Services/          ← APIClient(35+ 端点)、SSEClient、Keychain、ErrorMapping、Settings、CodecFactory、ChapterSplitter、FileSaver
+│   │   ├── Stores/            ← 11 个 ObservableObject(AppStore/Bookshelf/Book/Characters/Chapters/ChapterEditor/Timeline/ProviderKeys/AgentLog/ErrorBus + 占位)
+│   │   ├── Views/             ← Root(Settings 4 tab)/Bookshelf/Workspace/Components
 │   │   ├── Platform/          ← #if os(macOS) 隔离
-│   │   └── Resources/         ← Assets, AppIcon, Localizable.xcstrings
-│   ├── LinoWritingTests/      ← XCTest 17 个
+│   │   └── Resources/         ← Assets, AppIcon(v0.5 rounded-i), Localizable.xcstrings
+│   ├── LinoWritingTests/      ← XCTest 120 个(v0.7 末)
 │   └── README.md
 │
 └── Backend/                   ← FastAPI 后端
-    ├── pyproject.toml         ← 版本号 & 依赖
+    ├── pyproject.toml         ← 版本号 & 依赖(0.7.0)
+    ├── uv.lock                ← uv 依赖锁定(v0.7 新增)
     ├── app/
-    │   ├── main.py            ← FastAPI app
+    │   ├── main.py            ← FastAPI app(版本字符串同步处)
     │   ├── config.py          ← Pydantic Settings
-    │   ├── auth.py / errors.py / db.py
-    │   ├── models/            ← 5 个 SQLAlchemy 模型
-    │   ├── schemas/           ← Pydantic DTOs
-    │   ├── routers/           ← health/books/characters/chapters/admin
-    │   ├── services/          ← context_pack / chapter_state / extractor_apply
-    │   ├── agents/            ← base / prompt_expander / writer / extractor
-    │   └── llm/               ← grok / base / errors
-    ├── alembic/               ← 迁移脚本
-    ├── tests/                 ← pytest 12 个
+    │   ├── auth.py / errors.py(i18n_*) / db.py
+    │   ├── models/            ← 7 张表 SQLAlchemy 模型(books / characters / chapters / timeline_events / agent_logs / provider_keys / system_settings)
+    │   ├── schemas/           ← Pydantic DTOs(含 ChapterImport / ProviderKey AgentRole / TimelineEventPatch / ActiveAgentKey 等)
+    │   ├── routers/           ← health / books / characters / chapters(含 export+import+admin_reset) / timeline_events / admin(logs) / provider_keys(含 per-agent active)
+    │   ├── services/          ← context_pack / chapter_state / extractor_apply / env_provider_migration / exporter
+    │   ├── agents/            ← base / prompt_expander / writer / extractor(均带 cancel_event)
+    │   └── llm/               ← openai_compatible(单实现) / factory(per-agent dispatch) / base / errors
+    ├── alembic/               ← 迁移脚本(v0.5 initial / 0001 provider_keys / 0002 chapter.source / 0001 author_notes / 0002 agent_role+per-agent active / 0003 timeline edited_at / 0001 pending_field_highlights)
+    ├── tests/                 ← pytest 175 个(v0.7 末)
     ├── deploy/                ← docker-compose.prod / Caddyfile / backup.sh
     └── README.md
 ```
@@ -134,19 +156,19 @@ LinoWritingV2/
 | 编号 | 主题 | 状态 | 详案 |
 |---|---|---|---|
 | **A** | 前文导入 + 文风学习 | ✅ v0.6 | §5.A |
-| **B** | 字段级 dot indicator | 🟢 v0.7 | §5.B |
-| **C** | TimelineEvent 编辑 | 🟢 v0.7 | §5.C |
-| **D** | Admin Log Panel UI | 🟢 v0.7 | §5.D |
+| **B** | 字段级 dot indicator | ✅ v0.7 | §5.B |
+| **C** | TimelineEvent 编辑 | ✅ v0.7 | §5.C |
+| **D** | Admin Log Panel UI | ✅ v0.7 | §5.D |
 | **E** | 多 LLM Key 管理（OpenAI-compatible 统一协议，App 内管理） | ✅ v0.6 | §5.E |
-| **F** | 章节/全书导出（markdown / txt） | 🟢 v0.7 | §5.F |
+| **F** | 章节/全书导出（markdown / txt） | ✅ v0.7 | §5.F |
 | **J** | 全文搜索 | 🔵 待讨论（推 v0.8+） | — |
 | **K** | 响应式布局 + 苹果风美学升级 | ✅ v0.6 | §5.K |
-| **L** | 角色卡 narrative 通病修复（分层 + 本章重点 + Writer prompt 改造） | 🟢 v0.7 **主菜** | §5.L |
-| **M** | 多 LLM per-Agent 选择（Writer→Claude / Extractor→Grok 等） | 🟢 v0.7 | §5.M |
-| **N** | 错误中文模板 + ErrorBus history | 🟢 v0.7 | §5.N |
-| **O** | 批量章节导入 | 🟢 v0.7 | §5.O |
-| **P** | v0.7 急修包（SSE cancel / admin reset / Store reset / PATCH 白名单 / 4xx 脱敏） | 🟢 v0.7 | §5.P |
-| **Q** | 文档同步（PROJECT_PLAN §2 + README 漂移修复） | 🟢 v0.7 | §5.Q |
+| **L** | 角色卡 narrative 通病修复（分层 + 本章重点 + Writer prompt 改造） | ✅ v0.7 **主菜** | §5.L |
+| **M** | 多 LLM per-Agent 选择（Writer→Claude / Extractor→Grok 等） | ✅ v0.7 | §5.M |
+| **N** | 错误中文模板 + ErrorBus history | ✅ v0.7 | §5.N |
+| **O** | 批量章节导入 | ✅ v0.7 | §5.O |
+| **P** | v0.7 急修包（SSE cancel / admin reset / Store reset / PATCH 白名单 / 4xx 脱敏） | ✅ v0.7 | §5.P |
+| **Q** | 文档同步（PROJECT_PLAN §2 + README 漂移修复） | ✅ v0.7 | §5.Q |
 
 剔除项（不进路线图）：
 - ⚫ G. 卷/章节分组
@@ -207,9 +229,22 @@ LinoWritingV2/
 
 ---
 
-### 4.2 v0.7 — 规划中
+### 4.2 v0.7 — ✅ 已发布
 
-**目标**：试运营深化版。修掉 v0.6 试运营暴露的安全/计费/UX 系统性短板，解决最大的内容质量痛点（Writer 把角色卡当 narrate 检查表），并清掉 v0.5/v0.6 残留 todo 让 v0.7 收尾后能进入"打磨期"。
+**目标**：试运营深化版。修掉 v0.6 试运营暴露的安全/计费/UX 系统性短板，解决最大的内容质量痛点（Writer 把角色卡当 narrate 检查表），并清掉 v0.5/v0.6 残留 todo 让 v0.7 收尾后能进入"打磨期"。**目标达成**。
+
+**实际 commit 时间线**:
+- `4b69bfa` Phase P-1+P-3 后端急修包(SSE cancel / 4xx 脱敏 / PATCH 白名单 / admin_reset)
+- `53af6f8` Phase L-1 后端 character.author_notes + structured_prompt.focus_traits
+- `5e12d40` Phase P-2 前端 ChapterEditorStore reset 加固 + admin_reset UI
+- `80b5129` Phase L-2 后端 Expander/Writer prompt 改造 + context_pack 合并查询
+- `5127460` Phase L-3 前端角色卡三区 + focus_traits chip
+- `d4eef00` Phase M-1 后端 provider_keys.agent_role + per-Agent factory
+- `a8a2a91` Phase M-2 + C-tl 前端 per-Agent picker + TimelineEvent 编辑/删除
+- `a934732` Phase N + B-fld 错误中文模板 + ErrorBus history + 字段级 dot
+- `e5bf01f` Phase F + O markdown/txt 导出 + 批量章节导入
+- `b1c096e` Phase D-log Admin Log Panel UI
+- `<this commit>` Phase Q v0.7 发版同步 + LinoI.app 重新打包
 
 **清单**：
 
@@ -1347,3 +1382,13 @@ v0.7 最后一笔 commit(发版同步那一笔),与 5 处版本号一起做。
   5. 滚动到列表底部 → 自动触发下一页(`loadMore` cursor 跟着 `entries.last.createdAt`,无 offset 漂移);没有更多记录时显示 `— 已是最早的记录 —`。
   6. 右上角 `刷新` 按钮强制 reset + 拉第一页(用户怀疑后端刚写入未刷出时使用)。
   7. 错误路径:后端 401 或断网 → ErrorBus toast `登录已过期...` 或 `网络异常...`(N 的中文模板) → 同样会出现在 `最近错误` tab 里回看。
+
+### [2026-05-25] **v0.7 发布(Phase Q 收尾)**
+
+v0.7 主线 13 个 Phase(L-1 / L-2 / L-3 / M-1 / M-2 / N / B-fld / C-tl / F / O / D-log / P-1+P-3 / P-2)+ Q 文档同步全部完成。版本号 5 处同步到 `0.7.0`(`App/project.yml MARKETING_VERSION` + `Backend/pyproject.toml` + `app/main.py FastAPI version` + `routers/health.py response` + `tests/test_auth.py assertion`)。`PROJECT_PLAN.md §1.1` 重写为 v0.7 五大块能力总览(主菜 L / 必修包 P / 控成本 M / UX 改善 N+B-fld+C-tl+D-log / 章节生命周期 F+O),§1.4 把 v0.5 / v0.6 收成历史段,§2 项目结构总览数字与文件清单更新到 v0.7 真实状态(7 张表 + 35+ 端点 + 11 Store + 14 DTO + 各 Service 列出新文件),§3 候选池 L/M/N/O/P/Q/B/C/D/F 全部标 ✅ v0.7,§4.2 标已发布并附 11 笔 commit 时间线。
+
+**测试基线**:v0.6 末 57 pytest + 34 XCTest → v0.7 末 **175 pytest + 120 XCTest**,`pytest -W error` 干净,xcodebuild macOS + iOS Simulator 双平台 0 error / 0 warning。
+
+**LinoI.app 重新打包**(Q 同步动作):macOS arm64 Release build + ad-hoc `codesign --force --deep --sign -` + 部署 `~/Desktop/LinoI.app`,bundle 7.0 MB,signature 仍为 ad-hoc(单用户本机 keychain 信任,Gatekeeper 拒绝但 LinoI 自用场景不需要)。版本号 LinoI.app 内 `CFBundleShortVersionString=0.7`、`CFBundleExecutable=LinoI`、`CFBundleIdentifier=com.lino.linowriting.LinoWriting`(沿用以保 Keychain 连续性)。
+
+**v0.7 已知残留 todo**(详见 §1.3):各 phase reviewer 留下的 🔵 非阻塞建议,全部留 v0.7.x 或 v0.8+ 视优先级处理。**当前可发版试运营**。
