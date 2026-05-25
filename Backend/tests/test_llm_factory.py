@@ -10,6 +10,7 @@ from app.main import app
 from app.models.provider_key import ProviderKey
 from app.models.system_settings import SystemSettings
 from app.llm.base import get_llm_client
+from tests.conftest import clear_all_llm_overrides
 
 
 def _seed_active_key(session: Session, **overrides) -> ProviderKey:
@@ -95,7 +96,8 @@ def test_expand_returns_upstream_envelope_when_no_active_key(
     standard error envelope to the HTTP caller (kind=upstream)."""
 
     # Remove the test stub so the real factory runs.
-    app.dependency_overrides.pop(get_llm_client, None)
+    # M-1: pop every per-Agent LLM override so the real factory runs.
+    clear_all_llm_overrides()
 
     book = client.post(
         "/api/v1/books",
@@ -149,7 +151,8 @@ def test_deleting_active_key_makes_expand_fail_upstream(
     client.delete(f"/api/v1/provider_keys/{created['id']}", headers=auth_headers)
 
     # Now strip the mock so the factory runs for real.
-    app.dependency_overrides.pop(get_llm_client, None)
+    # M-1: pop every per-Agent LLM override so the real factory runs.
+    clear_all_llm_overrides()
 
     book = client.post(
         "/api/v1/books",
@@ -186,7 +189,8 @@ def test_write_sse_returns_upstream_envelope_when_no_active_key(
 
     Locks the contract demanded by PROJECT_PLAN §5.E.7 #7 (SSE 路径预实例化)."""
 
-    app.dependency_overrides.pop(get_llm_client, None)
+    # M-1: pop every per-Agent LLM override so the real factory runs.
+    clear_all_llm_overrides()
 
     book = client.post(
         "/api/v1/books",

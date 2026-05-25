@@ -19,6 +19,25 @@ class SystemSettings(Base):
         ForeignKey("provider_keys.id", ondelete="SET NULL"),
         nullable=True,
     )
+    # v0.7 M-1: per-Agent active pointers. NULL = no agent-specific override
+    # → factory falls back to ``active_provider_key_id`` (v0.6 behavior).
+    # Each is constrained to a single provider_keys row by FK; ON DELETE
+    # SET NULL keeps the singleton row consistent if a key is deleted.
+    active_writer_key_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("provider_keys.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    active_extractor_key_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("provider_keys.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    active_expander_key_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("provider_keys.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=utc_now,

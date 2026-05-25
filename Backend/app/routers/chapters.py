@@ -16,7 +16,13 @@ from app.agents.prompt_expander import PromptExpanderAgent
 from app.agents.writer import WriterAgent
 from app.db import get_db
 from app.errors import AppError, conflict, not_found, upstream
-from app.llm.base import LLMClient, get_llm_client
+from app.llm.base import (
+    LLMClient,
+    get_expander_llm_client,
+    get_extractor_llm_client,
+    get_llm_client,
+    get_writer_llm_client,
+)
 from app.llm.errors import LLMError
 from app.models.book import Book
 from app.models.chapter import Chapter
@@ -105,7 +111,8 @@ def expand_chapter(
     chapter_id: str,
     force: bool = Query(default=False),
     db: Session = Depends(get_db),
-    llm: LLMClient = Depends(get_llm_client),
+    # M-1: PromptExpanderAgent → expander key (fallback to generic).
+    llm: LLMClient = Depends(get_expander_llm_client),
 ) -> ChapterRead:
     chapter = _get_chapter(db, chapter_id)
     if not force:
@@ -147,7 +154,8 @@ def expand_chapter(
 def write_chapter(
     chapter_id: str,
     db: Session = Depends(get_db),
-    llm: LLMClient = Depends(get_llm_client),
+    # M-1: WriterAgent → writer key (fallback to generic).
+    llm: LLMClient = Depends(get_writer_llm_client),
 ) -> StreamingResponse:
     chapter = _get_chapter(db, chapter_id)
     ensure_chapter_status(chapter, {"prompt_ready", "draft_ready"}, "write")
@@ -168,7 +176,8 @@ def write_chapter(
 def finalize_chapter(
     chapter_id: str,
     db: Session = Depends(get_db),
-    llm: LLMClient = Depends(get_llm_client),
+    # M-1: ExtractorAgent → extractor key (fallback to generic).
+    llm: LLMClient = Depends(get_extractor_llm_client),
 ) -> dict[str, object]:
     chapter = _get_chapter(db, chapter_id)
     ensure_chapter_status(chapter, {"draft_ready"}, "finalize")
@@ -214,7 +223,9 @@ def import_chapter(
     chapter_id: str,
     payload: ChapterImportRequest,
     db: Session = Depends(get_db),
-    llm: LLMClient = Depends(get_llm_client),
+    # M-1: import path runs ExtractorAgent (when run_extractor=true) on the
+    # imported draft, so it routes to the extractor key just like /finalize.
+    llm: LLMClient = Depends(get_extractor_llm_client),
 ) -> dict[str, object]:
     """Import user-authored chapter text and (optionally) run Extractor on it.
 

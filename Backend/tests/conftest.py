@@ -15,7 +15,12 @@ os.environ.setdefault("DATABASE_URL", "sqlite+pysqlite://")
 
 from app.config import Settings, get_settings
 from app.db import Base, get_db, make_engine
-from app.llm.base import get_llm_client
+from app.llm.base import (
+    get_expander_llm_client,
+    get_extractor_llm_client,
+    get_llm_client,
+    get_writer_llm_client,
+)
 from app.main import app
 from app import models  # noqa: F401
 
@@ -63,6 +68,43 @@ class MockLLMClient:
         yield "林夕在石缝中摸到一枚带血的铜钱。"
 
 
+# v0.7 M-1: tuple of every per-Agent LLM dependency the routers may
+# resolve. Exported as a module-level constant so tests can override
+# (or clear) all of them in one shot — see ``override_all_llm_clients``
+# and ``clear_all_llm_overrides`` below.
+ALL_LLM_DEPENDENCIES = (
+    get_llm_client,
+    get_writer_llm_client,
+    get_extractor_llm_client,
+    get_expander_llm_client,
+)
+
+
+def override_all_llm_clients(factory) -> None:
+    """Replace every LLM dependency in :data:`ALL_LLM_DEPENDENCIES` with
+    ``factory`` (a zero-arg callable returning an LLMClient).
+
+    Use from a test when you want a single mock to back every Agent. The
+    generic ``app.dependency_overrides[get_llm_client] = ...`` pattern from
+    v0.6 only covers endpoints that haven't been re-routed to per-Agent
+    dependencies; this helper makes the swap behaviour-equivalent across
+    the entire surface.
+    """
+    for dep in ALL_LLM_DEPENDENCIES:
+        app.dependency_overrides[dep] = factory
+
+
+def clear_all_llm_overrides() -> None:
+    """Remove all LLM dependency overrides set by the conftest or by an
+    earlier ``override_all_llm_clients`` call.
+
+    Use this before a test that needs the real factory path (e.g. asserts
+    ``upstream("no_active_llm_key")`` when no ProviderKey is configured).
+    """
+    for dep in ALL_LLM_DEPENDENCIES:
+        app.dependency_overrides.pop(dep, None)
+
+
 @pytest.fixture()
 def session_factory() -> Iterator[sessionmaker[Session]]:
     engine = make_engine("sqlite+pysqlite://")
@@ -95,6 +137,15 @@ def client(session_factory: sessionmaker[Session]) -> Iterator[TestClient]:
     # v0.6+: get_llm_client is a DB-driven dependency; tests stub it directly
     # so we never need a real ProviderKey row for the happy path.
     app.dependency_overrides[get_llm_client] = lambda: MockLLMClient()
+    # v0.7 M-1 (§5.M): every Agent-specific endpoint declares a per-Agent
+    # dependency; stub all three to the same Mock by default so v0.6-era
+    # tests (and any new test that doesn't care about per-Agent routing)
+    # keep working without having to set up a ProviderKey row.
+    # Per-Agent tests can still override an individual one to inject a
+    # different mock per Agent.
+    app.dependency_overrides[get_writer_llm_client] = lambda: MockLLMClient()
+    app.dependency_overrides[get_extractor_llm_client] = lambda: MockLLMClient()
+    app.dependency_overrides[get_expander_llm_client] = lambda: MockLLMClient()
 
     with TestClient(app) as test_client:
         yield test_client

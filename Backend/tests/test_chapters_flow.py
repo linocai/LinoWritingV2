@@ -6,7 +6,7 @@ import time
 from app.llm.base import get_llm_client
 from app.main import app
 from app.routers import chapters as chapters_router
-from tests.conftest import MockLLMClient
+from tests.conftest import MockLLMClient, override_all_llm_clients
 
 
 class SlowStreamLLM(MockLLMClient):
@@ -164,7 +164,9 @@ def test_writer_stream_keepalive_and_error_restore_status(client, auth_headers, 
     client.post(f"/api/v1/chapters/{chapter['id']}/expand", headers=auth_headers)
 
     monkeypatch.setattr(chapters_router, "KEEPALIVE_SECONDS", 0.01)
-    app.dependency_overrides[get_llm_client] = lambda: SlowStreamLLM()
+    # M-1: /write now Depends(get_writer_llm_client); update every LLM dep so
+    # the test's mock applies regardless of which Agent the router resolves.
+    override_all_llm_clients(lambda: SlowStreamLLM())
     with client.stream("POST", f"/api/v1/chapters/{chapter['id']}/write", headers=auth_headers) as response:
         text = "".join(response.iter_text())
     assert response.status_code == 200
@@ -176,7 +178,7 @@ def test_writer_stream_keepalive_and_error_restore_status(client, auth_headers, 
         headers=auth_headers,
         json={"structured_prompt": {"chapter_goal": "重试写作"}},
     )
-    app.dependency_overrides[get_llm_client] = lambda: FailingStreamLLM()
+    override_all_llm_clients(lambda: FailingStreamLLM())
     with client.stream("POST", f"/api/v1/chapters/{chapter['id']}/write", headers=auth_headers) as response:
         error_text = "".join(response.iter_text())
     assert response.status_code == 200
@@ -197,7 +199,7 @@ def test_finalize_rolls_back_bad_extractor_output(client, auth_headers):
         _ = "".join(response.iter_text())
     assert response.status_code == 200
 
-    app.dependency_overrides[get_llm_client] = lambda: BadExtractorLLM()
+    override_all_llm_clients(lambda: BadExtractorLLM())
     finalized = client.post(f"/api/v1/chapters/{chapter['id']}/finalize", headers=auth_headers)
     assert finalized.status_code == 502
     assert finalized.json()["error"]["kind"] == "upstream"

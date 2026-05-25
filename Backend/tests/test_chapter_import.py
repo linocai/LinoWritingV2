@@ -7,7 +7,7 @@ import pytest
 
 from app.llm.base import get_llm_client
 from app.main import app
-from tests.conftest import MockLLMClient
+from tests.conftest import MockLLMClient, override_all_llm_clients
 
 
 def _seed_book_character(client, auth_headers) -> tuple[dict, dict]:
@@ -85,7 +85,9 @@ def test_import_runs_extractor_by_default(client, auth_headers):
 
 def test_import_skips_extractor_when_flag_off(client, auth_headers):
     tracker = TrackingLLM()
-    app.dependency_overrides[get_llm_client] = lambda: tracker
+    # M-1: /import is wired to get_extractor_llm_client; override all of them
+    # so the tracker reliably observes (or not observes) the call.
+    override_all_llm_clients(lambda: tracker)
 
     book, character = _seed_book_character(client, auth_headers)
     chapter = _new_chapter(client, auth_headers, book["id"])

@@ -19,6 +19,12 @@ class ProviderKey(Base):
     base_url: Mapped[str] = mapped_column(Text, nullable=False)
     api_key: Mapped[str] = mapped_column(Text, nullable=False)
     model_name: Mapped[str] = mapped_column(Text, nullable=False)
+    # v0.7 M-1: optional Agent affinity. NULL = generic (eligible as the
+    # global active key for any agent); otherwise one of {'writer',
+    # 'extractor', 'expander'}. Routed by ``system_settings.active_*_key_id``
+    # via :func:`app.llm.factory.load_active_provider_key_for_agent` with a
+    # generic-active fall-back so v0.6 deployments behave unchanged.
+    agent_role: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

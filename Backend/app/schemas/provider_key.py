@@ -1,8 +1,17 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.common import UtcDatetime
+
+# v0.7 M-1: stringly-typed agent_role enum surfaces in three places — the
+# provider_key payloads, the per-agent active endpoint path parameter, and
+# the factory dispatch. Centralised here so adding an Agent later only
+# touches one symbol.
+AgentRole = Literal["writer", "extractor", "expander"]
+AGENT_ROLES: tuple[AgentRole, ...] = ("writer", "extractor", "expander")
 
 
 def mask_api_key(api_key: str) -> str:
@@ -22,6 +31,10 @@ class ProviderKeyCreate(BaseModel):
     base_url: str = Field(min_length=1)
     api_key: str = Field(min_length=1)
     model_name: str = Field(min_length=1)
+    # v0.7 M-1: None = generic key (fallback target for any agent that has
+    # no per-agent active set). Otherwise constrains the agents this key
+    # may be activated for via PUT /settings/active_key/{agent_role}.
+    agent_role: AgentRole | None = None
 
 
 class ProviderKeyUpdate(BaseModel):
@@ -30,6 +43,10 @@ class ProviderKeyUpdate(BaseModel):
     base_url: str | None = Field(default=None, min_length=1)
     api_key: str | None = Field(default=None, min_length=1)
     model_name: str | None = Field(default=None, min_length=1)
+    # v0.7 M-1: PATCH semantics — only overridden when explicitly present
+    # in the request body (``exclude_unset``); to clear an existing role
+    # back to generic, send ``"agent_role": null``.
+    agent_role: AgentRole | None = None
 
 
 class ProviderKeyRead(BaseModel):
@@ -43,6 +60,7 @@ class ProviderKeyRead(BaseModel):
     base_url: str
     api_key: str
     model_name: str
+    agent_role: AgentRole | None
     created_at: UtcDatetime
     updated_at: UtcDatetime
 
@@ -65,3 +83,30 @@ class SystemSettingsRead(BaseModel):
 
 class ActiveProviderKeyUpdate(BaseModel):
     provider_key_id: str
+
+
+class ActiveAgentKeyRead(BaseModel):
+    """Flat shape for the per-Agent active key endpoint (§5.M).
+
+    Mirrors :class:`SystemSettingsRead` but tags the response with the
+    ``agent_role`` it represents, so the frontend can render one row per
+    Agent without re-issuing GETs to figure out which one it asked about.
+    """
+
+    agent_role: AgentRole
+    active_provider_key_id: str | None
+    key_label: str | None = None
+    provider_hint: str | None = None
+    model_name: str | None = None
+    api_key_mask: str | None = None
+
+
+class ActiveAgentKeyUpdate(BaseModel):
+    """Body for ``PUT /settings/active_key/{agent_role}``.
+
+    A ``provider_key_id`` of ``None`` is the explicit way to clear the
+    per-agent pointer back to "fall back to generic" — distinct from never
+    having set it. Idempotent: re-PUTting the same id is a no-op.
+    """
+
+    provider_key_id: str | None = None
