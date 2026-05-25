@@ -123,17 +123,37 @@ public struct Step3_DraftView: View {
         }
     }
 
+    @ViewBuilder
     private var editorView: some View {
-        TextEditor(text: $draft)
-            .font(.system(.body, design: bodyFontDesign))
-            .lineSpacing(6)
-            .scrollContentBackground(.hidden)
-            .frame(minHeight: 320, maxHeight: 720)
-            .padding(8)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .strokeBorder(Color.secondary.opacity(0.2))
-            )
-            .disabled(readOnly)
+        if readOnly {
+            // v0.6.1 bug-fix: `.disabled(true)` on TextEditor freezes
+            // scrolling on macOS, so long imported chapters became
+            // unreadable below the 720pt cap. Render finalized text as a
+            // plain Text instead — it expands to its natural height and
+            // rides the outer ChapterEditorView ScrollView. textSelection
+            // keeps copy-paste working, which is more useful in a read-only
+            // chapter than a disabled editor anyway.
+            Text(draft)
+                .font(.system(.body, design: bodyFontDesign))
+                .lineSpacing(6)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .strokeBorder(Color.secondary.opacity(0.2))
+                )
+        } else {
+            TextEditor(text: $draft)
+                .font(.system(.body, design: bodyFontDesign))
+                .lineSpacing(6)
+                .scrollContentBackground(.hidden)
+                .frame(minHeight: 320, maxHeight: 720)
+                .padding(8)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .strokeBorder(Color.secondary.opacity(0.2))
+                )
+        }
     }
 }
