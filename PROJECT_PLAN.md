@@ -1159,3 +1159,87 @@ v0.7 最后一笔 commit(发版同步那一笔),与 5 处版本号一起做。
   3. 列表两行 keys,各自带紫色 "Writer 专用" / "Extractor 专用" capsule。
   4. 上方"按 Agent 分别选择(可选)" section → Writer 行 picker 改为 "Claude 4.5 · anthropic/claude-sonnet-4.5";Extractor 行改为 "Grok mini · grok-3-mini";Expander 保留"沿用通用 active"(走任意一把通用 key 兜底)。
   5. 之后写章节 expand / write / finalize 时,后端 §5.M / M-1 的 Depends 各自解析到对应 key:Writer → Claude(写得好),Extractor → Grok mini(便宜),Expander → 通用 active(默认任意便宜模型)。控成本立刻起效。
+
+### [2026-05-25] Phase B-fld 字段级 dot indicator 实施
+
+- 变更内容:
+  - **后端**
+    - **`app/agents/extractor.py`** (§5.B.2):`EXTRACTOR_SCHEMA` 在 `character_updates.items.properties` 加 `patch_keys: {type: array, items: {type: string}}` 槽位;system_prompt 新增一句"对每个 character_update,请在 patch_keys 数组里列出本次 patch 修改的 live_fields 顶层 key 名"。**注意**:patch_keys 是 LLM 自报告,服务端**不信任**,以下游 `live_fields_patch.keys()` 为权威(plan §5.B 兜底)。
+    - **Alembic 迁移 `202605260001_add_character_pending_field_highlights.py`**(顺接 C-tl 的 250003):`characters` 加 `pending_field_highlights JSON NOT NULL DEFAULT '{}'`(PostgreSQL JSONB,SQLite plain JSON,沿用 L-1 同款 `sa.JSON().with_variant(JSONB)` 模式)。`server_default '{}'` + 防御性 `UPDATE ... WHERE IS NULL` 双保险回填存量行。downgrade 写 `drop_column`。
+    - **`app/models/character.py`**:加 `pending_field_highlights: Mapped[dict[str, Any]]`,`MutableDict.as_mutable(json_dict_type)` + `default=dict, nullable=False`,与 frozen/live/author_notes 完全对齐。
+    - **`app/schemas/character.py`**:`CharacterRead` 加 `pending_field_highlights: dict[str, Any] = Field(default_factory=dict)`。**`CharacterPatch` 不暴露此字段** — 清除是 PATCH live_fields 的服务端 side-effect,不是单独 PATCH 路径(plan §5.B 选了"通过现有 PATCH 自动清除"而非加专用端点 — 自然语义更优)。
+    - **`app/services/extractor_apply.py`**:在 `apply_extractor_output` 的 `character_updates` 循环中,**合并(不覆盖)**写入 `pending_field_highlights`:`existing_highlights = dict(character.pending_field_highlights or {}); for key in patch.keys(): existing_highlights[key] = utc_now().isoformat(); character.pending_field_highlights = existing_highlights`。**关键判断**:用 `patch.keys()` 而非 `output.get("patch_keys")` 作为 source of truth(plan §5.B 兜底:"LLM 撒谎时以 patch.keys() 为权威")。合并而非覆盖,让多章未看的红点累积保留。
+    - **`app/routers/characters.py`** PATCH 端点:在原 `for key, value in dumped.items(): setattr(...)` 后追加 highlights 自动清除块:`if "live_fields" in dumped and isinstance(dumped["live_fields"], dict): existing_highlights = dict(character.pending_field_highlights or {}); for key in dumped["live_fields"].keys(): existing_highlights.pop(key, None); character.pending_field_highlights = existing_highlights`。**关键判断**:只在 PATCH live_fields 时清除;PATCH frozen_fields / author_notes 不动 highlights(Extractor 只写 live_fields,所以 frozen/author 永远不会有 highlight)。语义自然(plan §5.B.2 "用户编辑该 field 后 PATCH 清掉")。
+    - **`tests/test_field_highlights.py`** 新增 10 个测试:
+      1. Extractor 跑完 → character.pending_field_highlights 有对应 key 与 ISO 时间戳(端到端)
+      2. 旧 highlights 与新 highlights 合并(seed 旧 + 跑 Extractor → 两个 key 都在)
+      3. PATCH live_fields 清除所有现有 highlights(全 keys 在 payload 里)
+      4. PATCH live_fields 部分 keys 只清除被 patch 的,未提及的 key 仍 highlighted
+      5. PATCH frozen_fields 不动 highlights
+      6. PATCH author_notes 不动 highlights
+      7. LLM 自报告 patch_keys 与 actual patch.keys() 不一致 → 服务端以 patch.keys() 为权威(直接驱动 `apply_extractor_output`,bypass LLM mock)
+      8. 老 character(ORM 默认 + 迁移 server_default)pending_field_highlights 读出来 `{}`
+      9. schema lock:`EXTRACTOR_SCHEMA["properties"]["character_updates"]["items"]["properties"]` 含 `patch_keys`
+      10. CharacterPatch 不暴露 `pending_field_highlights`(防未来契约漂移)
+  - **前端**
+    - **`Models/Character.swift`**:`Character` 加 `pendingFieldHighlights: [String: String]`(key→ISO 时间戳字符串);CodingKeys `pendingFieldHighlights = "pending_field_highlights"`;自定义 `init(from:)` 用 `decodeIfPresent ?? [:]` 容错 pre-B-fld 缓存(沿用 §5.A.6 `Chapter.source` / §5.L.1 `Character.authorNotes` 模式)。`CharacterCreateRequest` / `CharacterPatchRequest` **不**暴露此字段(契约:服务端 only,清除是 PATCH live_fields 的 side-effect)。
+    - **`Views/Components/InlineEditableText.swift`** + **`InlineEditableDict.swift`** + **`InlineEditableTags.swift`**:加 `showHighlight: Bool = false` init 参数;label HStack 内 `if showHighlight { DotIndicator().help("Agent 在最近一次完成时改动过这个字段") }`。tags 也加上是因为 goals / secrets_known / abilities / relationships 都是 live_fields 子键,Extractor 可改这些。
+    - **`Views/Workspace/RightPanel/CharacterCardEditorView.swift`**:`liveTextRow` / `tagsRow` / `relationshipsRow` 渲染时检查 `character.pendingFieldHighlights[spec.key] != nil` 并通过 `showHighlight:` 传入。新增私有 helper `isLiveFieldHighlighted(_ key: String) -> Bool`。**frozen 区与 author_notes 区不显示**(plan 明文,Extractor 不动这两区)。卡片顶部红条文案保留为"卡片级 legacy 提示",但只看 `pendingHighlightIds`(immediate post-finalize)— 不与字段级红点视觉重复。
+    - **`Stores/CharactersStore.swift`**:**保留** `pendingHighlightIds` 作为 fallback;新增 helper `cardHasPendingHighlight(_ character) -> Bool` 综合两个信号(legacy id set OR 字段级 dict 非空)。
+    - **`Views/Workspace/RightPanel/CharacterCardListView.swift`**:Picker 菜单内角色名旁的小红点改用 `charactersStore.cardHasPendingHighlight(c)`,使字段级 highlights 也驱动选择列表的卡片级红点。
+    - **`LinoWritingTests/CharacterFieldHighlightsTests.swift`** 新增 7 个测试:
+      1. `Character` 解码 `pending_field_highlights` 存在 → 拿到 keys 与时间戳
+      2. `Character` 解码 `pending_field_highlights` 缺失 → fallback `[:]`(legacy payload)
+      3. `Character` 完整 round-trip 保 `pending_field_highlights` snake_case
+      4. `CharacterPatchRequest` **不** emit `pending_field_highlights`(契约 lock,防未来误加)
+      5. `CharactersStore.cardHasPendingHighlight` 字段级非空 → true
+      6. `CharactersStore.cardHasPendingHighlight` 仅 legacy `pendingHighlightIds` 含 id → true
+      7. `CharactersStore.cardHasPendingHighlight` 两信号都空 → false
+- 变更原因:v0.6 残留 todo #1(§3 B)— v0.5/v0.6 是"卡片级红点",粒度太粗,作者看不出 Agent 改了哪个字段。本 Phase 按 §5.B 详案做到字段级,与 L-1 author_notes 私域边界严格隔离(Extractor 仍不投喂 author_notes 给上下文,B-fld 也只针对 live_fields)。
+- 影响范围:Phase B-fld 全部落地;后端新增/修改文件 6 个(1 migration + 1 agent + 1 model + 1 schema + 1 service + 1 router + 1 test);前端新增/修改文件 6 个(1 model + 3 component + 1 store + 2 view + 1 test)。不动 L-1/L-2/L-3/M/P/C-tl/N 已 commit / WIP 内容。
+- 关键判断:
+  - **服务端兜底 patch.keys() vs LLM 自报告 patch_keys**:plan §5.B 明文要求,选 `patch.keys()` 为权威。这避免 LLM 在 patch_keys 撒谎(列了但 patch 没改 / 改了但 patch_keys 漏报)而污染 highlights。schema 槽位仍保留,允许未来 LLM 自描述并扩展到"嵌套 key 路径"而无契约变更。专门加测试 #7 锁这条不变量。
+  - **自动清除 vs 专用端点**:plan §5.B.2 文字提了两种方案("用户编辑该 field 后 PATCH 清掉" / "专用清除端点")。**选自动清除**:① 用户编辑 live_fields 时已经走 PATCH,自然语义;② 不增加新端点降低契约面;③ 前端 InlineEditable 行的 onCommit 不必额外发请求,服务端 round-trip 后 Character.pendingFieldHighlights 已无该 key,UI 红点自然消失。**判断点**:只有 live_fields PATCH 触发清除(frozen/author_notes 不触发) — Extractor 只写 live_fields,这是闭环对称。专门加测试 #5/#6 锁 frozen/author_notes PATCH 不动 highlights。
+  - **合并 vs 覆盖 highlights**:plan 明文"合并旧 highlights,让用户多章未看的红点累积保留"。决策点是当 chapter A 让 `current_status` 亮,chapter B 让 `knowledge` 亮,用户都没编辑过 → 应同时看到两个红点。专门加测试 #2 锁这条。
+  - **卡片级 legacy 机制保留 + 综合 helper**:plan 提"保留作为 fallback"。我没有删除 `pendingHighlightIds`(否则会破坏 finalize 后"刚刚改了哪几个角色"的即时信号 — 该信号来自 `FinalizeResult.updatedCharacterIds`,后端 list reload 之前 view 已经响应)。同时新增 `cardHasPendingHighlight` helper 让 list/picker 一处调用 OR 两信号,字段级 dict 非空也能让卡片级红点亮。这让 v0.6 行为与 v0.7 字段级行为**叠加不冲突**:legacy 在 user 点开卡片后(`select` clear `pendingHighlightIds`)消失,字段级在 user 编辑该字段后(server 自动清除)消失。
+  - **三个 InlineEditable 组件都加 showHighlight**:`InlineEditableTags` 也加上,理由是 live_fields 里 goals / secrets_known / abilities / relationships 都是数组/字典型 — Extractor 一旦碰这些就需要 dot。这避免"只在 string 字段亮红点,数组字段沉默"的不一致。
+  - **author_notes 区与 frozen 区显式不显示红点**:plan 严禁动 author_notes 私域边界。CharacterCardEditorView 内 `frozenTextRow` / `authorNoteTextRow` 不接 `showHighlight`(走 default false),确保即便用户绕开 schema 强塞个 highlight 也不会渲染 — 双保险。
+  - **`pendingFieldHighlights` 类型 = `[String: String]`** 而非 `[String: Date]`:JSONDecoder 已为 Date 配 ISO 处理,但选 String 是因为这字段从未被前端做"时间运算"(我们只关心 key 存在与否),后端发什么字符串前端就保什么。Round-trip 安全,wire format 透明。
+- 测试基线:
+  - 后端 v0.7 C-tl 末 136 pytest → B-fld 末 158 pytest(136 baseline + N WIP 期间累计的 12 pytest + B-fld 新 10)。`pytest -W error` 干净。
+  - 前端 v0.7 M-2 末 68 XCTest → B-fld 末 81 XCTest(68 baseline + 6 timeline edit suite + 7 field highlights 新 = 81)。`xcodebuild build` + `xcodebuild test` 均 0 failure。
+- 未做:Q(文档同步发版)/ N(错误中文模板已部分 WIP,非本 Phase)/ F(导出)/ O(批量导入)/ D-log(Agent Log Panel UI)等其它 v0.7 项。
+- 端到端 happy path:
+  1. 用户写章节 N → finalize,Extractor 检测到主角"current_status" / "knowledge" 两个 live_fields 子键改动 → 后端在 character.pending_field_highlights 写入 `{"current_status": "2026-05-25T...", "knowledge": "2026-05-25T..."}`。
+  2. 用户在右栏选中该角色卡 → 卡片级红点(来自 `pendingHighlightIds` 法律地位的 fallback 路径)消失,但**字段级红点**在 "当前状态" 与 "知识" 标签旁亮起(分别对应 current_status / knowledge 的 live row)。
+  3. 用户编辑"当前状态" 字段(InlineEditableText 弹出 editor → 输入新值 → blur 提交) → 前端 PATCH `/characters/{id}` `{live_fields: {current_status: "新值", knowledge: "..."}}` → 后端清除 `pending_field_highlights["current_status"]` 与 `["knowledge"]`(因为 live_fields PATCH 是整体替换,所有 keys 都在 payload 里;若只想清一个,前端要把 knowledge 也带回)→ 服务端响应中 `pending_field_highlights` 已变化 → 前端 store 更新 → "当前状态" / "知识" 两个红点消失。
+  4. 用户写章节 N+1 → Extractor 只改 `knowledge` → 后端写 `pending_field_highlights["knowledge"]` 回到字典 → 用户切到角色卡看到"知识" 旁红点亮。
+  5. 写章节 N+2 → Extractor 改 `secrets_known`(数组) → 字段级红点出现在 InlineEditableTags 的"知晓的秘密"标签旁(因 InlineEditableTags 同样支持 showHighlight),知识旁红点保留(累积语义)。
+
+### [2026-05-25] Phase N 错误中文模板 + ErrorBus history 实施
+- 变更内容:
+  - **后端**:`app/errors.py` 引入 `_TEMPLATES` 字典(键 `(kind, key)` → 中文带占位符模板)+ `render_message()` 渲染器 + `i18n_conflict()` / `i18n_not_found()` / `i18n_upstream()` 三个新工厂(保留 v0.6 旧 helper `conflict()` / `not_found()` / `upstream()` 不变,call site 自由切换)。新增三张映射表:`CHAPTER_STATUS_CN`(draft→草稿 / writing→写作 / …)、`CHAPTER_ACTION_CN`(write→开始写作 / import→导入正文 / …)、`AGENT_ROLE_CN`(writer→Writer 写手 / …)。
+  - **改 14 处后端 raise**:`services/chapter_state.py` `ensure_chapter_status` 改用 i18n_conflict;`routers/chapters.py`/`books.py`/`characters.py`/`timeline_events.py` 的 `_get_*` / `_ensure_*` 改用 `i18n_not_found`;`routers/provider_keys.py` 的 409 agent-mismatch 改 i18n;`llm/factory.py` 的 `no_active_llm_key` 改为中文 message + `details["code"]="no_active_llm_key"` 保留旧 sentinel;`routers/chapters.py` Expander/Writer/Extractor 路径以及 `_write_stream` 内的 LLM 异常包装改用 `i18n_upstream("llm_generic", detail=str(exc))`;`services/extractor_apply.py` 9 处 Extractor 校验失败改用模板。
+  - **故意保持英文**(决策记录):`TimelineEventPatch.require_at_least_one_field` 的 422 message(Pydantic validator 路径,frontend 不会触发,纯 dev surface)、`IntegrityError` 的 "Database constraint conflict"(数据库异常,dev surface)、全局 500 "Internal server error"(同上)、Pydantic 自动生成的 RequestValidationError 422 details。
+  - **改 4 处旧测试 sentinel**:`tests/test_llm_factory.py` 4 处 + `tests/test_per_agent_factory.py` 1 处把 `message == "no_active_llm_key"` 替换为 `details["code"] == "no_active_llm_key"`。模板自身覆盖 12 新测试 `tests/test_error_i18n.py`(template 渲染 + helper 工厂 + 端到端 status/action/not_found/agent-mismatch/no-key 全套)。
+  - **前端 ErrorBus**:`Stores/ErrorBus.swift` `Notice` 加 `timestamp: Date`(可注入构造,默认 `Date()`)+ 暴露默认 UUID 初始化;`@Published public private(set) var history: [Notice]` 环形 buffer + `historyLimit = 30`;`publish(_:)` 双 overload 经新 `record(message:isCritical:)` 单一漏斗(把 Notice 同时写入 `current` + 追加 `history` + 超限时 `removeFirst(超出量)`);新增 `clearHistory()`(仅清 history,不动 current);`dismiss()` 不变(只清 current)。
+  - **前端 SettingsView**:`Tab` enum 加新 case `errorLog`;Picker 加第三个 segment "最近错误";新私有 view `ErrorLogSettingsView`(header 标题 + 清空按钮 + 空态 + ScrollView/LazyVStack 按 `history.reversed()` 渲染);新私有 row `ErrorLogRow`(三角红/橙 icon + 完整文本 textSelection enabled + monospaced HH:mm:ss 时间戳)。Toast.swift 视觉零改动。
+  - **前端测试**:新增 `LinoWritingTests/ErrorBusHistoryTests.swift` 6 测试(publish 增长 / publish AppError 标 critical / 超 limit FIFO 驱逐 / timestamp 在 publish 时区间内 / clearHistory 不动 current / dismiss 不动 history)。
+- 变更原因:v0.7 §5.N。试运营暴露的痛点:"Chapter status 'writing' cannot perform write" 是英文裸消息作者看不懂;Toast 3 秒自动消失 SSE error / Extractor 422 闪一下就丢。本 Phase 让 message 中文化(消失时用户能在 SettingsView 回看),且保持 envelope shape 100% 兼容(机器可读字段全在 `details` 里,前端 ErrorMapping 零改动)。
+- 影响范围:Phase N;后端修改 11 个文件 + 新增 1 测试文件(12 测试),前端修改 2 个文件 + 新增 1 测试文件(6 测试)。Toast 视觉零改 / K-2 / K-3 / B-fld / C-tl / M-1 / M-2 / L 系列 / P 系列零改。
+- 关键判断:
+  - **history 上限 = 30**:覆盖一节写作会话最多十几次失败,小到不影响 SwiftUI list 渲染,大到对用户体感"够查最近的"。可配置常量 `ErrorBus.historyLimit` 暴露,后续如有人要 50/100 改一行。
+  - **"最近错误" tab 显示**所有** publish 过的(包括 dismiss 后的)**:tab 的语义是"回看消失了的 toast",所以 dismiss 不能清 history;只有"清空"按钮明确做这件事。这与 toast 的"3 秒自动消失"分离了关注点 — toast 管即时通知,history 管事后回溯。
+  - **`no_active_llm_key` 保留 sentinel 在 `details["code"]`** 而非完全删除:① 既有 4 处 pytest 断言切到 `details["code"]` 后零修改业务代码;② 未来前端 ErrorMapping 想给"无 active key"做特殊处理(比如 toast 上加"去设置"按钮),用 code 比解析中文字符串靠谱;③ 中文 message 是给人看的,code 是给机器看的,分层清晰。
+  - **`TimelineEventPatch` 422 故意保持英文**:这是 Pydantic `@model_validator` 抛 `ValueError` 出来的 RequestValidationError,fastapi 默认 envelope kind=validation。frontend C-tl 流的客户端 guard 已经挡掉了"两字段都为 nil"的请求,这条 422 只可能在 dev 调试 / 异常路径出现。i18n 它没意义,且会污染 validator 文案与全局 RequestValidationError details schema 的 dev 调试体感。在 `schemas/timeline.py` 加注释明文记录此决策。
+  - **新增三个 `i18n_*` helpers,旧 `conflict()` / `not_found()` / `upstream()` 不删**:渐进式迁移。本 Phase 把作者会看到的 14 处全切了,但其它 internal 路径(目前没有)将来要 raise 时仍可用旧 helper 写英文消息。两套并存零冲突,模板覆盖率可以分 Phase 慢慢推。
+  - **`render_message` 找不到模板时返回 key 字面量而不是 raise**:typo 降级为可见但不崩,避免一行 key 写错就把请求变成 500。同理 placeholder 缺失时返回原模板。两条 graceful degradation 写进了 `test_render_message_*` 测试锁死。
+- 测试基线:
+  - 后端:pytest baseline 136(本 Phase 启动时) → 末 148 通过(136 原有零修改 + 12 新)+ `-W error` 干净。注:期间 B-fld 平行加了 10 测试(`test_field_highlights.py`),实测总 158 也全过,但那不在 N 范围内。
+  - 前端:XCTest baseline 68 → 末 74 通过(68 原有零修改 + 6 新)。`xcodebuild test` 0 failure,`xcodebuild build` 干净。
+- 端到端 happy path(用户操作):
+  1. 用户在某章节处于 `writing` 状态(SSE 已起飞)时,误点工具栏"开始写作"按钮 → ChapterEditorStore 调 `/chapters/{id}/write` → 后端 `ensure_chapter_status` 命中 conflict → envelope `{"error": {"kind": "conflict", "message": "章节当前正在「写作」中，无法开始写作", "details": {"status": "writing", "allowed": ["draft_ready","prompt_ready"], "action": "write"}}}` 回到前端。
+  2. ErrorBus 收到 → 右下角 Toast 弹"章节当前正在「写作」中,无法开始写作"(中文,作者一眼看懂),3 秒后自动消失。
+  3. 作者忙别的去了,过会儿回来想:刚才那 toast 说啥来着? → Settings → 第三个 tab "最近错误" → 看到 `[18:53:01] 章节当前正在「写作」中,无法开始写作`(三角橙 icon + 完整文本 + 可选中复制)。
+  4. 再后来连续 3 次 SSE 失败 / Extractor 422,history 攒到 4 条 → 列表里按时间倒序显示,可选中复制贴给作者朋友吐槽。
+  5. 想清掉历史 → 点 header "清空" → 整列清空(toast 如果还在屏幕上不受影响)。

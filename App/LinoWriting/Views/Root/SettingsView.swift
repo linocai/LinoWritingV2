@@ -7,8 +7,12 @@ import SwiftUI
 ///   - **LLM Providers** — multi-key management (list / add / edit / delete /
 ///     set-active)
 ///
-/// First-run mode (`isFirstRun = true`) hides the LLM tab because the user
-/// can't even reach the backend yet without first saving credentials.
+/// v0.7 §5.N adds a third tab "最近错误" listing `ErrorBus.history` so the
+/// author can re-read messages that auto-dismissed from the Toast.
+///
+/// First-run mode (`isFirstRun = true`) hides the LLM + error tabs because
+/// the user can't even reach the backend yet without first saving
+/// credentials, and there's no error history worth showing pre-connect.
 public struct SettingsView: View {
 
     @EnvironmentObject var appStore: AppStore
@@ -17,7 +21,7 @@ public struct SettingsView: View {
     public var isFirstRun: Bool
 
     /// Tab selector. First-run mode forces `.connection`.
-    private enum Tab: Hashable { case connection, providers }
+    private enum Tab: Hashable { case connection, providers, errorLog }
     @State private var tab: Tab = .connection
 
     public init(isFirstRun: Bool = false) {
@@ -36,6 +40,7 @@ public struct SettingsView: View {
                     Picker("", selection: $tab) {
                         Text("连接").tag(Tab.connection)
                         Text("LLM Providers").tag(Tab.providers)
+                        Text("最近错误").tag(Tab.errorLog)
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
@@ -51,6 +56,8 @@ public struct SettingsView: View {
                             ConnectionSettingsView(isFirstRun: false)
                         case .providers:
                             ProviderKeysSettingsView()
+                        case .errorLog:
+                            ErrorLogSettingsView()
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -477,5 +484,131 @@ private struct ProviderKeyRow: View {
     private var subtitle: String {
         let hint = key.providerHint?.isEmpty == false ? key.providerHint! : "custom"
         return "\(hint) · \(key.modelName) · \(key.apiKey)"
+    }
+}
+
+// MARK: - 最近错误 tab (v0.7 §5.N)
+
+/// Lists `ErrorBus.history` newest-first so the user can re-read errors
+/// that the bottom-trailing Toast auto-dismissed.
+///
+/// Design notes:
+/// - The Toast (3s auto-dismiss for non-critical, sticky for 401) stays
+///   unchanged — this tab is purely "回看消失了的消息".
+/// - We deliberately render even already-dismissed notices: ``dismiss()``
+///   only clears ``current``, never ``history``. The 清空 button is the
+///   one and only way to wipe the log.
+/// - No "重试" button here yet — that's a later phase if v0.7 wants it;
+///   N's scope is "能回看" only (plan §5.N.2).
+private struct ErrorLogSettingsView: View {
+
+    @EnvironmentObject private var bus: ErrorBus
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+
+            Divider()
+
+            content
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private var header: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("最近错误")
+                    .font(.title3.weight(.semibold))
+                Text("Toast 已经消失的错误也能在这里回看。最多保留最近 \(ErrorBus.historyLimit) 条。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Button {
+                bus.clearHistory()
+            } label: {
+                Label("清空", systemImage: "trash")
+            }
+            .buttonStyle(.bordered)
+            .disabled(bus.history.isEmpty)
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 16)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if bus.history.isEmpty {
+            VStack(spacing: 10) {
+                Image(systemName: "checkmark.seal")
+                    .font(.system(size: 32, weight: .light))
+                    .foregroundStyle(.secondary)
+                Text("还没有错误记录")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 8) {
+                    // Newest first — `history` is appended on each publish,
+                    // so reversed() gives the natural "most recent at top"
+                    // ordering an author expects when scanning a log.
+                    ForEach(bus.history.reversed()) { notice in
+                        ErrorLogRow(notice: notice)
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
+            }
+        }
+    }
+}
+
+private struct ErrorLogRow: View {
+    let notice: ErrorBus.Notice
+
+    private static let timeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
+        return f
+    }()
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: notice.isCritical ? "exclamationmark.shield.fill" : "exclamationmark.triangle.fill")
+                .foregroundStyle(notice.isCritical ? Color.red : Color.orange)
+                .font(.body)
+                .frame(width: 22, alignment: .center)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(notice.message)
+                    .font(.callout)
+                    .foregroundStyle(.primary)
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                Text(Self.timeFormatter.string(from: notice.timestamp))
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.gray.opacity(0.05))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(
+                    notice.isCritical ? Color.red.opacity(0.25) : Color.primary.opacity(0.08),
+                    lineWidth: 1
+                )
+        )
     }
 }

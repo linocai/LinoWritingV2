@@ -38,6 +38,11 @@ public struct CharacterCardEditorView: View {
             // (PROJECT_PLAN §5.K.4 第一段：角色卡也用 regularMaterial).
             VStack(alignment: .leading, spacing: 16) {
                 header
+                // §5.B (Phase B-fld) — only show the card-level banner for
+                // the legacy `pendingHighlightIds` signal. Field-level red
+                // dots already render inline next to each affected live
+                // field via `pendingFieldHighlights`, so showing the banner
+                // there would be visual duplication.
                 if charactersStore.pendingHighlightIds.contains(character.id) {
                     HStack(spacing: 6) {
                         DotIndicator()
@@ -165,6 +170,9 @@ public struct CharacterCardEditorView: View {
             placeholder: "未填写",
             multiline: spec.multiline,
             commitOnReturn: !spec.multiline,
+            // §5.B (Phase B-fld) — field-level dot. Only live_fields keys
+            // can ever be highlighted (Extractor only patches live_fields).
+            showHighlight: isLiveFieldHighlighted(spec.key),
             text: binding,
             onCommit: { newValue in
                 Task { await charactersStore.updateLiveField(character, key: spec.key, value: .string(newValue)) }
@@ -189,7 +197,11 @@ public struct CharacterCardEditorView: View {
             get: { character.liveFields.stringArray(key) },
             set: { _ in }
         )
-        return InlineEditableTags(label: label, tags: tagsBinding) { newTags in
+        return InlineEditableTags(
+            label: label,
+            showHighlight: isLiveFieldHighlighted(key),
+            tags: tagsBinding
+        ) { newTags in
             Task { await charactersStore.updateLiveField(character, key: key, value: .from(strings: newTags)) }
         }
     }
@@ -203,10 +215,19 @@ public struct CharacterCardEditorView: View {
             label: "关系",
             keyPlaceholder: "对象",
             valuePlaceholder: "关系描述",
+            showHighlight: isLiveFieldHighlighted("relationships"),
             dict: dictBinding
         ) { newDict in
             Task { await charactersStore.updateLiveField(character, key: "relationships", value: .from(dict: newDict)) }
         }
+    }
+
+    /// PROJECT_PLAN §5.B — check whether the given live_fields key is in
+    /// the per-field highlight set. Only consulted for live rows; frozen
+    /// and author_notes rows never highlight (Extractor only writes
+    /// live_fields, see plan §5.B.2 + L-2 author_notes private channel).
+    private func isLiveFieldHighlighted(_ key: String) -> Bool {
+        character.pendingFieldHighlights[key] != nil
     }
 
     // MARK: Author-notes section

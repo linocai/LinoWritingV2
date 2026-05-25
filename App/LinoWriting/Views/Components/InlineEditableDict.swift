@@ -5,6 +5,9 @@ public struct InlineEditableDict: View {
     public let label: String?
     public let keyPlaceholder: String
     public let valuePlaceholder: String
+    /// PROJECT_PLAN §5.B (Phase B-fld) — when `true`, render a small red
+    /// `DotIndicator` next to the label. Mirrors `InlineEditableText`.
+    public let showHighlight: Bool
     @Binding public var dict: [String: String]
     public let onChange: ([String: String]) -> Void
 
@@ -15,12 +18,14 @@ public struct InlineEditableDict: View {
         label: String? = nil,
         keyPlaceholder: String = "键",
         valuePlaceholder: String = "值",
+        showHighlight: Bool = false,
         dict: Binding<[String: String]>,
         onChange: @escaping ([String: String]) -> Void = { _ in }
     ) {
         self.label = label
         self.keyPlaceholder = keyPlaceholder
         self.valuePlaceholder = valuePlaceholder
+        self.showHighlight = showHighlight
         self._dict = dict
         self.onChange = onChange
     }
@@ -28,9 +33,15 @@ public struct InlineEditableDict: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             if let label {
-                Text(label)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 4) {
+                    Text(label)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                    if showHighlight {
+                        DotIndicator()
+                            .help("Agent 在最近一次完成时改动过这个字段")
+                    }
+                }
             }
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(dict.keys.sorted(), id: \.self) { key in

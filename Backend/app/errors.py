@@ -9,6 +9,97 @@ from sqlalchemy.exc import IntegrityError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 
+# v0.7 §5.N — i18n templates for user-facing error messages.
+#
+# Keyed by ``(kind, key)`` → Chinese template with named ``{var}``
+# placeholders. ``render_message`` looks up the template and formats it;
+# call sites use the ``i18n_*`` helpers below (or build an AppError
+# directly with ``message=render_message(kind, key, **vars)``).
+#
+# Scope: only errors that the author sees in the Toast / 最近错误 list.
+# Internal-only failures (validation 422 from Pydantic, IntegrityError,
+# generic 500) deliberately stay English/dev-facing — those are debug
+# signal, not user copy. See plan §5.N.
+#
+# Envelope shape is unchanged: still ``{error: {kind, message, details}}``.
+# Only the ``message`` string flips to Chinese, so the iOS/macOS
+# ErrorMapping layer needs no changes.
+_TEMPLATES: dict[tuple[str, str], str] = {
+    # --- Chapter state machine (services/chapter_state.py) ---
+    ("conflict", "chapter_status_invalid_action"): (
+        "章节当前正在「{status_cn}」中，无法{action_cn}"
+    ),
+    # --- Chapter / Book lookups ---
+    ("not_found", "book"): "书籍不存在，可能已被删除",
+    ("not_found", "chapter"): "章节不存在，可能已被删除",
+    ("not_found", "character"): "角色不存在，可能已被删除",
+    ("not_found", "timeline_event"): "时间线事件不存在，可能已被删除",
+    ("not_found", "provider_key"): "未找到对应的 LLM Key，可能已被删除",
+    # --- Provider key / per-Agent binding ---
+    ("conflict", "provider_key_agent_mismatch"): (
+        "此 Key 已绑定到「{key_role_cn}」专用，无法用于「{requested_role_cn}」"
+    ),
+    # --- LLM upstream ---
+    ("upstream", "llm_no_active_key"): "尚未配置可用的 LLM Key，请先到设置里添加并设为 active",
+    ("upstream", "llm_generic"): "LLM 服务调用失败：{detail}",
+    # --- Extractor output validation (services/extractor_apply.py) ---
+    ("upstream", "extractor_missing_summary"): "Extractor 输出缺少 summary 字段",
+    ("upstream", "extractor_bad_timeline_events"): "Extractor 输出的 timeline_events 不是数组",
+    ("upstream", "extractor_bad_character_updates"): "Extractor 输出的 character_updates 不是数组",
+    ("upstream", "extractor_character_update_not_object"): "Extractor 角色更新条目不是对象",
+    ("upstream", "extractor_character_patch_not_object"): "Extractor 角色更新的 patch 字段不是对象",
+    ("upstream", "extractor_unknown_character"): "Extractor 引用了不存在的角色",
+    ("upstream", "extractor_event_not_object"): "Extractor 时间线事件条目不是对象",
+    ("upstream", "extractor_bad_event_type"): "Extractor 时间线事件类型不合法",
+    ("upstream", "extractor_empty_event_text"): "Extractor 时间线事件文本为空",
+}
+
+# §5.N — chapter status English code → Chinese display.
+CHAPTER_STATUS_CN: dict[str, str] = {
+    "draft": "草稿",
+    "prompt_ready": "提纲已就绪",
+    "writing": "写作",
+    "draft_ready": "初稿已就绪",
+    "finalized": "已定稿",
+}
+
+# §5.N — chapter action English code → Chinese verb phrase.
+CHAPTER_ACTION_CN: dict[str, str] = {
+    "expand": "展开提纲",
+    "write": "开始写作",
+    "finalize": "定稿",
+    "import": "导入正文",
+    "reopen": "重新打开",
+}
+
+# §5.N — Agent role English code → Chinese label. Mirrors the
+# AgentRole.displayName mapping in the iOS app.
+AGENT_ROLE_CN: dict[str, str] = {
+    "writer": "Writer 写手",
+    "extractor": "Extractor 信息提取",
+    "expander": "Expander 提纲展开",
+}
+
+
+def render_message(kind: str, key: str, **vars: Any) -> str:
+    """Format a Chinese error message from the template registry.
+
+    If the (kind, key) pair is missing, falls back to ``key`` itself so a
+    typo at the call site degrades to a recognisable English token rather
+    than a KeyError 500. Missing placeholder values likewise degrade to
+    ``{name}`` in the output (we don't raise).
+    """
+    template = _TEMPLATES.get((kind, key))
+    if template is None:
+        return key
+    try:
+        return template.format(**vars)
+    except KeyError:
+        # A placeholder is missing — return the raw template so the dev
+        # spots the bug without crashing the request.
+        return template
+
+
 class AppError(Exception):
     def __init__(
         self,
@@ -59,6 +150,36 @@ def upstream(message: str, *, retryable: bool = True, details: dict[str, Any] | 
         "upstream",
         message,
         status_code=status.HTTP_502_BAD_GATEWAY,
+        retryable=retryable,
+        details=details,
+    )
+
+
+# --- v0.7 §5.N i18n helper factories ----------------------------------------
+
+def i18n_conflict(key: str, *, details: dict[str, Any] | None = None, **vars: Any) -> AppError:
+    return conflict(render_message("conflict", key, **vars), details=details)
+
+
+def i18n_not_found(key: str, *, details: dict[str, Any] | None = None, **vars: Any) -> AppError:
+    err = AppError(
+        "not_found",
+        render_message("not_found", key, **vars),
+        status_code=status.HTTP_404_NOT_FOUND,
+        details=details,
+    )
+    return err
+
+
+def i18n_upstream(
+    key: str,
+    *,
+    retryable: bool = True,
+    details: dict[str, Any] | None = None,
+    **vars: Any,
+) -> AppError:
+    return upstream(
+        render_message("upstream", key, **vars),
         retryable=retryable,
         details=details,
     )

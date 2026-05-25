@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.errors import AppError, not_found
+from app.errors import AGENT_ROLE_CN, i18n_conflict, i18n_not_found
 from app.models.common import utc_now
 from app.models.provider_key import ProviderKey
 from app.models.system_settings import SystemSettings
@@ -116,7 +116,7 @@ def set_active_provider_key(
 ) -> SystemSettingsRead:
     key = db.get(ProviderKey, payload.provider_key_id)
     if key is None:
-        raise not_found("Provider key not found")
+        raise i18n_not_found("provider_key")
     settings_row = _get_or_create_system_settings(db)
     settings_row.active_provider_key_id = key.id
     settings_row.updated_at = utc_now()
@@ -169,7 +169,7 @@ def set_active_agent_key(
 
     key = db.get(ProviderKey, payload.provider_key_id)
     if key is None:
-        raise not_found("Provider key not found")
+        raise i18n_not_found("provider_key")
     # Honour the key's own ``agent_role`` declaration when present: a key
     # tagged 'extractor' cannot be activated for 'writer'. NULL agent_role
     # means "generic" and is allowed for any slot. This makes the
@@ -178,10 +178,12 @@ def set_active_agent_key(
     # extractor key for the writer slot) would silently route Writer to
     # the wrong model.
     if key.agent_role is not None and key.agent_role != agent_role:
-        raise AppError(
-            "conflict",
-            "Provider key is bound to a different agent_role",
-            status_code=status.HTTP_409_CONFLICT,
+        # v0.7 §5.N — Chinese template. Keeps the original code in details
+        # so the frontend can still drive UI behaviour off the role names.
+        raise i18n_conflict(
+            "provider_key_agent_mismatch",
+            key_role_cn=AGENT_ROLE_CN.get(key.agent_role, key.agent_role),
+            requested_role_cn=AGENT_ROLE_CN.get(agent_role, agent_role),
             details={"key_agent_role": key.agent_role, "requested": agent_role},
         )
     setattr(settings_row, column, key.id)
@@ -204,7 +206,7 @@ def _agent_summary_for(agent_role: AgentRole, key: ProviderKey) -> ActiveAgentKe
 def _get_provider_key(db: Session, provider_key_id: str) -> ProviderKey:
     key = db.get(ProviderKey, provider_key_id)
     if key is None:
-        raise not_found("Provider key not found")
+        raise i18n_not_found("provider_key")
     return key
 
 

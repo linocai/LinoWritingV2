@@ -15,7 +15,7 @@ from app.agents.extractor import ExtractorAgent
 from app.agents.prompt_expander import PromptExpanderAgent
 from app.agents.writer import WriterAgent
 from app.db import get_db
-from app.errors import AppError, conflict, not_found, upstream
+from app.errors import AppError, i18n_not_found, i18n_upstream
 from app.llm.base import (
     LLMClient,
     get_expander_llm_client,
@@ -145,7 +145,11 @@ def expand_chapter(
             error=str(exc),
         )
         db.commit()
-        raise upstream(str(exc), retryable=getattr(exc, "retryable", False)) from exc
+        raise i18n_upstream(
+            "llm_generic",
+            retryable=getattr(exc, "retryable", False),
+            detail=str(exc),
+        ) from exc
     db.refresh(chapter)
     return ChapterRead.model_validate(chapter)
 
@@ -209,7 +213,11 @@ def finalize_chapter(
         db.commit()
         if isinstance(exc, AppError):
             raise
-        raise upstream(str(exc), retryable=getattr(exc, "retryable", False)) from exc
+        raise i18n_upstream(
+            "llm_generic",
+            retryable=getattr(exc, "retryable", False),
+            detail=str(exc),
+        ) from exc
     db.refresh(chapter)
     return {
         "chapter": ChapterRead.model_validate(chapter),
@@ -299,7 +307,11 @@ def import_chapter(
         db.commit()
         if isinstance(exc, AppError):
             raise
-        raise upstream(str(exc), retryable=getattr(exc, "retryable", False)) from exc
+        raise i18n_upstream(
+            "llm_generic",
+            retryable=getattr(exc, "retryable", False),
+            detail=str(exc),
+        ) from exc
     db.refresh(chapter)
     return {
         "chapter": ChapterRead.model_validate(chapter),
@@ -455,7 +467,15 @@ def _write_stream(
         )
         db.commit()
         restored_or_completed = True
-        error = upstream(str(exc), retryable=getattr(exc, "retryable", True))
+        # v0.7 §5.N — wrap LLM stream failures with Chinese template so the
+        # SSE error payload (which the frontend surfaces directly in the
+        # Toast) is reader-friendly. The original message goes into the
+        # template's {detail} slot.
+        error = i18n_upstream(
+            "llm_generic",
+            retryable=getattr(exc, "retryable", True),
+            detail=str(exc),
+        )
         yield _sse(
             "error",
             {
@@ -502,18 +522,18 @@ def _sse(event: str, data: dict[str, object]) -> str:
 
 def _ensure_book(db: Session, book_id: str) -> None:
     if db.get(Book, book_id) is None:
-        raise not_found("Book not found")
+        raise i18n_not_found("book")
 
 
 def _get_book(db: Session, book_id: str) -> Book:
     book = db.get(Book, book_id)
     if book is None:
-        raise not_found("Book not found")
+        raise i18n_not_found("book")
     return book
 
 
 def _get_chapter(db: Session, chapter_id: str) -> Chapter:
     chapter = db.get(Chapter, chapter_id)
     if chapter is None:
-        raise not_found("Chapter not found")
+        raise i18n_not_found("chapter")
     return chapter

@@ -35,5 +35,10 @@ class CharacterRead(BaseModel):
     frozen_fields: dict[str, Any]
     live_fields: dict[str, Any]
     author_notes: dict[str, Any] = Field(default_factory=dict)
+    # v0.7 §5.B (Phase B-fld) — read-only field-level highlight state.
+    # Cleared automatically by ``PATCH /characters/{id}`` for each key
+    # touched in ``live_fields``. NOT exposed in CharacterPatch; clearing
+    # is a server-side side-effect of the canonical edit path.
+    pending_field_highlights: dict[str, Any] = Field(default_factory=dict)
     created_at: UtcDatetime
     updated_at: UtcDatetime

@@ -49,6 +49,12 @@ class TimelineEventPatch(BaseModel):
     @model_validator(mode="after")
     def require_at_least_one_field(self) -> "TimelineEventPatch":
         if self.event_text is None and self.event_type is None:
+            # v0.7 §5.N decision: this validator runs inside Pydantic's
+            # RequestValidationError → kind=validation envelope, which
+            # the frontend treats as a schema-level (developer-facing)
+            # signal — the C-tl inline editor never sends an empty patch.
+            # Kept English on purpose so a debug surface stays a debug
+            # surface; user-visible errors live in app/errors.py templates.
             raise ValueError(
                 "TimelineEventPatch requires at least one of event_text / event_type"
             )

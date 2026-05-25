@@ -8,6 +8,10 @@ public struct InlineEditableText: View {
     public let multiline: Bool
     public let commitOnReturn: Bool
     public let monospace: Bool
+    /// PROJECT_PLAN §5.B (Phase B-fld) — when `true`, render a small red
+    /// `DotIndicator` next to the label to flag that Extractor recently
+    /// modified this field and the user hasn't reviewed it yet.
+    public let showHighlight: Bool
     @Binding public var text: String
     public let onCommit: (String) -> Void
 
@@ -21,6 +25,7 @@ public struct InlineEditableText: View {
         multiline: Bool = false,
         commitOnReturn: Bool = true,
         monospace: Bool = false,
+        showHighlight: Bool = false,
         text: Binding<String>,
         onCommit: @escaping (String) -> Void = { _ in }
     ) {
@@ -29,6 +34,7 @@ public struct InlineEditableText: View {
         self.multiline = multiline
         self.commitOnReturn = commitOnReturn
         self.monospace = monospace
+        self.showHighlight = showHighlight
         self._text = text
         self.onCommit = onCommit
     }
@@ -36,9 +42,15 @@ public struct InlineEditableText: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             if let label {
-                Text(label)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 4) {
+                    Text(label)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                    if showHighlight {
+                        DotIndicator()
+                            .help("Agent 在最近一次完成时改动过这个字段")
+                    }
+                }
             }
             if editing {
                 editor

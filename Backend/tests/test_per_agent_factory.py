@@ -116,7 +116,8 @@ def test_build_llm_client_raises_when_no_key_resolves(
     with pytest.raises(AppError) as exc:
         build_llm_client(db_session, agent_role="extractor")
     assert exc.value.kind == "upstream"
-    assert exc.value.message == "no_active_llm_key"
+    # v0.7 §5.N — message is now Chinese; sentinel moved to details.code.
+    assert exc.value.details.get("code") == "no_active_llm_key"
 
 
 def test_build_llm_client_without_agent_role_matches_v06_behavior(

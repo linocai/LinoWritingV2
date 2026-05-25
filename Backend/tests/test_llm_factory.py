@@ -85,7 +85,10 @@ def test_build_llm_client_raises_upstream_when_no_active_key(
     with pytest.raises(AppError) as excinfo:
         build_llm_client(db_session)
     assert excinfo.value.kind == "upstream"
-    assert excinfo.value.message == "no_active_llm_key"
+    # v0.7 §5.N — the human-facing ``message`` is now Chinese; the
+    # machine-readable sentinel moved to ``details.code`` so router /
+    # frontend logic can still branch on it without parsing copy.
+    assert excinfo.value.details.get("code") == "no_active_llm_key"
     assert excinfo.value.retryable is False
 
 
@@ -122,7 +125,7 @@ def test_expand_returns_upstream_envelope_when_no_active_key(
     assert response.status_code == 502
     body = response.json()
     assert body["error"]["kind"] == "upstream"
-    assert body["error"]["message"] == "no_active_llm_key"
+    assert body["error"]["details"]["code"] == "no_active_llm_key"
 
 
 def test_deleting_active_key_makes_expand_fail_upstream(
@@ -176,7 +179,7 @@ def test_deleting_active_key_makes_expand_fail_upstream(
     )
     assert response.status_code == 502
     assert response.json()["error"]["kind"] == "upstream"
-    assert response.json()["error"]["message"] == "no_active_llm_key"
+    assert response.json()["error"]["details"]["code"] == "no_active_llm_key"
 
 
 def test_write_sse_returns_upstream_envelope_when_no_active_key(
@@ -215,7 +218,7 @@ def test_write_sse_returns_upstream_envelope_when_no_active_key(
     assert response.status_code == 502
     body = response.json()
     assert body["error"]["kind"] == "upstream"
-    assert body["error"]["message"] == "no_active_llm_key"
+    assert body["error"]["details"]["code"] == "no_active_llm_key"
     # Critical: the response must be a normal JSON envelope, not an SSE
     # stream that opened a 200 then errored mid-flight.
     assert response.headers.get("content-type", "").startswith("application/json")

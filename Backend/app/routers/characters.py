@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.errors import not_found
+from app.errors import i18n_not_found
 from app.models.book import Book
 from app.models.chapter import Chapter
 from app.models.character import Character
@@ -62,10 +62,24 @@ PATCHABLE_CHARACTER_FIELDS = frozenset(
 @router.patch("/characters/{character_id}", response_model=CharacterRead)
 def patch_character(character_id: str, payload: CharacterPatch, db: Session = Depends(get_db)) -> CharacterRead:
     character = _get_character(db, character_id)
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    dumped = payload.model_dump(exclude_unset=True)
+    for key, value in dumped.items():
         if key not in PATCHABLE_CHARACTER_FIELDS:
             continue
         setattr(character, key, value)
+    # v0.7 §5.B (Phase B-fld) — auto-clear field-level highlights for keys
+    # the user just edited via ``live_fields`` PATCH. Whole-object replace
+    # semantics on live_fields means the user has seen the value for every
+    # key they kept; we conservatively clear highlights for the keys present
+    # in the NEW live_fields payload (the same set the user just confirmed).
+    # frozen_fields / author_notes PATCH do NOT touch highlights — Extractor
+    # only writes live_fields, so only those keys can ever be highlighted.
+    if "live_fields" in dumped and isinstance(dumped["live_fields"], dict):
+        existing_highlights = dict(character.pending_field_highlights or {})
+        if existing_highlights:
+            for key in dumped["live_fields"].keys():
+                existing_highlights.pop(key, None)
+            character.pending_field_highlights = existing_highlights
     character.updated_at = utc_now()
     db.commit()
     db.refresh(character)
@@ -120,11 +134,11 @@ def character_timeline(
 
 def _ensure_book(db: Session, book_id: str) -> None:
     if db.get(Book, book_id) is None:
-        raise not_found("Book not found")
+        raise i18n_not_found("book")
 
 
 def _get_character(db: Session, character_id: str) -> Character:
     character = db.get(Character, character_id)
     if character is None:
-        raise not_found("Character not found")
+        raise i18n_not_found("character")
     return character

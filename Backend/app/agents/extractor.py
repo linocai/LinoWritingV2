@@ -38,6 +38,15 @@ EXTRACTOR_SCHEMA: dict[str, Any] = {
                 "type": "object",
                 "properties": {
                     "character_id": {"type": "string"},
+                    # v0.7 B-fld (§5.B.2): field-level dot indicator. Extractor
+                    # must list the top-level live_fields keys it patched so the
+                    # frontend can render per-field red dots. Server falls back
+                    # to ``live_fields_patch.keys()`` as the source of truth if
+                    # this list disagrees with the patch.
+                    "patch_keys": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
                     "live_fields_patch": {"type": "object"},
                 },
                 "required": ["character_id", "live_fields_patch"],
@@ -55,6 +64,8 @@ class ExtractorAgent:
 每条 timeline_events.event_text 只能一句话，建议不超过 60 字。
 character_updates 只输出需要变化的 live_fields 子字段，未变化的不输出。
 数组字段使用全量替换语义：你输出什么就是新值，不是追加。
+对每个 character_update，请在 patch_keys 数组里列出本次 patch 修改的
+live_fields 顶层 key 名（如 ["current_status", "knowledge"]）；用于前端字段级红点。
 summary 需要 200 字内，第三人称客观叙述本章发生了什么。
 不要修改 frozen_fields。
 只返回合法 JSON object。

@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
-from app.errors import upstream
+from app.errors import i18n_upstream
 from app.llm.base import LLMClient
 from app.llm.openai_compatible import OpenAICompatibleClient
 from app.models.provider_key import ProviderKey
@@ -108,5 +108,13 @@ def build_llm_client(
 
     active_key = load_active_provider_key_for_agent(db, agent_role)
     if active_key is None:
-        raise upstream("no_active_llm_key", retryable=False)
+        # v0.7 §5.N — Chinese template + machine-readable ``code`` in
+        # details. Tests that previously asserted ``message ==
+        # "no_active_llm_key"`` now switch to asserting
+        # ``details["code"] == "no_active_llm_key"`` (see test changes).
+        raise i18n_upstream(
+            "llm_no_active_key",
+            retryable=False,
+            details={"code": "no_active_llm_key"},
+        )
     return OpenAICompatibleClient(active_key)

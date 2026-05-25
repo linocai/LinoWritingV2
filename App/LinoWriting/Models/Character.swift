@@ -10,6 +10,14 @@ public struct Character: Codable, Equatable, Identifiable, Sendable, Hashable {
     /// PROJECT_PLAN §5.L.3 — author-only notes; Writer reads but never
     /// narrates verbatim. Defaults to `[:]` for older payloads (pre-L-1).
     public var authorNotes: [String: JSONValue]
+    /// PROJECT_PLAN §5.B (Phase B-fld) — field-level dot indicator.
+    /// Maps `live_fields` top-level key → ISO-8601 timestamp string of the
+    /// last Extractor patch. Server clears the entry automatically when the
+    /// user PATCHes that key in `live_fields`; the UI renders a small red
+    /// dot next to any field whose key is still present.
+    /// Read-only on the wire (never sent in PATCH). Defaults to `[:]` for
+    /// pre-B-fld cached payloads (same fallback pattern as `authorNotes`).
+    public var pendingFieldHighlights: [String: String]
     public var createdAt: Date
     public var updatedAt: Date
 
@@ -20,6 +28,7 @@ public struct Character: Codable, Equatable, Identifiable, Sendable, Hashable {
         case frozenFields = "frozen_fields"
         case liveFields = "live_fields"
         case authorNotes = "author_notes"
+        case pendingFieldHighlights = "pending_field_highlights"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
     }
@@ -32,6 +41,7 @@ public struct Character: Codable, Equatable, Identifiable, Sendable, Hashable {
         frozenFields: [String: JSONValue] = [:],
         liveFields: [String: JSONValue] = [:],
         authorNotes: [String: JSONValue] = [:],
+        pendingFieldHighlights: [String: String] = [:],
         createdAt: Date,
         updatedAt: Date
     ) {
@@ -42,13 +52,15 @@ public struct Character: Codable, Equatable, Identifiable, Sendable, Hashable {
         self.frozenFields = frozenFields
         self.liveFields = liveFields
         self.authorNotes = authorNotes
+        self.pendingFieldHighlights = pendingFieldHighlights
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
 
     /// Custom decoder mirrors `Chapter.source` fallback pattern (§5.A.6):
-    /// tolerate older cached payloads predating §5.L.1 by defaulting
-    /// `author_notes` to `[:]` so the UI never crashes on legacy JSON.
+    /// tolerate older cached payloads predating §5.L.1 / §5.B by defaulting
+    /// `author_notes` / `pending_field_highlights` to `[:]` so the UI never
+    /// crashes on legacy JSON.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.id = try c.decode(String.self, forKey: .id)
@@ -58,6 +70,7 @@ public struct Character: Codable, Equatable, Identifiable, Sendable, Hashable {
         self.frozenFields = try c.decodeIfPresent([String: JSONValue].self, forKey: .frozenFields) ?? [:]
         self.liveFields = try c.decodeIfPresent([String: JSONValue].self, forKey: .liveFields) ?? [:]
         self.authorNotes = try c.decodeIfPresent([String: JSONValue].self, forKey: .authorNotes) ?? [:]
+        self.pendingFieldHighlights = try c.decodeIfPresent([String: String].self, forKey: .pendingFieldHighlights) ?? [:]
         self.createdAt = try c.decode(Date.self, forKey: .createdAt)
         self.updatedAt = try c.decode(Date.self, forKey: .updatedAt)
     }

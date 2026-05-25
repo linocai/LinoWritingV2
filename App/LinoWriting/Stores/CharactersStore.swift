@@ -155,4 +155,27 @@ public final class CharactersStore: ObservableObject {
     public func markUpdated(_ ids: [String]) {
         pendingHighlightIds.formUnion(ids)
     }
+
+    /// PROJECT_PLAN §5.B (Phase B-fld) — unified card-level dot signal.
+    ///
+    /// Returns true if EITHER:
+    /// - `pendingHighlightIds` flags this character (legacy v0.5/v0.6
+    ///   coarse-grained mechanism — kept as fallback because it fires
+    ///   immediately on finalize/import response, before the next list
+    ///   reload pulls server-side `pending_field_highlights`), OR
+    /// - the character has any per-field highlight pending on the server
+    ///   (the new field-level mechanism — survives app relaunch since it
+    ///   lives in the DB and lets the user accumulate unseen flags
+    ///   across multiple chapters until they edit each field).
+    ///
+    /// The two signals naturally converge: once the user opens the card,
+    /// `select(id)` drops the legacy id flag; once they edit each
+    /// highlighted field, the per-field clear-on-PATCH server logic
+    /// (§5.B PATCH /characters auto-clear) empties the dict and the dot
+    /// goes away.
+    public func cardHasPendingHighlight(_ character: Character) -> Bool {
+        if pendingHighlightIds.contains(character.id) { return true }
+        if !character.pendingFieldHighlights.isEmpty { return true }
+        return false
+    }
 }

@@ -37,6 +37,18 @@ class Character(Base):
         default=dict,
         nullable=False,
     )
+    # v0.7 §5.B (Phase B-fld) — field-level dot indicator. Maps
+    # ``live_fields`` top-level key name → ISO-8601 timestamp string of the
+    # most recent Extractor patch. ``extractor_apply`` writes to this dict
+    # (merging with existing highlights so multi-chapter unseen flags
+    # accumulate); ``PATCH /characters/{id}`` auto-clears the keys it
+    # touches in ``live_fields``. Not exposed in CharacterPatch — clearing
+    # is the side-effect of editing the field itself.
+    pending_field_highlights: Mapped[dict[str, Any]] = mapped_column(
+        MutableDict.as_mutable(json_dict_type),
+        default=dict,
+        nullable=False,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

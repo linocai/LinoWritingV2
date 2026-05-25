@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.errors import not_found
+from app.errors import i18n_not_found
 from app.models.chapter import Chapter
 from app.models.common import utc_now
 from app.models.timeline_event import TimelineEvent
@@ -90,5 +90,5 @@ def delete_timeline_event(
 def _get_event(db: Session, event_id: str) -> TimelineEvent:
     event = db.get(TimelineEvent, event_id)
     if event is None:
-        raise not_found("Timeline event not found")
+        raise i18n_not_found("timeline_event")
     return event

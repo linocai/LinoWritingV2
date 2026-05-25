@@ -5,7 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.errors import not_found
+from app.errors import i18n_not_found
 from app.models.book import Book
 from app.models.chapter import Chapter
 from app.models.character import Character
@@ -65,7 +65,7 @@ def touch_book(book_id: str, db: Session = Depends(get_db)) -> Response:
 def _get_book(db: Session, book_id: str) -> Book:
     book = db.get(Book, book_id)
     if book is None:
-        raise not_found("Book not found")
+        raise i18n_not_found("book")
     return book
 
 

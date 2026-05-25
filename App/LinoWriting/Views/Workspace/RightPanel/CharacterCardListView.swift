@@ -59,7 +59,11 @@ public struct CharacterCardListView: View {
                         } label: {
                             HStack {
                                 Text(c.name)
-                                if charactersStore.pendingHighlightIds.contains(c.id) {
+                                // §5.B (Phase B-fld) — unified signal: either
+                                // legacy `pendingHighlightIds` (immediate post-
+                                // finalize) or server-side `pending_field_highlights`
+                                // (multi-chapter unseen accumulator).
+                                if charactersStore.cardHasPendingHighlight(c) {
                                     DotIndicator()
                                 }
                             }

@@ -4,6 +4,9 @@ import SwiftUI
 public struct InlineEditableTags: View {
     public let label: String?
     public let placeholder: String
+    /// PROJECT_PLAN §5.B (Phase B-fld) — when `true`, render a small red
+    /// `DotIndicator` next to the label. Mirrors `InlineEditableText`.
+    public let showHighlight: Bool
     @Binding public var tags: [String]
     public let onChange: ([String]) -> Void
 
@@ -13,11 +16,13 @@ public struct InlineEditableTags: View {
     public init(
         label: String? = nil,
         placeholder: String = "添加后回车",
+        showHighlight: Bool = false,
         tags: Binding<[String]>,
         onChange: @escaping ([String]) -> Void = { _ in }
     ) {
         self.label = label
         self.placeholder = placeholder
+        self.showHighlight = showHighlight
         self._tags = tags
         self.onChange = onChange
     }
@@ -25,9 +30,15 @@ public struct InlineEditableTags: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             if let label {
-                Text(label)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 4) {
+                    Text(label)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                    if showHighlight {
+                        DotIndicator()
+                            .help("Agent 在最近一次完成时改动过这个字段")
+                    }
+                }
             }
             FlowLayout(spacing: 6) {
                 ForEach(Array(tags.enumerated()), id: \.offset) { idx, tag in
