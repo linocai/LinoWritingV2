@@ -11,7 +11,15 @@ from app.auth import require_bearer_token
 from app.config import get_settings
 from app.db import SessionLocal
 from app.errors import install_exception_handlers
-from app.routers import admin, books, chapters, characters, health, provider_keys
+from app.routers import (
+    admin,
+    books,
+    chapters,
+    characters,
+    health,
+    provider_keys,
+    timeline_events,
+)
 from app.services.env_provider_migration import migrate_env_provider_key
 
 logger = logging.getLogger(__name__)
@@ -50,6 +58,7 @@ def create_app() -> FastAPI:
     app.include_router(books.router, prefix="/api/v1", dependencies=dependencies)
     app.include_router(characters.router, prefix="/api/v1", dependencies=dependencies)
     app.include_router(chapters.router, prefix="/api/v1", dependencies=dependencies)
+    app.include_router(timeline_events.router, prefix="/api/v1", dependencies=dependencies)
     app.include_router(admin.router, prefix="/api/v1", dependencies=dependencies)
     app.include_router(provider_keys.router, prefix="/api/v1", dependencies=dependencies)
 

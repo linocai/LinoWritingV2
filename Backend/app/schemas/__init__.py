@@ -12,7 +12,7 @@ from app.schemas.provider_key import (
     ProviderKeyUpdate,
     SystemSettingsRead,
 )
-from app.schemas.timeline import AgentLogRead, TimelineEventRead
+from app.schemas.timeline import AgentLogRead, TimelineEventPatch, TimelineEventRead
 
 __all__ = [
     "ActiveAgentKeyRead",
@@ -35,5 +35,6 @@ __all__ = [
     "ProviderKeyRead",
     "ProviderKeyUpdate",
     "SystemSettingsRead",
+    "TimelineEventPatch",
     "TimelineEventRead",
 ]

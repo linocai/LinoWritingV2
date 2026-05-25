@@ -1080,3 +1080,82 @@ v0.7 最后一笔 commit(发版同步那一笔),与 5 处版本号一起做。
   - **focus_traits chip 选项池 = 选项 B(作者自由输入)**:plan §5.L.6 没明文锁池。选 B 而非 A(从角色 trait 池取 key)的理由:① v0.7 trait 本身就是自由文本(没有受控词表),从角色取池会面临"多角色 trait 重名"和"trait key 是英文还是中文"的歧义;② InlineEditableTags 模式已经在 must_happen / must_not_happen 上跑通,作者一看就懂;③ Expander L-2 会自动推断 focus_traits,作者更多是审阅/微调而非凭空填,打字几个字成本低。**上限 2 严格执行**。
 - 测试基线:v0.7 P-2 末 42 XCTest → L-3 末 51 XCTest(42 baseline + 9 新),`xcodebuild test` 全过 0 failure。`xcodebuild build` 干净。
 - 未做:Writer / Expander prompt 改造(L-2 另一 builder,已落地)、M / N / F / O / B / C / D / Q 其它 v0.7 项。
+
+### [2026-05-25] Phase C-tl 实施(TimelineEvent 编辑 + 删除)
+
+- 变更内容:
+  - **后端**
+    - **alembic `202605250003_add_timeline_event_edited_at.py`**:`timeline_events` 加 `edited_at TIMESTAMPTZ NULL`(无 server_default,故意保留 NULL 区分 Agent 原始行)。downgrade drop。
+    - **`Backend/app/models/timeline_event.py`**:`Mapped[datetime | None] edited_at`。
+    - **`Backend/app/schemas/timeline.py`**:`TimelineEventRead.edited_at: UtcDatetime | None = None`;新增 `TimelineEventPatch`(`event_text` 可选 + `event_type` 可选 + `@model_validator(mode='after')` 强制至少一个 → 否则 ValueError → 422)。
+    - **`Backend/app/routers/timeline_events.py`**(新建):`PATCH /api/v1/timeline_events/{id}` + `DELETE /api/v1/timeline_events/{id}`。沿用 chapters/characters 的二层白名单模式(`PATCHABLE_TIMELINE_EVENT_FIELDS = frozenset({"event_text", "event_type"})`)。PATCH 写 `edited_at = utc_now()`、不允许改 character_id / chapter_id。返回 `TimelineEventRead` 时 JOIN `chapter.index` 拿 `chapter_index`(同 characters timeline 路径)。DELETE 物理删除返 204。
+    - **`Backend/app/routers/characters.py`**:`GET /characters/{id}/timeline` 输出加 `edited_at` 字段(列表 read-back 一致性)。
+    - **`Backend/app/main.py`**:挂载 `timeline_events.router`。
+  - **前端**
+    - **`Models/TimelineEvent.swift`**:`editedAt: Date?`(`edited_at` snake_case)+ 自定义 `init(from:)` 用 `decodeIfPresent` 兜底 pre-v0.7 缓存(同 `Chapter.source` / `Character.authorNotes` 套路);新增 `TimelineEventPatchRequest`(eventText / eventType 可选 + snake_case CodingKeys)。
+    - **`Services/APIClient.swift`**:Protocol + 实现新增 `updateTimelineEvent(id:eventText:eventType:)` + `deleteTimelineEvent(id:)`。错误走 ErrorMapping。
+    - **`LinoWritingTests/MockAPIClient.swift`**:同步 mock,update 时本地 `editedAt = Date()`,delete 时移除并清理 timelineEvents。
+    - **`Stores/TimelineStore.swift`**:`@discardableResult updateEvent(id:eventText:eventType:)` + `deleteEvent(id:)`。成功时把服务器返回的 row 原地 swap(`editedAt` 立即可见,不用 reload);失败 publish 到 ErrorBus,本地不优化乐观。
+    - **`Views/Workspace/RightPanel/TimelineTabView.swift`** 整体改写:`TimelineEventRow` 子 View 持有 `@State isHovered` + `@FocusState editorFocused` + `@State draft`。双击 eventText → 进入 `TextEditor` inline 编辑(只单条,父 View 持 `editingEventId`);Enter(onSubmit)保存;失焦(onChange editorFocused → false)自动保存;**macOS** Esc(`.onExitCommand`)取消。`editedAt != nil` 时在 caption 行加灰色 "已编辑" 胶囊。**macOS** hover 显示右侧 `xmark.circle.fill` 删除按钮(`.transition(.opacity)`);**iOS** 用 `.swipeActions(.trailing)`。点删除 → 父级 alert "删除这条事件?\n该操作不可撤销。",确认走 `timelineStore.deleteEvent`。
+  - **测试**:
+    - 后端 `tests/test_timeline_events.py` 新增 12 个(PATCH text/type/empty 422/disallowed-fields/404/401/invalid-type 422 + 白名单常量守护 + DELETE 成功+消失/404/401 + 列表回读 edited_at)。
+    - 前端 `LinoWritingTests/TimelineEventEditTests.swift` 新增 7 个(updateEvent 成功 swap / 失败保原 + deleteEvent 成功 / 失败保原 + Codable edited_at 解码 + 缺失 fallback + PatchRequest snake_case)。
+- 变更原因:v0.6 已知残留 todo #2(§3 C)— TimelineEvent 此前只读,Extractor 出错或细节不准时作者只能干瞪眼。本次按 §5.C 详案给出最小可用编辑/删除能力 + edited_at 审计标记。
+- 影响范围:Phase C-tl 全部落地;新增 2 后端文件(1 migration + 1 router)+ 3 修改(model / schema / characters timeline 输出 / main.py);前端新增/修改 5 个文件(TimelineEvent.swift / APIClient.swift / MockAPIClient.swift / TimelineStore.swift / TimelineTabView.swift)+ 1 新增测试文件。不动 M-2 / L-2 / L-3 / P 系列已 commit 内容。
+- 关键判断:
+  - **未引入 `updated_at` 列**:plan §5.C.2 只提 `edited_at`;子项清单顺手提的 "event.updated_at 同步" 在 TimelineEvent 模型上没有对应列(原 schema 只有 created_at)。新增 `updated_at` 会变成 schema 层 churn 且不在 §5.C.2 设计决策里,故只加 `edited_at` 单字段。如有需要,后续 phase 显式加。
+  - **inline 编辑触发 = 双击**:沿用 macOS 文本表格惯例(对比 InlineEditableText 是单击 — 但 TimelineEvent 行还要承担"双击进入编辑 vs 单击选行"的语义,而且 hover 已经有视觉响应,单击编辑会被误触)。
+  - **"已编辑" 标记位置**:与第 N 章 / 事件类型同行的 caption 区,小灰胶囊 + `.help("这条事件被用户改过")`。不放在事件文本下方避免行变高、错位 hover 删除按钮。
+  - **删除确认 alert 文案**:"删除这条事件?" / "该操作不可撤销。"(对齐 CharacterCardListView 删除角色的语气,但更短 — timeline 事件粒度比角色卡更细,文案不需要列副作用)。
+  - **失败不优化乐观**:PATCH/DELETE 失败时本地 list 保持原样,inline 编辑 view 由 `editingEventId` 在 onCommit 时主动复位(若需要重试,作者重新双击即可);删除若失败,行仍在,作者可重试。这是为了让 ErrorBus 的 toast 与 UI 状态一致,而不是"看到没了但其实没删"。
+  - **iOS 兼容性**:`onExitCommand` / `onHover` macOS-only。inline 编辑器抽到 `private var editor: some View` `@ViewBuilder` 内做平台分支,iOS 走 swipe action;两个平台都靠 onChange(editorFocused) 的失焦兜底保存。`xcodebuild build -destination 'generic/platform=iOS'` 通过。
+- 测试基线:v0.7 L-3 末 51 XCTest → C-tl 末 68 XCTest(51 baseline + 7 TimelineEventEdit + 10 之前 M-2 已加但记账漏掉的 per-agent active slot 测试)。后端 124 pytest → 136 pytest(124 baseline + 12 timeline_events 新)。`pytest -W error` 干净,`xcodebuild build`(macOS + iOS)+ `xcodebuild test`(macOS)全过。
+- 未做:v0.6 旧债 B(字段级 dot indicator) / D(Admin Log Panel UI);M-2 / N / F / O / Q 等其它 v0.7 项。
+
+### [2026-05-25] Phase M-2 多 LLM per-Agent 前端实施
+
+- 变更内容:
+  - **`Models/ProviderKey.swift`**:
+    - 新增 `enum AgentRole: String, Codable, CaseIterable, Sendable, Hashable { case writer, extractor, expander }`,自带 `displayName`(中文 UI 文案)。
+    - `ProviderKey` 加 `agentRole: AgentRole?`(nil = 通用键 / v0.6 行为);自定义 `init(from:)` 用 `decodeIfPresent ?? nil` 兜底 pre-M-1 缓存 / 老后端 payload,沿用 §5.A.6 `Chapter.source` fallback 模式。
+    - `ProviderKeyCreate` 加 `agentRole: AgentRole? = nil`(默认通用)。
+    - `ProviderKeyUpdate.agentRole` 用**三态 enum `AgentRoleUpdate`**(`.untouched` / `.set(AgentRole)` / `.clear`)而非裸 `Optional<AgentRole>`,自定义 `encode(to:)` 把三态映射到 "省略键 / emit value / emit JSON null",对齐后端 `exclude_unset` 区分"未传"vs"传 null 清回 generic" 的语义。改 `ProviderKeyUpdate` 从 `Codable` 降为 `Encodable`(代码里只 encode,decoding 不需要)。
+    - 新增 `ActiveAgentKeyRead`(`agent_role / active_provider_key_id / key_label / provider_hint / model_name / api_key_mask`,与后端 flat shape 对齐)。
+    - 新增 `ActiveAgentKeyUpdate(providerKeyId: String?)`,自定义 `encode(to:)` 把 nil emit 成 explicit `"provider_key_id": null` 而非省略(`null = 清回 generic` 是后端约定信号,绝不能让 JSONEncoder 默认行为吞掉)。
+  - **`Services/APIClient.swift`**:`APIClientProtocol` 新增 2 方法 `getActiveAgentKey(agentRole:)` / `setActiveAgentKey(agentRole:, providerKeyId:)`;`APIClient` 实现 path `/api/v1/settings/active_key/{role.rawValue}`(GET + PUT),错误走既有 `ErrorMapping`(后端 409 mismatch → `AppError.conflict`)。说明:此次另一 builder 在同一文件加了 C-tl 的 `updateTimelineEvent` / `deleteTimelineEvent`,两组方法在 protocol/类内共存,无冲突。
+  - **`Stores/ProviderKeysStore.swift`**:加 `@Published activeAgents: [AgentRole: ActiveAgentKeyRead]`(三个 slot 各自的 active);`reloadBoth()` 从 2 个 `async let` 扩成 5 个(list + 通用 active + 三个 per-agent);新增 `fetchActiveAgent(_:)` 私有 helper + 公开 `setActiveAgentKey(agentRole:, providerKeyId:)` mutator,后者乐观更新仅当前 slot(其它两 slot 不重渲),错误透传 ErrorBus。
+  - **`Views/Root/SettingsView.swift`**:在 "LLM Providers" tab 的 keys 列表**上方**插入新 section `PerAgentActiveSection`(标题"按 Agent 分别选择(可选)"+ 副标题解释控成本场景),三行 `PerAgentRow`(Writer / Extractor / Expander),每行一个 `Picker(.menu)`,选项首项"沿用通用 active"(`tag(Optional<String>.none)`)+ 所有 `store.sortedItems` 平铺。选不兼容 key(自身 agent_role 非 nil 且与 slot 不匹配)在 label 上加 "·非 {role} 专用" 后缀提示;真正提交后后端 409 会走 ErrorBus toast。底部 keys 行加 "{role} 专用" 紫色 capsule,让用户看见 key 自身的绑定。
+  - **`Views/Root/ProviderKeyEditSheet.swift`**:Form 末尾加新 Section "用途",一个 `Picker(.menu)` 4 项("通用(任何 Agent 都可用)" / Writer / Extractor / Expander 专用),帮助文字解释"绑定到某 Agent 后,该 key 只能激活到对应 slot;通用 key 可激活到任意 slot"。prefill 把 `existing.agentRole` 同步进 `@State agentRole`;submit 时与原值对比生成 `AgentRoleUpdate` 三态(未变 → `.untouched`、改某 Agent → `.set(...)`、改"通用" → `.clear`)。
+  - **`LinoWritingTests/MockAPIClient.swift`**:
+    - 加 `activeAgentKeyIds: [AgentRole: String?]`(三 key 都 present,nil 表示未绑);`createProviderKey` / `updateProviderKey` 接受 `agentRole`(三态 update 同样实现);`deleteProviderKey` 同步清三个 slot(对齐后端 §5.M / M-1 行为)。
+    - 实现 `getActiveAgentKey` / `setActiveAgentKey`,后者复刻后端 409(key.agentRole 非 nil 且 ≠ slot → `AppError.conflict`)+ `lastSetActiveAgentPayload` 捕获 hook 给契约测试断言"nil 是否真的发到后端而不是被 JSONEncoder 吞掉"。
+    - 关键修复:`reloadBoth` 现并发触发 5 个 mock 调用(2 → 5),`calls.append` / state 读没加锁会偶发触发 Swift 测试进程 "Restarting after unexpected exit"。加 `NSLock` + `locked(_:)` helper,把 list / getActive* / setActive* 五个方法包起来,真实后端"单事务串行"语义在 mock 里也成立。其它 mock 方法暂不加锁(测试里没有并发场景触发)。
+  - **`LinoWritingTests/ProviderKeysStoreTests.swift` 新增 9 个测试**(在 baseline 12 上扩到 21):
+    1. `test_setActiveAgentKey_writerKey_toWriterSlot_succeeds` — happy path,且 `activeAgents[.extractor/.expander]` 不被误动。
+    2. `test_setActiveAgentKey_writerKey_toExtractorSlot_publishesConflict` — 后端 409 路径,断 ErrorBus 收到,slot 不被写入。
+    3. `test_setActiveAgentKey_nil_clearsBackToGeneric` — 设了再清,断 store 反映 + `lastSetActiveAgentPayload.providerKeyId == nil`(契约)。
+    4. `test_load_populatesAllThreeAgentSlots` — `load()` 并发 fetch 三个 slot,store.activeAgents 三 key 都 present(即便 slot 空)。
+    5. `test_activeAgentKeyUpdate_nil_emitsExplicitJsonNull` — `ActiveAgentKeyUpdate(providerKeyId: nil)` 必须 emit `{"provider_key_id": null}`,绝不能省略字段(否则后端把当成"未传"保持现状,UI 与后端脱节)。
+    6. `test_providerKeyCreate_agentRole_serializesAsSnakeCase` — `.writer` → `"agent_role": "writer"` snake_case round-trip,不 leak camelCase。
+    7. `test_providerKeyUpdate_agentRole_triState_serialization` — 三态分别 assertion:`.untouched` 省略键 / `.set(.expander)` emit `"expander"` / `.clear` emit `null`。
+    8. `test_providerKey_decoding_missingAgentRole_fallbacksToNil` — 老 payload 无 `agent_role` 字段不炸,fallback nil。
+    9. `test_providerKey_decoding_withAgentRole_roundTrips` — 完整 payload round-trip。
+    + 1 个 `test_activeAgentKeyRead_decoding_emptySlot` 解码契约(空 slot 仍带 agent_role)。
+- 变更原因:v0.7 §5.M 主菜下半场,把 M-1 后端契约暴露给用户在 LinoI 内可视化操作。用户立即能控成本:在 Settings → LLM Providers tab 创建一把 Claude key(用途选 Writer 专用),再创建一把 Grok mini key(用途选 Extractor 专用),分别在"按 Agent 分别选择"区里激活到对应 slot,Expander 留"沿用通用"(用最便宜那把);写作流走的就是各自配的 key,后端 §5.M / M-1 端到端测试已验证此组合。
+- 影响范围:Phase M-2;修改/新增前端 6 个文件(1 model / 1 service / 1 store / 2 view / 1 mock)+ 测试扩 9 个。后端、其它 stores / views、L 系列、P 系列、C-tl 全部零改动。
+- 关键判断:
+  - **"通用 active picker"沿用既有 radio 行内 UX,不在顶部加新 picker**:plan §5.M.2 ASCII 草图把通用 active 画成一个独立顶部 picker,但 v0.6 E-3 已落地的实现是"每个 key 行有一个 radio 圈 + ACTIVE 徽章"。保留现有 radio,只把"按 Agent 分别选择"section 作为新插入块加在 keys 列表上方。理由:① 不破坏 v0.6 用户的肌肉记忆;② radio 行内交互更接近 macOS Settings 风格;③ plan ASCII 是概念示意,不是逐字 spec。
+  - **不兼容 key 在 per-agent picker 里"列出 + 加后缀提示"而非"灰显隐藏"**:plan §M-2 写"推荐:列出所有 key,但视觉上对'不兼容'key 灰显并标'非 {role} 专用'"。SwiftUI `Picker(.menu)` 没法对单个选项加 `disabled` 状态(`Menu` 才能;`Picker.menu` 渲染成系统 menu,选项一律可选)。所以选"全部列出 + 文字提示 + 让后端 409 兜底"。优点:用户能看见所有 key,误选会立刻收到中文 toast;缺点:对老练用户多走一次往返。Trade-off 取后者(代码简单 + UX 不藏选项 + 后端校验权威)。
+  - **per-agent picker 默认显示"沿用通用 active"**:文案选这个而非"未选择" / "默认" / "空",理由:① 直接说明 fallback 行为(用户立刻知道这一格"沿用"上方设的通用 active);② 与后端 §5.M.3 兼容性"v0.6 用户全 NULL → fallback 通用 active"语义对齐;③ 比"未设置"更友好(后者听起来像"必须选")。
+  - **`ProviderKeyUpdate.agentRole` 用 `AgentRoleUpdate` 三态 enum 而非 `Optional<AgentRole>?` 双重可选**:双重可选解释力差(外层 nil = 未传 / 内层 nil = clear 这种约定纯靠注释撑),三态 enum 自带 case name 自解释。代价:`ProviderKeyUpdate` 自己写一份 `encode(to:)`,但其它字段反正也要走 `encodeIfPresent`,负担可控。`ProviderKeyUpdate` 不再 `Decodable`(从未需要)。
+  - **`ActiveAgentKeyUpdate.providerKeyId == nil` 必须 emit explicit JSON null**:这是后端 §5.M / M-1 的关键约定 — null 表示"清回 generic fallback",字段缺失表示"未传(无效请求)"。Swift `JSONEncoder` 默认对 `Optional.none` 字段会省略键(实测:走 `encodeIfPresent` 路径),所以必须自己 `encode(to:)` 调 `encodeNil(forKey:)`。这是本 Phase 最容易踩错的点,专门加了 `test_activeAgentKeyUpdate_nil_emitsExplicitJsonNull` 契约测试锁死。
+  - **MockAPIClient 加 `NSLock`**:`reloadBoth` 并发数从 2 涨到 5 后,无锁的 `calls.append` / state 读写偶发触发 Swift Concurrency runtime 崩 test 进程("Restarting after unexpected exit, crash, or test timeout")。隔离运行不复现,只有完整 suite 跑才暴露 — 典型并发 bug。解法:per-call `NSLock`(只在新 / 改的 5 个 provider key 方法上加),不一刀切 mock 全文,保持对其它测试零干扰。这同时把 v0.6 隐藏的"两个 async let"潜在 race 也修了。
+  - **C-tl 上条记账"10 之前 M-2 已加但记账漏掉的 per-agent active slot 测试"是误记**:M-2 此次落地才把这 9 个测试加进 ProviderKeysStoreTests(此前 baseline 是 12,不含 per-agent)。以本次实跑为准:**59 baseline → 68 末**(C-tl 写 68 实际是把 M-2 工作提前计入了)。不改 C-tl 那条 entry,只在本条里说明。
+- 测试基线:M-1 后端 + L-3 前端 + C-tl 末实际 ProviderKeysStoreTests baseline 12 → M-2 末 21(其它 suite 不变,合计 **59 → 68 XCTest**,59 baseline 全过 + 9 新)。`xcodebuild build` 干净 0 error 0 warning;`xcodebuild test` 全过 0 failure(完整 suite 与单文件单跑都验证过)。
+- 未做:N(错误中文模板)/ F(导出)/ O(批量导入)/ B(字段级 dot)/ D(Agent Log Panel UI)/ Q(发版同步)等 v0.7 其它项。本 Phase 只做 §5.M.2 决策中"前端"那一行(SettingsView 内"哪个 Agent 用哪个 key"的可视化操作)。
+- 端到端 happy path(用户操作):
+  1. Settings → LLM Providers tab → "添加" → 别名"Claude 4.5"、Provider"OpenRouter"、Model `anthropic/claude-sonnet-4.5`、API Key 粘贴 + **用途 = Writer 专用** → 添加。
+  2. 再点"添加" → 别名"Grok mini"、Provider"xAI"、Model `grok-3-mini`、API Key 粘贴 + **用途 = Extractor 专用** → 添加。
+  3. 列表两行 keys,各自带紫色 "Writer 专用" / "Extractor 专用" capsule。
+  4. 上方"按 Agent 分别选择(可选)" section → Writer 行 picker 改为 "Claude 4.5 · anthropic/claude-sonnet-4.5";Extractor 行改为 "Grok mini · grok-3-mini";Expander 保留"沿用通用 active"(走任意一把通用 key 兜底)。
+  5. 之后写章节 expand / write / finalize 时,后端 §5.M / M-1 的 Depends 各自解析到对应 key:Writer → Claude(写得好),Extractor → Grok mini(便宜),Expander → 通用 active(默认任意便宜模型)。控成本立刻起效。

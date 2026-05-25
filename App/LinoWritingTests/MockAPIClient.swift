@@ -11,6 +11,14 @@ public final class MockAPIClient: APIClientProtocol, @unchecked Sendable {
     public var agentLogs: [AgentLog] = []
     public var providerKeys: [ProviderKey] = []
     public var activeProviderKeyId: String?
+    /// §5.M / M-2: per-agent active slots(writer/extractor/expander)。
+    /// nil 表示该 slot 未绑(fallback 走通用 active)。三个 key 总是 present,
+    /// 模拟后端 `GET /settings/active_key/{role}` 永远不会返 404 的行为。
+    public var activeAgentKeyIds: [AgentRole: String?] = [
+        .writer: nil,
+        .extractor: nil,
+        .expander: nil
+    ]
 
     public var calls: [String] = []
 
@@ -30,10 +38,28 @@ public final class MockAPIClient: APIClientProtocol, @unchecked Sendable {
 
     public init() {}
 
-    private func recordCall(_ name: String) { calls.append(name) }
+    /// §5.M / M-2: ProviderKeysStore.reloadBoth 现在并发触发 5 个网络请求
+    /// (list / 通用 active / writer / extractor / expander),如果不加锁,
+    /// 三个并发 `getActiveAgentKey` 会一起 mutating `calls` 数组并踩到
+    /// 其它状态读,Swift Concurrency 偶发崩测试进程("Restarting after
+    /// unexpected exit")。统一把每个 API 方法包在 `lock.withLock` 里既
+    /// 序列化 `calls.append`,也序列化 store mutation/lookup,与真实后端
+    /// "单连接单事务" 的隐含语义一致。
+    private let lock = NSLock()
+
+    private func recordCall(_ name: String) {
+        lock.lock(); defer { lock.unlock() }
+        calls.append(name)
+    }
 
     private func maybeThrow() throws {
         if let e = errorToThrow { throw e }
+    }
+
+    /// 对所有需要触碰可变 state 的方法包一层锁。`block` 仍能 `throw`。
+    fileprivate func locked<T>(_ block: () throws -> T) rethrows -> T {
+        lock.lock(); defer { lock.unlock() }
+        return try block()
     }
 
     public func listBooks() async throws -> [Book] {
@@ -148,6 +174,30 @@ public final class MockAPIClient: APIClientProtocol, @unchecked Sendable {
         var events = timelineEvents.filter { $0.characterId == characterId }
         if let before { events = events.filter { $0.createdAt < before } }
         return Array(events.prefix(limit))
+    }
+
+    public func updateTimelineEvent(
+        id: String,
+        eventText: String?,
+        eventType: TimelineEventType?
+    ) async throws -> TimelineEvent {
+        recordCall("updateTimelineEvent")
+        try maybeThrow()
+        guard let idx = timelineEvents.firstIndex(where: { $0.id == id }) else {
+            throw AppError.notFound("timeline_event")
+        }
+        var e = timelineEvents[idx]
+        if let t = eventText { e.eventText = t }
+        if let k = eventType { e.eventType = k }
+        e.editedAt = Date()
+        timelineEvents[idx] = e
+        return e
+    }
+
+    public func deleteTimelineEvent(id: String) async throws {
+        recordCall("deleteTimelineEvent")
+        try maybeThrow()
+        timelineEvents.removeAll { $0.id == id }
     }
 
     public func listChapters(bookId: String) async throws -> [ChapterSummary] {
@@ -344,8 +394,10 @@ public final class MockAPIClient: APIClientProtocol, @unchecked Sendable {
 
     public func listProviderKeys() async throws -> [ProviderKey] {
         recordCall("listProviderKeys")
-        try maybeThrow()
-        return providerKeys
+        return try locked {
+            try maybeThrow()
+            return providerKeys
+        }
     }
 
     public func createProviderKey(_ payload: ProviderKeyCreate) async throws -> ProviderKey {
@@ -358,6 +410,7 @@ public final class MockAPIClient: APIClientProtocol, @unchecked Sendable {
             baseUrl: payload.baseUrl,
             apiKey: mask(payload.apiKey),
             modelName: payload.modelName,
+            agentRole: payload.agentRole,
             createdAt: Date(),
             updatedAt: Date()
         )
@@ -377,6 +430,15 @@ public final class MockAPIClient: APIClientProtocol, @unchecked Sendable {
         if let v = payload.baseUrl { key.baseUrl = v }
         if let v = payload.apiKey { key.apiKey = mask(v) }
         if let v = payload.modelName { key.modelName = v }
+        // §5.M / M-2 三态 agentRole(详见 ProviderKeyUpdate):
+        switch payload.agentRole {
+        case .untouched:
+            break
+        case .set(let role):
+            key.agentRole = role
+        case .clear:
+            key.agentRole = nil
+        }
         key.updatedAt = Date()
         providerKeys[idx] = key
         return key
@@ -387,22 +449,28 @@ public final class MockAPIClient: APIClientProtocol, @unchecked Sendable {
         try maybeThrow()
         providerKeys.removeAll { $0.id == id }
         if activeProviderKeyId == id { activeProviderKeyId = nil }
+        // §5.M / M-1 后端 DELETE 行为:同时清三个 per-agent slot。
+        for role in AgentRole.allCases where activeAgentKeyIds[role] == id {
+            activeAgentKeyIds[role] = nil
+        }
     }
 
     public func getActiveProviderKey() async throws -> ActiveProviderKeySummary {
         recordCall("getActiveProviderKey")
-        try maybeThrow()
-        guard let id = activeProviderKeyId,
-              let key = providerKeys.first(where: { $0.id == id }) else {
-            return ActiveProviderKeySummary()
+        return try locked {
+            try maybeThrow()
+            guard let id = activeProviderKeyId,
+                  let key = providerKeys.first(where: { $0.id == id }) else {
+                return ActiveProviderKeySummary()
+            }
+            return ActiveProviderKeySummary(
+                activeProviderKeyId: key.id,
+                keyLabel: key.keyLabel,
+                providerHint: key.providerHint,
+                modelName: key.modelName,
+                apiKeyMask: key.apiKey
+            )
         }
-        return ActiveProviderKeySummary(
-            activeProviderKeyId: key.id,
-            keyLabel: key.keyLabel,
-            providerHint: key.providerHint,
-            modelName: key.modelName,
-            apiKeyMask: key.apiKey
-        )
     }
 
     public func setActiveProviderKey(id: String) async throws -> ActiveProviderKeySummary {
@@ -419,5 +487,71 @@ public final class MockAPIClient: APIClientProtocol, @unchecked Sendable {
             modelName: key.modelName,
             apiKeyMask: key.apiKey
         )
+    }
+
+    // MARK: - Per-Agent active key (§5.M / M-1 mock)
+
+    /// Last `(role, providerKeyId?)` passed to `setActiveAgentKey`,for tests
+    /// asserting the Swift-side encoding(尤其 nil 是否真的发到后端而不是
+    /// 被序列化省略)。
+    public var lastSetActiveAgentPayload: (role: AgentRole, providerKeyId: String?)?
+
+    public func getActiveAgentKey(agentRole: AgentRole) async throws -> ActiveAgentKeyRead {
+        recordCall("getActiveAgentKey")
+        return try locked {
+            try maybeThrow()
+            let boundId = activeAgentKeyIds[agentRole] ?? nil
+            guard let id = boundId,
+                  let key = providerKeys.first(where: { $0.id == id }) else {
+                return ActiveAgentKeyRead(agentRole: agentRole)
+            }
+            return ActiveAgentKeyRead(
+                agentRole: agentRole,
+                activeProviderKeyId: key.id,
+                keyLabel: key.keyLabel,
+                providerHint: key.providerHint,
+                modelName: key.modelName,
+                apiKeyMask: key.apiKey
+            )
+        }
+    }
+
+    public func setActiveAgentKey(
+        agentRole: AgentRole,
+        providerKeyId: String?
+    ) async throws -> ActiveAgentKeyRead {
+        recordCall("setActiveAgentKey")
+        return try locked {
+            lastSetActiveAgentPayload = (agentRole, providerKeyId)
+            try maybeThrow()
+            if let id = providerKeyId {
+                guard let key = providerKeys.first(where: { $0.id == id }) else {
+                    throw AppError.notFound("provider_key")
+                }
+                // §5.M / M-1 后端约束:绑定到某 Agent 的 key 不能跨 slot 激活。
+                if let bound = key.agentRole, bound != agentRole {
+                    throw AppError.conflict("LLM Key 「\(key.keyLabel)」绑定到 \(bound.displayName),不能激活到 \(agentRole.displayName) slot")
+                }
+                activeAgentKeyIds[agentRole] = id
+            } else {
+                // null = 显式清回 generic fallback
+                activeAgentKeyIds[agentRole] = nil
+            }
+            // 内联返回最新 ActiveAgentKeyRead 而不递归调 self.getActiveAgentKey(...),
+            // 避免重复 recordCall / 嵌套加锁。
+            let boundId = activeAgentKeyIds[agentRole] ?? nil
+            guard let id = boundId,
+                  let key = providerKeys.first(where: { $0.id == id }) else {
+                return ActiveAgentKeyRead(agentRole: agentRole)
+            }
+            return ActiveAgentKeyRead(
+                agentRole: agentRole,
+                activeProviderKeyId: key.id,
+                keyLabel: key.keyLabel,
+                providerHint: key.providerHint,
+                modelName: key.modelName,
+                apiKeyMask: key.apiKey
+            )
+        }
     }
 }

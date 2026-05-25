@@ -28,6 +28,9 @@ class TimelineEvent(Base):
     event_type: Mapped[str] = mapped_column(String(32), nullable=False)
     event_text: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    # v0.7 §5.C — NULL on rows the Extractor wrote and never user-touched; set
+    # to ``utc_now()`` on every PATCH that mutates event_text / event_type.
+    edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     character = relationship("Character", back_populates="timeline_events")
     chapter = relationship("Chapter", back_populates="timeline_events")

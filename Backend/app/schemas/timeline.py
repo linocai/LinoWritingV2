@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.common import UtcDatetime
 
@@ -27,6 +27,32 @@ class TimelineEventRead(BaseModel):
     event_type: TimelineEventType
     event_text: str
     created_at: UtcDatetime
+    # v0.7 §5.C — None for Agent-original rows, set on every user PATCH.
+    edited_at: UtcDatetime | None = None
+
+
+class TimelineEventPatch(BaseModel):
+    """Body for ``PATCH /api/v1/timeline_events/{id}``.
+
+    Deliberately only exposes ``event_text`` and ``event_type``. ``character_id``
+    and ``chapter_id`` are NOT patchable because moving an event across chapters
+    or characters would corrupt the timeline semantics (each event belongs to
+    the chapter where it was extracted). Unknown / disallowed keys are silently
+    dropped at the Pydantic layer by default ``extra='ignore'`` and re-asserted
+    by a router-level allowlist (mirrors the chapters PATCH pattern from
+    §5.P.1 F).
+    """
+
+    event_text: str | None = Field(default=None, min_length=1)
+    event_type: TimelineEventType | None = None
+
+    @model_validator(mode="after")
+    def require_at_least_one_field(self) -> "TimelineEventPatch":
+        if self.event_text is None and self.event_type is None:
+            raise ValueError(
+                "TimelineEventPatch requires at least one of event_text / event_type"
+            )
+        return self
 
 
 class AgentLogRead(BaseModel):

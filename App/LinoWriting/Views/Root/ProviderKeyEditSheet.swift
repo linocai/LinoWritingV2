@@ -86,6 +86,9 @@ public struct ProviderKeyEditSheet: View {
     /// their input when they change the preset picker.
     @State private var baseUrlEdited: Bool = false
     @State private var modelNameEdited: Bool = false
+    /// §5.M / M-2: 用途绑定。`nil` = 通用键（默认）；其它三值锁死到对应
+    /// Agent slot。编辑模式下记录原始值，submit 时只在变化时发 patch。
+    @State private var agentRole: AgentRole? = nil
 
     public init(existing: ProviderKey? = nil) {
         self.existing = existing
@@ -137,6 +140,23 @@ public struct ProviderKeyEditSheet: View {
                             .textFieldStyle(.roundedBorder)
                     }
                 }
+
+                Section {
+                    LabeledRow(label: "用途") {
+                        Picker("", selection: $agentRole) {
+                            Text("通用(任何 Agent 都可用)").tag(Optional<AgentRole>.none)
+                            ForEach(AgentRole.allCases, id: \.self) { r in
+                                Text("\(r.displayName) 专用").tag(Optional(r))
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                    }
+                    Text("绑定到某 Agent 后,该 key 只能激活到对应 slot;通用 key 可激活到任意 slot。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             .formStyle(.grouped)
 
@@ -181,6 +201,7 @@ public struct ProviderKeyEditSheet: View {
             preset = Preset.from(hint: existing.providerHint)
             baseUrl = existing.baseUrl
             modelName = existing.modelName
+            agentRole = existing.agentRole
             // SecureField left blank: user must re-enter key to change it.
             apiKey = ""
             // Mark fields as user-edited so changing the picker won't wipe
@@ -232,12 +253,25 @@ public struct ProviderKeyEditSheet: View {
         }
 
         if let existing {
+            // §5.M / M-2 三态 agentRole 编码:
+            //   - 未变 → .untouched(JSON 不含 agent_role 键)
+            //   - 改为某 Agent → .set(role)
+            //   - 改回"通用" → .clear(JSON `agent_role: null`,后端清回 generic)
+            let roleUpdate: AgentRoleUpdate
+            if agentRole == existing.agentRole {
+                roleUpdate = .untouched
+            } else if let r = agentRole {
+                roleUpdate = .set(r)
+            } else {
+                roleUpdate = .clear
+            }
             let payload = ProviderKeyUpdate(
                 keyLabel: trimmedLabel == existing.keyLabel ? nil : trimmedLabel,
                 providerHint: hint == existing.providerHint ? nil : hint,
                 baseUrl: trimmedUrl == existing.baseUrl ? nil : trimmedUrl,
                 apiKey: trimmedKey.isEmpty ? nil : trimmedKey,
-                modelName: trimmedModel == existing.modelName ? nil : trimmedModel
+                modelName: trimmedModel == existing.modelName ? nil : trimmedModel,
+                agentRole: roleUpdate
             )
             let result = await store.update(id: existing.id, payload: payload)
             if result != nil { dismiss() }
@@ -247,7 +281,8 @@ public struct ProviderKeyEditSheet: View {
                 providerHint: hint,
                 baseUrl: trimmedUrl,
                 apiKey: trimmedKey,
-                modelName: trimmedModel
+                modelName: trimmedModel,
+                agentRole: agentRole
             )
             let result = await store.create(payload)
             if result != nil { dismiss() }

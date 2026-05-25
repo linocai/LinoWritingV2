@@ -17,6 +17,8 @@ public protocol APIClientProtocol: Sendable {
     func patchCharacter(id: String, _ req: CharacterPatchRequest) async throws -> Character
     func deleteCharacter(id: String) async throws
     func listTimeline(characterId: String, limit: Int, before: Date?) async throws -> [TimelineEvent]
+    func updateTimelineEvent(id: String, eventText: String?, eventType: TimelineEventType?) async throws -> TimelineEvent
+    func deleteTimelineEvent(id: String) async throws
 
     // Chapters
     func listChapters(bookId: String) async throws -> [ChapterSummary]
@@ -43,6 +45,10 @@ public protocol APIClientProtocol: Sendable {
     func deleteProviderKey(id: String) async throws
     func getActiveProviderKey() async throws -> ActiveProviderKeySummary
     func setActiveProviderKey(id: String) async throws -> ActiveProviderKeySummary
+
+    // Per-Agent active key (§5.M / M-1)
+    func getActiveAgentKey(agentRole: AgentRole) async throws -> ActiveAgentKeyRead
+    func setActiveAgentKey(agentRole: AgentRole, providerKeyId: String?) async throws -> ActiveAgentKeyRead
 }
 
 /// Concrete URLSession-backed client.
@@ -231,6 +237,29 @@ public final class APIClient: APIClientProtocol, @unchecked Sendable {
         return resp.items
     }
 
+    /// `PATCH /api/v1/timeline_events/{id}` — see PROJECT_PLAN §5.C.
+    ///
+    /// At least one of `eventText` / `eventType` must be non-nil; passing both
+    /// nil produces a 422 from the backend (deliberate — empty PATCH would be
+    /// a no-op that still stamps `edited_at`, which would lie about whether
+    /// the user actually changed anything).
+    public func updateTimelineEvent(
+        id: String,
+        eventText: String?,
+        eventType: TimelineEventType?
+    ) async throws -> TimelineEvent {
+        let payload = TimelineEventPatchRequest(eventText: eventText, eventType: eventType)
+        let req = try makeRequest(method: "PATCH",
+                                  path: "/api/v1/timeline_events/\(id)",
+                                  body: body(payload))
+        return try await send(req, as: TimelineEvent.self)
+    }
+
+    public func deleteTimelineEvent(id: String) async throws {
+        let req = try makeRequest(method: "DELETE", path: "/api/v1/timeline_events/\(id)")
+        try await sendNoBody(req)
+    }
+
     // MARK: - Chapters
 
     public func listChapters(bookId: String) async throws -> [ChapterSummary] {
@@ -385,6 +414,37 @@ public final class APIClient: APIClientProtocol, @unchecked Sendable {
                                   path: "/api/v1/settings/active_provider_key",
                                   body: body(payload))
         return try await send(req, as: ActiveProviderKeySummary.self)
+    }
+
+    // MARK: - Per-Agent active key (§5.M / M-1)
+
+    /// `GET /api/v1/settings/active_key/{agent_role}` — fetch a single agent's
+    /// active key. `agent_role` 走路径段（writer/extractor/expander）。
+    public func getActiveAgentKey(agentRole: AgentRole) async throws -> ActiveAgentKeyRead {
+        let req = try makeRequest(
+            method: "GET",
+            path: "/api/v1/settings/active_key/\(agentRole.rawValue)"
+        )
+        return try await send(req, as: ActiveAgentKeyRead.self)
+    }
+
+    /// `PUT /api/v1/settings/active_key/{agent_role}` — set or clear the
+    /// active key for a single agent. `providerKeyId == nil` 表示清回通用
+    /// fallback（body 显式 `{"provider_key_id": null}`）。
+    ///
+    /// 后端在 key.agent_role 与 slot 不匹配时返 409；ErrorMapping 已统一把
+    /// conflict 映射成 `AppError.conflict`，store 层会发布到 ErrorBus。
+    public func setActiveAgentKey(
+        agentRole: AgentRole,
+        providerKeyId: String?
+    ) async throws -> ActiveAgentKeyRead {
+        let payload = ActiveAgentKeyUpdate(providerKeyId: providerKeyId)
+        let req = try makeRequest(
+            method: "PUT",
+            path: "/api/v1/settings/active_key/\(agentRole.rawValue)",
+            body: body(payload)
+        )
+        return try await send(req, as: ActiveAgentKeyRead.self)
     }
 }
 

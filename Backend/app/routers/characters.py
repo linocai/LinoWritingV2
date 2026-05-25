@@ -110,6 +110,7 @@ def character_timeline(
                     "event_type": event.event_type,
                     "event_text": event.event_text,
                     "created_at": event.created_at,
+                    "edited_at": event.edited_at,
                 }
             )
             for event, chapter_index in rows

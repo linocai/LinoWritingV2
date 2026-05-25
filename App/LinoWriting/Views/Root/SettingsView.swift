@@ -249,21 +249,135 @@ private struct ProviderKeysSettingsView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             ScrollView {
-                LazyVStack(spacing: 8) {
-                    ForEach(store.sortedItems) { key in
-                        ProviderKeyRow(
-                            key: key,
-                            isActive: store.active?.activeProviderKeyId == key.id,
-                            onSetActive: { Task { await store.setActive(id: key.id) } },
-                            onEdit: { editingKey = key },
-                            onDelete: { pendingDelete = key }
-                        )
+                LazyVStack(alignment: .leading, spacing: 16) {
+                    PerAgentActiveSection()
+                        .padding(.horizontal, 4)
+
+                    Divider()
+                        .padding(.horizontal, 4)
+                        .padding(.top, 2)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("你的 keys")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.leading, 4)
+
+                        LazyVStack(spacing: 8) {
+                            ForEach(store.sortedItems) { key in
+                                ProviderKeyRow(
+                                    key: key,
+                                    isActive: store.active?.activeProviderKeyId == key.id,
+                                    onSetActive: { Task { await store.setActive(id: key.id) } },
+                                    onEdit: { editingKey = key },
+                                    onDelete: { pendingDelete = key }
+                                )
+                            }
+                        }
                     }
                 }
                 .padding(.horizontal, 20)
                 .padding(.vertical, 12)
             }
         }
+    }
+}
+
+// MARK: - Per-Agent active picker (§5.M / M-2)
+
+/// "按 Agent 分别选择" 区:每个 Agent 一个 picker,默认"沿用通用 active"。
+/// 选了不兼容(key.agent_role 非 nil 且与 slot 不匹配)的 key,后端返 409,
+/// ErrorBus toast 提示;UI 上对不兼容 key 灰显并加 "非 {role} 专用" 后缀,
+/// 让用户先看到不兼容信号而非纯靠 409 弹错。
+private struct PerAgentActiveSection: View {
+
+    @EnvironmentObject private var store: ProviderKeysStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("按 Agent 分别选择(可选)")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text("不选 = 沿用上方通用 active key。Writer 走顶级模型(贵)、Extractor 用中端足够、Expander 任意便宜模型即可,可显著控成本。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(spacing: 6) {
+                ForEach(AgentRole.allCases, id: \.self) { role in
+                    PerAgentRow(role: role)
+                }
+            }
+            .padding(.top, 4)
+        }
+    }
+}
+
+private struct PerAgentRow: View {
+
+    @EnvironmentObject private var store: ProviderKeysStore
+    let role: AgentRole
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Text(role.displayName)
+                .font(.callout.weight(.medium))
+                .frame(width: 84, alignment: .leading)
+
+            // M-2 reviewer 🟡 #1: try `.foregroundStyle(.secondary)` on the
+            // option Text when the key is bound to a different agent_role
+            // (incompatible). SwiftUI Picker(.menu) is known to ignore
+            // most styling on menu items, so this may render identically
+            // to the regular options on macOS — the "· 非 X 专用" suffix
+            // remains the authoritative cue. We still apply the style for
+            // platforms / future SwiftUI versions that honour it; the
+            // 409 from the backend is the last-line defence.
+            Picker("", selection: selectionBinding) {
+                Text("沿用通用 active").tag(Optional<String>.none)
+                ForEach(store.sortedItems) { key in
+                    Text(label(for: key))
+                        .foregroundStyle(isIncompatible(key) ? AnyShapeStyle(HierarchicalShapeStyle.secondary) : AnyShapeStyle(HierarchicalShapeStyle.primary))
+                        .tag(Optional(key.id))
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .disabled(store.isMutating)
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.gray.opacity(0.04))
+        )
+    }
+
+    /// 当前 slot 选择的 provider_key_id;nil 表示"沿用通用 active"。
+    private var selectionBinding: Binding<String?> {
+        Binding(
+            get: { store.activeAgents[role]?.activeProviderKeyId },
+            set: { newId in
+                Task { await store.setActiveAgentKey(agentRole: role, providerKeyId: newId) }
+            }
+        )
+    }
+
+    /// 显示:label + (model_name) [+ "·非 {role} 专用"](不兼容时)。
+    private func label(for key: ProviderKey) -> String {
+        let base = "\(key.keyLabel) · \(key.modelName)"
+        if isIncompatible(key) {
+            return "\(base)  ·  非 \(role.displayName) 专用"
+        }
+        return base
+    }
+
+    /// Key is incompatible with this slot when it's pinned to a different agent_role.
+    /// generic (agent_role == nil) keys are compatible with every slot.
+    private func isIncompatible(_ key: ProviderKey) -> Bool {
+        if let r = key.agentRole, r != role { return true }
+        return false
     }
 }
 
@@ -305,6 +419,14 @@ private struct ProviderKeyRow: View {
                             .padding(.vertical, 2)
                             .background(Color.accentColor.opacity(0.15), in: Capsule())
                             .foregroundStyle(Color.accentColor)
+                    }
+                    if let role = key.agentRole {
+                        Text("\(role.displayName) 专用")
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.purple.opacity(0.12), in: Capsule())
+                            .foregroundStyle(Color.purple)
                     }
                 }
                 Text(subtitle)
