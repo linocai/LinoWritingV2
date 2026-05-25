@@ -63,6 +63,9 @@ public struct Step2_StructuredPromptView: View {
                     field("出场角色") {
                         charactersSelector
                     }
+                    field("本章人格重点(0-2 个,emerge 重点)") {
+                        focusTraitsEditor
+                    }
                     field("场景设定") {
                         TextField("地点 / 时间 / 氛围", text: Binding(
                             get: { draft.sceneSetting ?? "" },
@@ -143,6 +146,64 @@ public struct Step2_StructuredPromptView: View {
         }
     }
 
+    // PROJECT_PLAN §5.L.6 — focus_traits chip editor. Author-typed strings
+    // (free-form rather than picked from a fixed pool — character traits in
+    // v0.7 are themselves free-form, so a pool would be either misleadingly
+    // small or constantly out of date). Cap at 2 per §5.L.3 contract.
+    private var focusTraitsEditor: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            FlowLayout(spacing: 6) {
+                ForEach(Array(draft.focusTraits.enumerated()), id: \.offset) { idx, trait in
+                    focusTraitChip(text: trait, index: idx)
+                }
+                if !readOnly && draft.focusTraits.count < 2 {
+                    focusTraitInput
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .strokeBorder(Color.secondary.opacity(0.15), lineWidth: 1)
+            )
+            Text("Writer 会让这些特质在本章重点 emerge,其它特质少刷存在感。最多 2 个。")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func focusTraitChip(text: String, index: Int) -> some View {
+        HStack(spacing: 4) {
+            Text(text).lineLimit(1)
+            if !readOnly {
+                Button {
+                    guard draft.focusTraits.indices.contains(index) else { return }
+                    draft.focusTraits.remove(at: index)
+                    dirty = true
+                } label: {
+                    Image(systemName: "xmark").imageScale(.small)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+            }
+        }
+        .font(.callout)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(Color.purple.opacity(0.18), in: Capsule())
+    }
+
+    @ViewBuilder
+    private var focusTraitInput: some View {
+        FocusTraitInputField(existing: draft.focusTraits) { trimmed in
+            guard !trimmed.isEmpty,
+                  !draft.focusTraits.contains(trimmed),
+                  draft.focusTraits.count < 2 else { return }
+            draft.focusTraits.append(trimmed)
+            dirty = true
+        }
+    }
+
     private func characterChip(_ character: Character) -> some View {
         let selected = draft.charactersInvolved.contains(character.id)
         return Button {
@@ -176,5 +237,27 @@ public struct Step2_StructuredPromptView: View {
             Text(label).font(.caption.weight(.medium)).foregroundStyle(.secondary)
             content()
         }
+    }
+}
+
+/// Tiny inline text field used by Step2's focus_traits chip editor. Lives in
+/// its own `@State`-owning struct so the FlowLayout doesn't lose typing state
+/// when sibling chips re-render. Commits on return; clears the draft after
+/// commit. The parent controls visibility (e.g. hides this when chip count
+/// reaches the §5.L.3 cap of 2).
+private struct FocusTraitInputField: View {
+    let existing: [String]
+    let onCommit: (String) -> Void
+
+    @State private var draft: String = ""
+
+    var body: some View {
+        TextField("加 trait 后回车", text: $draft, onCommit: {
+            let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+            draft = ""
+            onCommit(trimmed)
+        })
+        .textFieldStyle(.plain)
+        .frame(minWidth: 100)
     }
 }

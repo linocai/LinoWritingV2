@@ -23,6 +23,9 @@ public struct StructuredPrompt: Codable, Equatable, Sendable, Hashable {
     public var narrativePov: NarrativePOV?
     public var targetWordCount: Int?
     public var extraNotes: String?
+    /// PROJECT_PLAN §5.L.3 / §5.L.5 — 0-2 trait names that the Writer should
+    /// preferentially emerge this chapter. Empty for older payloads.
+    public var focusTraits: [String]
 
     enum CodingKeys: String, CodingKey {
         case chapterGoal = "chapter_goal"
@@ -33,6 +36,7 @@ public struct StructuredPrompt: Codable, Equatable, Sendable, Hashable {
         case narrativePov = "narrative_pov"
         case targetWordCount = "target_word_count"
         case extraNotes = "extra_notes"
+        case focusTraits = "focus_traits"
     }
 
     public init(
@@ -43,7 +47,8 @@ public struct StructuredPrompt: Codable, Equatable, Sendable, Hashable {
         sceneSetting: String? = nil,
         narrativePov: NarrativePOV? = nil,
         targetWordCount: Int? = nil,
-        extraNotes: String? = nil
+        extraNotes: String? = nil,
+        focusTraits: [String] = []
     ) {
         self.chapterGoal = chapterGoal
         self.mustHappen = mustHappen
@@ -53,6 +58,7 @@ public struct StructuredPrompt: Codable, Equatable, Sendable, Hashable {
         self.narrativePov = narrativePov
         self.targetWordCount = targetWordCount
         self.extraNotes = extraNotes
+        self.focusTraits = focusTraits
     }
 
     public init(from decoder: Decoder) throws {
@@ -65,5 +71,6 @@ public struct StructuredPrompt: Codable, Equatable, Sendable, Hashable {
         self.narrativePov = try c.decodeIfPresent(NarrativePOV.self, forKey: .narrativePov)
         self.targetWordCount = try c.decodeIfPresent(Int.self, forKey: .targetWordCount)
         self.extraNotes = try c.decodeIfPresent(String.self, forKey: .extraNotes)
+        self.focusTraits = try c.decodeIfPresent([String].self, forKey: .focusTraits) ?? []
     }
 }

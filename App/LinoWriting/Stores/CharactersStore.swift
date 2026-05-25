@@ -137,6 +137,20 @@ public final class CharactersStore: ObservableObject {
         await patch(character, CharacterPatchRequest(liveFields: fields))
     }
 
+    // PROJECT_PLAN §5.L.3 / §5.L.6 — author_notes mirrors the frozen/live
+    // pattern: PATCH is whole-object replacement (not deep merge).
+    public func updateAuthorNote(_ character: Character, key: String, value: JSONValue) async {
+        var fields = character.authorNotes
+        fields[key] = value
+        await patch(character, CharacterPatchRequest(authorNotes: fields))
+    }
+
+    public func removeAuthorNote(_ character: Character, key: String) async {
+        var fields = character.authorNotes
+        fields.removeValue(forKey: key)
+        await patch(character, CharacterPatchRequest(authorNotes: fields))
+    }
+
     /// Mark a set of characters as "Agent-modified" so their cards show a red dot.
     public func markUpdated(_ ids: [String]) {
         pendingHighlightIds.formUnion(ids)

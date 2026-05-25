@@ -5,6 +5,10 @@ public struct CharacterCardEditorView: View {
 
     @EnvironmentObject var charactersStore: CharactersStore
 
+    /// PROJECT_PLAN §5.L.6 — author-notes section is collapsed by default.
+    /// State key includes the character id so switching cards starts collapsed.
+    @State private var authorNotesExpanded: Bool = false
+
     /// Recommended frozen-area scalar fields (text), in display order.
     private let frozenScalarFields: [(key: String, label: String, multiline: Bool)] = [
         ("core_traits", "核心性格", true),
@@ -16,6 +20,14 @@ public struct CharacterCardEditorView: View {
     /// Recommended live-area scalar fields.
     private let liveScalarFields: [(key: String, label: String, multiline: Bool)] = [
         ("current_status", "当前状态", true)
+    ]
+
+    /// PROJECT_PLAN §5.L.6 — recommended author-notes scalar fields. Multi-line
+    /// because these are typically prose-y motivation/wound/secret blurbs.
+    private let authorNotesScalarFields: [(key: String, label: String, multiline: Bool)] = [
+        ("motivation", "动机", true),
+        ("wound", "过往伤", true),
+        ("secret", "秘密", true)
     ]
 
     public init(character: Character) { self.character = character }
@@ -43,6 +55,7 @@ public struct CharacterCardEditorView: View {
                 }
                 frozenSection
                 liveSection
+                authorNotesSection
             }
             .padding(14)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
@@ -52,9 +65,13 @@ public struct CharacterCardEditorView: View {
         .onAppear {
             // Visiting clears the highlight.
             charactersStore.select(character.id)
+            authorNotesExpanded = false
         }
         .onChange(of: character.id) { _, newId in
             charactersStore.select(newId)
+            // Restart collapsed when switching to a different character so the
+            // author-notes drawer is never "leaked open" across cards.
+            authorNotesExpanded = false
         }
     }
 
@@ -189,6 +206,88 @@ public struct CharacterCardEditorView: View {
             dict: dictBinding
         ) { newDict in
             Task { await charactersStore.updateLiveField(character, key: "relationships", value: .from(dict: newDict)) }
+        }
+    }
+
+    // MARK: Author-notes section
+    //
+    // PROJECT_PLAN §5.L.6 — third section, collapsed by default. Visually
+    // dialed down (secondary foreground for the label, dashed-border
+    // container) so the author at a glance sees "this is backstage only,
+    // never narrated". Writer prompt §5.L.5 enforces the never-narrate rule.
+
+    private var authorNotesSection: some View {
+        DisclosureGroup(isExpanded: $authorNotesExpanded) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("仅供 Agent 幕后参考,不会被写入正文")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                ForEach(authorNotesScalarFields, id: \.key) { spec in
+                    authorNoteTextRow(spec: spec)
+                }
+                authorNotesFreeFormRow
+            }
+            .padding(10)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.secondary.opacity(0.05))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                    .foregroundStyle(Color.secondary.opacity(0.35))
+            )
+            .padding(.top, 6)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "theatermasks")
+                Text("作者笔记").font(.headline)
+                Text("幕后专属")
+                    .font(.caption)
+            }
+            .foregroundStyle(.secondary)
+        }
+    }
+
+    private func authorNoteTextRow(spec: (key: String, label: String, multiline: Bool)) -> some View {
+        let value = character.authorNotes.string(spec.key) ?? ""
+        let binding = Binding<String>(get: { value }, set: { _ in })
+        return InlineEditableText(
+            label: spec.label,
+            placeholder: "未填写",
+            multiline: spec.multiline,
+            commitOnReturn: !spec.multiline,
+            text: binding,
+            onCommit: { newValue in
+                Task { await charactersStore.updateAuthorNote(character, key: spec.key, value: .string(newValue)) }
+            }
+        )
+    }
+
+    /// Free-form key/value rows for author notes that don't fit the recommended
+    /// scalar fields. Filters out the recommended keys to avoid duplicating
+    /// rows already rendered above.
+    private var authorNotesFreeFormRow: some View {
+        let recommendedKeys = Set(authorNotesScalarFields.map { $0.key })
+        let extras = character.authorNotes
+            .filter { !recommendedKeys.contains($0.key) }
+            .reduce(into: [String: String]()) { acc, pair in
+                if let s = pair.value.stringValue { acc[pair.key] = s }
+            }
+        let dictBinding = Binding<[String: String]>(get: { extras }, set: { _ in })
+        return InlineEditableDict(
+            label: "更多笔记",
+            keyPlaceholder: "标签",
+            valuePlaceholder: "内容",
+            dict: dictBinding
+        ) { newDict in
+            Task {
+                // Merge newDict back into authorNotes preserving the
+                // recommended-key rows (which live alongside, not in this dict).
+                var merged: [String: JSONValue] = character.authorNotes.filter { recommendedKeys.contains($0.key) }
+                for (k, v) in newDict { merged[k] = .string(v) }
+                await charactersStore.patch(character, CharacterPatchRequest(authorNotes: merged))
+            }
         }
     }
 
