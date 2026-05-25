@@ -29,7 +29,7 @@ class OpenAICompatibleClient:
     def complete(self, *, system: str, user: str, **kwargs: Any) -> str:
         payload = self._payload(system=system, user=user, stream=False, **kwargs)
         data = self._post_json(payload, timeout=kwargs.get("timeout", 60))
-        return data["choices"][0]["message"]["content"]
+        return _extract_content(data)
 
     def complete_json(self, *, system: str, user: str, schema: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
         schema_text = json.dumps(schema, ensure_ascii=False)
@@ -46,7 +46,7 @@ class OpenAICompatibleClient:
             **kwargs,
         )
         data = self._post_json(payload, timeout=kwargs.get("timeout", 60))
-        content = data["choices"][0]["message"]["content"]
+        content = _extract_content(data)
         try:
             parsed = json.loads(content)
         except json.JSONDecodeError as exc:
@@ -129,8 +129,40 @@ class OpenAICompatibleClient:
                     if data == "[DONE]":
                         break
                     chunk = json.loads(data)
-                    token = chunk["choices"][0].get("delta", {}).get("content")
+                    # Some OpenAI-compatible providers (Grok / OpenAI itself
+                    # when usage stats are enabled, DeepSeek for token-limit
+                    # edge cases, ...) emit metadata-only frames with an
+                    # empty `choices` list. They aren't errors — just skip.
+                    choices = chunk.get("choices") or []
+                    if not choices:
+                        continue
+                    delta = choices[0].get("delta") or {}
+                    token = delta.get("content")
                     if token:
                         yield token
         except (httpx.TimeoutException, httpx.TransportError) as exc:
             raise LLMError(str(exc), retryable=True) from exc
+
+
+def _extract_content(data: dict[str, Any]) -> str:
+    """Pull the assistant message out of a non-streaming /chat/completions
+    response without exploding on edge cases.
+
+    Defends against:
+    - `{"choices": []}` — empty list (some providers return this when the
+      model refuses, hits a safety filter, or runs out of tokens before
+      producing any content).
+    - `{"choices": [{"message": null}]}` or missing keys — partial
+      responses from misbehaving compat layers.
+    Both surface as a retryable LLMError so the caller's retry / error
+    banner path runs instead of a raw IndexError / KeyError 500.
+    """
+    choices = data.get("choices") or []
+    if not choices:
+        finish = data.get("error") or data.get("finish_reason") or "no choices returned"
+        raise LLMError(f"LLM returned no choices ({finish})", retryable=True)
+    message = choices[0].get("message") or {}
+    content = message.get("content")
+    if content is None:
+        raise LLMError("LLM response missing message.content", retryable=True)
+    return content
