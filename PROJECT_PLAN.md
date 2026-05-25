@@ -723,8 +723,9 @@ characters[*] 的 frozen_fields 和 author_notes 是**幕后参考** —
 角色卡是水库,不是必须排空的水桶 — 不自然的 trait 就完全不用。
 
 # 本章重点
-structured_prompt.focus_traits 是本章**可重点 emerge** 的 1-2 个特质,
-其它 trait 保持隐性,不主动展示。
+structured_prompt.focus_traits 是本章**可重点 emerge** 的 0-2 个特质,
+其它 trait 保持隐性,不主动展示。**为空时不要刻意 emerge 任何特质** —
+按 plot 自然行进即可,不要为了凑满"重点"而编一个出来。
 
 author_notes 是角色的"演员小抄":动机/过往/秘密。这是**纯幕后**,
 正文里**绝不可有任何句子直接转述 author_notes 的内容**。它的作用
@@ -967,3 +968,115 @@ v0.7 最后一笔 commit(发版同步那一笔),与 5 处版本号一起做。
   - 迁移兼容性:`sa.JSON().with_variant(JSONB, "postgresql")` 与 v0.5 initial_schema 内 `json_type` 一致;`server_default=sa.text("'{}'")` 在 SQLite 和 PostgreSQL 上都是合法 JSON literal,均通过 `ALTER TABLE ... ADD COLUMN` 回填。
 - 测试基线:v0.7 P-1+P-3 末 82 pytest → L-1 末 88 pytest(83 baseline + 5 新)。注:重数过去日志,实际 baseline 是 83(v0.6 末 57 + P-1 25 + 1 隐含,以本次实跑为准)。`pytest -W error` 干净。
 - 未做:Expander focus_traits 推断(L-2)、Writer prompt show/tell 改造(L-2)、context_pack 合并查询(L-2)、前端三区(L-3)。
+
+### [2026-05-25] Phase M-1 多 LLM per-Agent 后端实施
+
+- 变更内容:
+  - **Alembic 迁移 `202605250002_add_provider_key_agent_role`**(顺接 L-1 的 250001):
+    - `provider_keys` 加 `agent_role TEXT NULL`(NULL = 通用 / 全局回退)
+    - `system_settings` 加三个 FK 字段 `active_writer_key_id` / `active_extractor_key_id` / `active_expander_key_id`,均 FK → `provider_keys.id ON DELETE SET NULL`
+    - 用 `batch_alter_table` 加 FK(SQLite 不支持 plain ALTER TABLE 加 FK,dev DB 是 SQLite,所以必须 batch)。downgrade 反向 drop 全部 4 列。
+    - 干净 SQLite + 已升级 dev DB 双验证(`alembic upgrade head` / `downgrade 250001` / `upgrade head` 三次往返成功)。
+  - **`ProviderKey` ORM**:加 `agent_role: Mapped[str | None]`。**`SystemSettings` ORM**:加三个 `active_*_key_id: Mapped[str | None]`(FK 与迁移一致)。
+  - **`ProviderKey*` Pydantic schema**(`app/schemas/provider_key.py`):
+    - 新增 `AgentRole = Literal['writer','extractor','expander']` + `AGENT_ROLES` 常量(单一来源,加新 Agent 只动这里 + 路由 dispatch dict)。
+    - `ProviderKeyCreate` / `ProviderKeyUpdate` / `ProviderKeyRead` 加 `agent_role: AgentRole | None`(create 默认 None;PATCH 用 `exclude_unset` 区分"未传"vs"传 null 清回 generic")。
+    - 新增 `ActiveAgentKeyRead`(flat shape:`{agent_role, active_provider_key_id, key_label, provider_hint, model_name, api_key_mask}`,与 `SystemSettingsRead` 对齐;`agent_role` 字段帮前端在一个列表里 render 多行)。
+    - 新增 `ActiveAgentKeyUpdate`(`provider_key_id: str | None`;**null = 显式清回 generic fallback**,不同于"从未设置")。
+  - **`routers/provider_keys.py`**:
+    - 现有 6 个 endpoint + 通用 active 全部保留(向后兼容关键)。
+    - 新增 `GET /api/v1/settings/active_key/{agent_role}` + `PUT /api/v1/settings/active_key/{agent_role}`(参数化,**不是 6 个独立端点**;agent_role 用 FastAPI `Path(pattern="^(writer|extractor|expander)$")` 校验,非法值走 422)。
+    - PUT 上额外 validate:**若 ProviderKey 自身 `agent_role` 非 NULL,只能激活到匹配的 slot**(`extractor` 键不能激活到 `writer` slot;返 409 conflict)。这让 `agent_role` 字段有实际意义,而非纯装饰。NULL `agent_role`(通用键)允许激活到任意 slot。
+    - `delete_provider_key` 显式清通用 active + 三个 per-agent active(SQLite 默认不强制 FK,显式清确保 API 契约一致)。
+  - **`app/llm/factory.py`**:
+    - 保留 `load_active_provider_key(db)`(通用 fallback)与 `build_llm_client(db)`(零参签名,v0.6 调用方零改动)。
+    - 新增 `load_active_provider_key_for_agent(db, agent_role)`:查 `system_settings.active_{agent}_key_id` → 找到则返;否则 fallback 通用 active。stale FK(指向已删 row)也 fallback 通用而非 500。
+    - `build_llm_client(db, agent_role=None)` 加 keyword-only 参数 agent_role,调上面的函数。
+  - **`app/llm/base.py`**:`get_llm_client`(v0.6 通用)保留;新增 3 个 Depends — `get_writer_llm_client` / `get_extractor_llm_client` / `get_expander_llm_client`,各自走 `build_llm_client(db, agent_role=...)`。
+  - **`app/routers/chapters.py`**:`/expand` → `get_expander_llm_client`;`/write` → `get_writer_llm_client`;`/finalize` → `get_extractor_llm_client`;`/import`(run_extractor 路径)→ `get_extractor_llm_client`。**这是 M-1 核心契约,让控成本立刻起效**。
+  - **`tests/conftest.py`**:新增 `ALL_LLM_DEPENDENCIES` 常量(4 个 Depends 函数的 tuple),`override_all_llm_clients(factory)` 一次性 override 全部,`clear_all_llm_overrides()` 一次性 pop 全部。conftest 默认 override 全部 4 个到 MockLLMClient → v0.6 era 测试零改动。
+  - **`tests/test_chapters_flow.py` / `test_chapter_import.py`**:把 `dependency_overrides[get_llm_client] = ...` 改成 `override_all_llm_clients(lambda: ...)`(测试代码升级,生产行为不变)。
+  - **`tests/test_llm_factory.py`**:把 `dependency_overrides.pop(get_llm_client, None)` 改成 `clear_all_llm_overrides()`。
+  - **`tests/test_per_agent_factory.py`** 新增 18 个测试:
+    - 5 个 factory unit:per-agent 优先 / fallback 通用(§5.M.3 兼容性)/ 全空报 upstream / `build_llm_client(db)` 零参 v0.6 行为不变 / stale FK fallback(PRAGMA off 模拟)。
+    - 10 个 endpoint:create 带 agent_role 回环 / 默认 NULL / 非法 agent_role 422 / PATCH 清回 NULL / GET unset 返 null summary / PUT generic 键到任意 slot 成功 / PUT mismatch agent_role 返 409 / PUT null 清回 fallback / PUT 非法 path agent_role 422 / PUT unknown key id 404 / DELETE 共享键清三个 slot + 通用。
+    - 3 个 end-to-end:expand/write/finalize 各自 Depend 不同 mock(用 `_LabelledLLM` 在 mock 里打标签,断言 expander 收到 `complete_json`、writer 收到 `complete_stream`、extractor 收到 `complete_json`,**且无跨 Agent 泄漏**);v0.6 用户全 NULL 配置时三个 endpoint 都用 conftest 默认 MockLLM(模拟 factory fallback chain),expand→write→finalize 全 200(§5.M.3 兼容性 end-to-end 验证)。
+- 变更原因:v0.7 §5.M 主菜之一,让用户能分别给 Writer(Claude 顶级)/ Extractor(中端 Grok)/ Expander(任意便宜模型)选不同 LLM key,控成本同时质量不降。
+- 影响范围:Phase M-1 后端;新增/修改文件 8 个(1 迁移 + 2 ORM + 1 schema + 2 router + 1 factory + 1 base.py + 1 conftest + 1 测试)+ 3 个旧测试小改(替换 dependency_override helper)。
+- 关键判断:
+  - **端点参数化**(`/settings/active_key/{agent_role}`)而非 6 个独立端点:plan §M.2 提的备选方案,我选参数化 — 单一路径正则约束 agent_role,前端 E-3 后续做 dropdown 时一个 generic API method 就够,加新 Agent(比如 "summarizer")只动 schema enum + dispatch dict 两处。
+  - **Depends 命名** `get_{agent}_llm_client`:与现有 `get_llm_client` 同 prefix,签名一致(只接 `db`),测试 override 模式无缝。
+  - **不在 `GET /system_settings` 里返三个 *_summary**:避免响应膨胀且语义混乱(那个 endpoint 已经叫 active_provider_key 专指通用);per-agent active 走独立的 `/settings/active_key/{agent_role}` endpoint,前端要时三次调用。
+  - **agent_role 校验语义**:`ProviderKey.agent_role` 非 NULL 时,**只能激活到匹配 slot**(否则 409)。让该字段有实际治理作用,而不是纯前端 hint;NULL(通用)依然可激活到任意 slot,这是 v0.6 用户和"我这把 key 三个 agent 都行"的常见场景。
+  - **向后兼容如何保证**(§5.M.3 关键):
+    1. ORM / DDL 层:三个新 FK 字段都 nullable;v0.6 库升上来后默认全 NULL。
+    2. Factory 层:`load_active_provider_key_for_agent` 当 per-agent 为 NULL 时 fall through 到 `load_active_provider_key`(v0.6 函数原封不动);所以 v0.6 deploy 升级到 v0.7 后,在用户没碰新 UI 之前,Writer/Extractor/Expander 三个 Depends 都解析到通用 active key。
+    3. Endpoint 层:旧的 6 个 provider_key endpoint + 通用 `/settings/active_provider_key` 0 行修改;前端 E-3 已 ship 的 UI 继续工作。
+    4. 测试层:`test_v06_user_with_no_per_agent_keys_routes_through_fallback` 端到端验证完整流程(expand→write→finalize)在零 per-agent 配置下全 200。
+    5. `build_llm_client(db)` 零参签名保留 — v0.6 任何代码调它行为不变(只查通用 active,不碰新字段)。
+- 测试基线:L-1 末 106 pytest(包括 L-2 expander_focus_traits 7 个,因另一 builder 已 commit)→ M-1 末 124 pytest(106 baseline 全过 + 18 新)。`pytest -W error` 干净无 warning。
+- 未做:M-2 前端(SettingsView LLM Providers tab 加"哪个 Agent 用哪个 key"dropdown,另一 builder)。
+- 端到端 happy path(curl):
+  ```
+  # 1. 用户上传两把 key
+  POST /api/v1/provider_keys {"key_label":"Claude 4.5","base_url":"https://openrouter.ai/api/v1","api_key":"sk-or-...","model_name":"anthropic/claude-sonnet-4.5","agent_role":"writer"}
+  POST /api/v1/provider_keys {"key_label":"Grok mini","base_url":"https://api.x.ai/v1","api_key":"xai-...","model_name":"grok-3-mini","agent_role":"extractor"}
+  # 2. 各自激活
+  PUT /api/v1/settings/active_key/writer {"provider_key_id":"<claude id>"}
+  PUT /api/v1/settings/active_key/extractor {"provider_key_id":"<grok mini id>"}
+  # 3. 写作流(Writer 走 Claude / Extractor 走 Grok mini,Expander 没设 → fallback 通用 active)
+  POST /api/v1/chapters/<id>/expand    # → Expander 用通用 active(或 fallback 报 no_active_llm_key)
+  POST /api/v1/chapters/<id>/write     # → Writer 用 Claude
+  POST /api/v1/chapters/<id>/finalize  # → Extractor 用 Grok mini
+  ```
+
+### [2026-05-25] Phase L-2 Expander + Writer prompt + context_pack 实施
+
+- 变更内容:
+  - **`PromptExpanderAgent`** (§5.L.4):system_prompt 增加 "focus_traits" 段(教模型挑 0-2 个本章最相关的 trait、纯字符串、不是字段路径、纯过场/动作场返回空数组);JSON schema 增加 `focus_traits` 槽位(`type: array, items: string, maxItems: 2`);新增 `MAX_FOCUS_TRAITS=2` 常量 + `_expander_json_schema()` helper;`expand()` 加服务端 truncate(LLM 多产时取前 2 个并过滤非字符串),Pydantic 验证前兜底。
+  - **`WriterAgent`**(§5.L.5):system_prompt **完全重写**,逐字采用 plan §5.L.5 模板(角色卡使用规则段 / show-don't-tell 反例 / 同 trait 整章最多一次 / 不要逐字搬字段名 / 角色卡是水库不是水桶 / 本章重点段 / author_notes 段),保留 must_happen / must_not_happen / timelines / target_word_count / 文风遵循 / 只输出正文等现有规则;Writer 代码逻辑零改动(仍是 JSON dump 整个 context + 文风样本块)。
+  - **`context_pack.py`**(§5.L 整段):
+    - 合并 `_recent_summaries` + `_style_samples` → `_recent_finalized(db, book_id, before_index, *, summaries_limit, style_samples_limit, chars_per_side=...)`,一次 SELECT 取 `max(summaries_limit, style_samples_limit)` 行,内存切两次 transform;短章短样规则、ascending 返回顺序、空 limit 短路都保留。
+    - `_character_full(character, *, include_author_notes: bool)`:author_notes 字段按调用方按需 gate。`build_writer_context` 和 `build_expander_context` 设 True;`build_extractor_context` 设 False(决策:Extractor 不该看 author_notes,避免诱导它把 motivation/secret 折入 live_fields,污染私有通道)。
+    - `_character_brief`(Expander 用):新增 `frozen_fields` + `author_notes` 全量字段。**这是 plan 没明说但 §5.L.4 隐含要求的微小扩展** — Expander 要"看本章涉及角色的 frozen_fields + author_notes"才能推断 focus_traits,v0.6 的 brief 只有 `profile` 一行不够用。保留原 `profile` 一行向后兼容。`live_fields` 不投喂(它是 Extractor 维护的事实,不是 trait 池)。
+    - 新增 `RECENT_SUMMARIES_COUNT=2` 常量,与 `STYLE_SAMPLES_*` 并列在文件顶部。
+  - **测试新增 16 个**:
+    - `tests/test_expander_focus_traits.py` 7 个:解析非空 / 解析空 / >2 时服务端 truncate / 过滤非字符串 / 字段缺失走默认 / JSON schema 槽位形状 / system_prompt 关键词回归。
+    - `tests/test_writer_prompt.py` 新增 4 个:system_prompt 包含 §5.L.5 关键短语("幕后参考"、"focus_traits"、"角色卡使用规则"、"author_notes"、show/tell 反例对、"水库"、"绝不可有任何句子直接转述 author_notes")/ 不再包含旧的 "严格遵守 characters[*].frozen_fields" 与 "冻结区不能漂移" / 保留 must_happen / must_not_happen / timelines / 字数 / 文风 / 只输出正文 / Writer user message JSON 携带 author_notes 与 focus_traits 字段(契约测试,锁防未来重构悄悄剥离)。
+    - `tests/test_context_pack.py` 新增 5 个:Writer context 含 author_notes / Expander context 含 author_notes(brief 路径)/ Extractor context **不含** author_notes / 合并查询 SQL 计数(SQLAlchemy `before_cursor_execute` event hook 验证 chapter-only SELECT 仅 1 次)/ 不同 limits 分别 trim 正确(2+4、3+1、0+0 三个 case)。
+- 变更原因:v0.7 主菜 L 第二棒,§5.L.4 + §5.L.5 + §5.L 余下段(context_pack 合并查询是顺手把整体审计 J 项性能问题做了)。**直接解决"Writer 把角色卡当 narrate 检查表"的内容质量通病**。
+- 影响范围:Phase L-2;修改 3 个生产文件(`prompt_expander.py` / `writer.py` / `context_pack.py`)+ 修改 2 个测试文件(`test_writer_prompt.py` / `test_context_pack.py`)+ 新增 1 个测试文件(`test_expander_focus_traits.py`)。routers / models / migrations 全部零改动。
+- 关键判断:
+  - **Expander 服务端 truncate**:LLM system_prompt 已写 "max 2",JSON schema 已写 `maxItems: 2`,但 LLM 仍可能越界(尤其便宜模型 / structured-output 不严格的 provider)。`expand()` 内 truncate 是第三道保险,保证 contract 与 provider 解耦。同时把非 string 项过滤掉(模型偶尔会塞 dict 或 int)。
+  - **Extractor 不投喂 author_notes**:这是私域通道(作者填给 Writer 看的演员小抄),Extractor 看到后会被诱导把 "motivation"、"secret" 折入 live_fields,把作者的私笔记搞成了 Agent 维护的事实。决策:Writer/Expander = True,Extractor = False。
+  - **Expander brief 扩展 frozen_fields + author_notes**:plan §5.L.4 字面说 "看 frozen_fields + author_notes",v0.6 的 `_character_brief` 只有一行 profile 不够用。我扩展了 brief 但保留 `profile` 一行向后兼容;`live_fields` 仍不投喂(它是 Extractor 维护的事实,不是 trait 池)。这是本次唯一一个 plan 没明说但合理推进的小扩展。
+  - **合并查询 LIMIT 取法**:`max(summaries_limit, style_samples_limit)` — 两个共享 finalized 行池,取较大值后内存独立 trim;`limit=0` 双零短路不打 DB。
+  - **Writer 代码逻辑零改动**:JSON dump context 时 author_notes 和 focus_traits 自动随车,WriterAgent._render_user_message 无需改;只改了 system_prompt 字符串。
+- 测试基线:L-1 末 88 pytest(本次实跑)→ L-2 末 97 pytest(81 baseline 全过 + 16 新)。**注:跑测时观察到 M-1 builder 并行改动了 `provider_keys` model + schema 但 `routers/provider_keys.py` 的 `_to_read` 还没补 `agent_role` 字段,引起 9 个 provider_keys / llm_factory 测试失败**,跟 L-2 无关 — 用 `--ignore` 排除后 83 个非 M-1 测试全过;只跑 L-2 范围(`test_expander_focus_traits.py` / `test_writer_prompt.py` / `test_context_pack.py` / `test_style_samples.py` / `test_agents_with_mock.py` / `test_character_author_notes.py` / `test_chapters_flow.py` / `test_chapter_import.py` / `test_chapter_patch_allowlist.py`)52 passed。`-W error` 干净。
+- 未做:多 LLM per-Agent 后端完工(M-1 另一 builder)、前端角色卡分三区与 focus_traits chip 多选(L-3 另一 builder)、其它 v0.7 项。
+
+### [2026-05-25] Phase L-3 前端角色卡三区编辑 + focus_traits chip 实施
+- 变更内容:
+  - **`Models/Character.swift`**:`Character` 加 `authorNotes: [String: JSONValue]`(与 `frozenFields` / `liveFields` 严格对齐的类型)。自定义 `init(from:)` 用 `decodeIfPresent ?? [:]` 容错 pre-L-1 缓存 payload(沿用 `Chapter.source` 的 §5.A.6 fallback 模式)。`CharacterCreateRequest` / `CharacterPatchRequest` 同步加 `authorNotes` optional 字段,CodingKeys 全部映射 `author_notes` snake_case。
+  - **`Models/StructuredPrompt.swift`**:加 `focusTraits: [String]`(默认空);自定义 `init(from:)` 加一行 `decodeIfPresent ?? []`。`focus_traits` snake_case 映射。
+  - **`Stores/CharactersStore.swift`**:新增 `updateAuthorNote(key:value:)` / `removeAuthorNote(key:)` 走 PATCH 通路;`patch` 设 `public` 以便 view 层组装 author_notes 整体替换(自由 key/value 行场景)。
+  - **`Views/Workspace/RightPanel/CharacterCardEditorView.swift`**:在现有"冻结区 + 活动区"下面加第三个 `authorNotesSection`,用 `DisclosureGroup` 默认折叠(`@State authorNotesExpanded = false`)。展开后:`theatermasks` SF Symbol + "作者笔记 / 幕后专属"标题(.secondary 弱化);副标题"仅供 Agent 幕后参考,不会被写入正文";三个推荐 scalar 行(`motivation` / `wound` / `secret`,均 multiline);最下面 `InlineEditableDict` 收"更多笔记"自由 key/value(自动从 character.authorNotes 里过滤掉三个推荐 key,提交时合并回)。容器用 `Color.secondary.opacity(0.05)` 填充 + 虚线 strokeBorder,与上面两区视觉上区分。切换角色时 `authorNotesExpanded` 重置回 false,避免"打开状态泄漏"。
+  - **`Views/Workspace/Editor/Step2_StructuredPromptView.swift`**:在"出场角色"后面新增 `field("本章人格重点(0-2 个,emerge 重点)")` chip 编辑器。chip 用 `Color.purple.opacity(0.18)` Capsule(区别于 must_happen 的灰 chip);每个 chip 自带 × 删除;输入用一个独立的 `FocusTraitInputField` private View(自带 `@State draft`,enter 提交 — 避免 FlowLayout 重渲染时丢键入状态);**最多 2 个** chip,达上限时输入框自动消失;onCommit 也再过一次 `< 2` 检查双保险。`onChange` 走原有 `draft.focusTraits` mutation → `dirty = true` → "保存提示"按钮 PATCH `structured_prompt`。
+  - **`LinoWritingTests/CharacterAuthorNotesCodecTests.swift`** 新建,9 个 XCTest:
+    1. `Character` 解码 `author_notes` 存在 → 拿到三个 key
+    2. `Character` 解码 `author_notes` 缺失 → fallback `[:]`
+    3. `Character` 完整 round-trip 保 `author_notes`
+    4. `CharacterPatchRequest` 编码 emit `author_notes` snake_case,**不** leak `authorNotes` camelCase
+    5. `CharacterCreateRequest` 编码同上
+    6. `StructuredPrompt` 解码 `focus_traits` 存在
+    7. `StructuredPrompt` 解码 `focus_traits` 缺失 → fallback `[]`
+    8. `StructuredPrompt` round-trip 保 `focus_traits` snake_case
+    9. `ChapterPatchRequest` 嵌套的 `structured_prompt.focus_traits` 序列化
+- 变更原因:L 主菜第三棒(§5.L.6)。打通"作者笔记区"(L-1 后端字段) + "本章人格重点 chip"(L-2 后端字段)的前端编辑路径,让作者可以分别在角色卡和章节 Step2 编辑这两个新维度。
+- 影响范围:Phase L-3;修改/新增前端 6 个文件(2 model / 1 store / 2 view / 1 test)。无后端、无 prompts、无 P/M-series 文件改动。
+- 关键判断:
+  - **`authorNotes` 类型 = `[String: JSONValue]`**:严格对齐 `frozenFields` / `liveFields`,而不是更简单的 `[String: String]`。理由:后端 schema `dict[str, Any]` 任何 JSON 值都可能进,前端不应强制 string 化截掉信息(虽然 UI 当前只渲染 string)。这给将来扩展(如 author_notes 里塞 list 或嵌套 dict)留路径。
+  - **作者笔记区默认折叠**:`@State` 而非 `@AppStorage` — 切换角色重置,避免在另一个角色卡看到 A 角色"展开过"的余韵。视觉上 `theatermasks` SF Symbol + 虚线 border + `.secondary` 弱化标题色,让作者一眼区分"这区是幕后专属"。
+  - **focus_traits chip 选项池 = 选项 B(作者自由输入)**:plan §5.L.6 没明文锁池。选 B 而非 A(从角色 trait 池取 key)的理由:① v0.7 trait 本身就是自由文本(没有受控词表),从角色取池会面临"多角色 trait 重名"和"trait key 是英文还是中文"的歧义;② InlineEditableTags 模式已经在 must_happen / must_not_happen 上跑通,作者一看就懂;③ Expander L-2 会自动推断 focus_traits,作者更多是审阅/微调而非凭空填,打字几个字成本低。**上限 2 严格执行**。
+- 测试基线:v0.7 P-2 末 42 XCTest → L-3 末 51 XCTest(42 baseline + 9 新),`xcodebuild test` 全过 0 failure。`xcodebuild build` 干净。
+- 未做:Writer / Expander prompt 改造(L-2 另一 builder,已落地)、M / N / F / O / B / C / D / Q 其它 v0.7 项。
