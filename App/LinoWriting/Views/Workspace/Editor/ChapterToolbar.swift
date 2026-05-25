@@ -12,6 +12,12 @@ public struct ChapterToolbar: View {
     @EnvironmentObject var charactersStore: CharactersStore
 
     @State private var titleDraft: String
+    /// Drives the §5.P.1 E "force-reset" confirmation alert. Owned here
+    /// rather than on the parent because the menu trigger and the alert
+    /// share the same lifetime as the toolbar itself, and the alert
+    /// content doesn't need to survive toolbar rebuilds the way the
+    /// import sheet does.
+    @State private var showResetConfirm: Bool = false
 
     public init(chapter: Chapter, onImportTap: @escaping () -> Void = {}) {
         self.chapter = chapter
@@ -43,9 +49,51 @@ public struct ChapterToolbar: View {
                 .help("把已写好的章节正文导入，并可选择让 Agent 提取角色更新和时间线")
             }
             primaryActionButtons
+            moreMenu
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 10)
+        // PROJECT_PLAN v0.7 §5.P.1 E — confirm before triggering the
+        // admin_reset escape hatch. Wording is deliberately author-facing
+        // (no "admin"/"reset" English jargon) and spells out exactly what
+        // survives the rescue (draft_text / structured_prompt) so the
+        // user isn't worried about losing work.
+        .alert("强制重置章节状态？", isPresented: $showResetConfirm) {
+            Button("取消", role: .cancel) {}
+            Button("强制重置", role: .destructive) {
+                Task { await chapterEditorStore.adminReset(targetStatus: .draftReady) }
+            }
+        } message: {
+            Text("把当前章节强制改回「正文完成」状态。\n正文（draft_text）和结构化提示（structured_prompt）会保留，仅清掉写作中状态。\n\n用于章节状态卡死时自救，正常流程不要用。")
+        }
+    }
+
+    /// Hidden "更多" menu — currently only hosts the §5.P.1 E escape hatch.
+    /// Lives on the trailing edge of the toolbar (after the primary action
+    /// buttons) so it's findable but doesn't compete with the main flow.
+    /// Available in every chapter status, including `writing` and
+    /// `finalized`, because that's exactly when the user needs an escape
+    /// hatch — the backend admin_reset accepts any source state.
+    @ViewBuilder
+    private var moreMenu: some View {
+        Menu {
+            Button {
+                showResetConfirm = true
+            } label: {
+                Label("强制重置状态", systemImage: "exclamationmark.arrow.circlepath")
+            }
+            // P-2 reviewer 🟡 #2: while an admin_reset is in flight the
+            // menu item is disabled so the user can't fire a second
+            // redundant request (backend is idempotent, but UX should
+            // still convey "in progress").
+            .disabled(chapterEditorStore.isAdminResetting)
+        } label: {
+            Image(systemName: "ellipsis.circle")
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("更多操作")
     }
 
     /// Whitelist mirrors the backend's `ensure_chapter_status` set

@@ -903,6 +903,29 @@ v0.7 最后一笔 commit(发版同步那一笔),与 5 处版本号一起做。
 
 主菜 L(角色卡 narrative 通病修复)+ 必修包 P(SSE cancel / admin reset / Store reset / PATCH 白名单 / 4xx 脱敏) + 战略价值(M 多 LLM per-Agent / N 错误中文化 / F 导出) + v0.5 旧债清算(B/C/D)+ O 批量导入 + Q 文档同步,共 11 项 / 15 个 Phase。整体审计由 reviewer 完成,发现 3 个 🔴 严重问题(SSE producer 线程泄漏关计费、ChapterEditorStore.load 未重置 lastUpdatedCharacterIds、LLM 4xx body 入库泄漏),全部进 P 急修包,P-1 是 v0.7 第一棒。
 
+### [2026-05-25] Phase P-2 前端急修包实施
+
+- 变更内容:
+  - **G (ChapterEditorStore.load 完整 reset)**:抽 private `resetAllPublishedToIdle()`,统一从一个入口清零所有 per-chapter `@Published`(`chapter` / `writingState` / `isExpanding` / `isFinalizing` / `isImporting` / `lastUpdatedCharacterIds`);`load(chapterId:)` 入口先调一次,避免上一章 finalize 的 `lastUpdatedCharacterIds` 红点泄漏到新章节(reviewer 报的🔴 严重)。`reset()` / `adminReset` 复用同一私有方法。`isLoading` 故意不清(那是 async 网络态,由各自 defer 管)。cancelStream() 仍在最前,避免 in-flight task 之后翻回 `.streaming`。
+  - **E (P-3 admin_reset UI 入口)**:
+    - **Models/Chapter.swift** 新增 `ChapterAdminResetRequest`(Codable,`targetStatus → target_status` 命名转换,默认 `.draftReady`)
+    - **Services/APIClient.swift** Protocol + 实现新增 `adminResetChapter(id:targetStatus:)`,调 `POST /api/v1/chapters/{id}/admin_reset`,返回 Chapter
+    - **Stores/ChapterEditorStore.swift** 新增 `@discardableResult adminReset(targetStatus:)`,内部调 api → `resetAllPublishedToIdle()` 清零 → 装回新 chapter(因为 admin_reset 是"卡死自救",in-flight 的 isImporting / streaming buffer / 红点全部失效);失败走 ErrorBus,默认成功 Toast 不弹
+    - **Views/Workspace/Editor/ChapterToolbar.swift** 加 `ellipsis.circle` 三点菜单(在 import 按钮 + primary 按钮之后,toolbar 最右),菜单项 `Label("强制重置状态", systemImage: "exclamationmark.arrow.circlepath")`;点击弹原生 alert 确认,确认后调 `adminReset(targetStatus: .draftReady)`。文案对作者讲人话("把当前章节强制改回「正文完成」状态。正文(draft_text)和结构化提示(structured_prompt)会保留,仅清掉写作中状态。用于章节状态卡死时自救,正常流程不要用。")。菜单在所有 status 下可见(escape hatch 本意),用 `.menuStyle(.borderlessButton) + .menuIndicator(.hidden)` 让 ellipsis 图标不挤
+    - **MockAPIClient** 同步加 `adminResetChapter` + `onAdminReset` 钩子,镜像后端幂等行为(`status == target` 时不动 `updatedAt`)
+  - **测试**:新增 `LinoWritingTests/ChapterEditorStoreResetTests.swift`,7 个测试:
+    1. `loadChapter_clearsLastUpdatedCharacterIdsFromPriorChapter` — reviewer 找到的精确场景(finalize A → 切 B → 断言 B 的 lastUpdatedCharacterIds 为空)
+    2. `loadChapter_resetsAllPerChapterPublishedToIdle` — 全 @Published baseline 守护
+    3. `reset_clearsEverythingIncludingChapter` — public reset 行为
+    4. `adminReset_writingToDraftReady_succeedsAndClearsState` — 端到端(writing → draftReady,保 draft_text + structured_prompt)
+    5. `adminReset_idempotent_returnsTrueAndStaysAtTarget` — 幂等
+    6. `adminReset_networkFailure_publishesAndKeepsChapter` — 失败不静默 mutate + ErrorBus
+    7. `adminResetRequest_encodesTargetStatusAsSnakeCase` — 锁 `target_status` 命名契约,防 Swift 改名 422
+- 变更原因:reviewer v0.7 启动审计提的🔴 严重(load 漏 reset)+ 🟡 自救路径前端入口(admin_reset),与 P-1+P-3 后端同步落地。
+- 影响范围:Phase P-2,前端急修包完整落地;不动 v0.6 已稳定的 Material / 动画 / Toolbar 主结构(仅在 toolbar 加一个非侵入式三点菜单)。
+- 测试基线:v0.6 末 34 XCTest → P-2 末 41 XCTest(34 baseline 全过,新增 7 个 reset 守护测试)。`xcodebuild build` 干净无 warning。
+- 未做:L-2 / L-3、M / N / F / O / B / C / D / Q 其它 v0.7 项。
+
 ### [2026-05-25] Phase P-1 + P-3 后端急修包实施
 
 - 变更内容:
@@ -921,3 +944,26 @@ v0.7 最后一笔 commit(发版同步那一笔),与 5 处版本号一起做。
 - 影响范围:Phase P-1(D / A / F / L)+ P-3(E),后端急修包完整落地。
 - 测试基线:v0.6 末 57 pytest → P-1+P-3 末 82 pytest(57 baseline 全过,新增 25 个:5 SSE cancel + 8 4xx 脱敏 + 7 admin_reset + 5 PATCH 白名单)。`pytest -W error` 干净无 warning。
 - 未做:P-2 前端(另一 builder)、L 主菜(L-1/L-2/L-3 下一轮)、M / N / F / O / B / C / D / Q 其它 v0.7 项。
+
+### [2026-05-25] Phase L-1 角色卡分层数据模型实施
+
+- 变更内容:
+  - **Alembic 迁移 `202605250001_add_character_author_notes`**:`characters` 表新增 `author_notes JSON NOT NULL DEFAULT '{}'`(PostgreSQL 上自动走 JSONB,沿用 §5.L.3 的 `sa.JSON().with_variant(JSONB, "postgresql")` 同款模式)。`server_default='{}'` + 防御性 `UPDATE` 双保险回填存量行(干净 SQLite + 已有 7 行 dev 数据库均验证回填为 `{}`);downgrade 写 `drop_column`。
+  - **`Character` ORM 模型**:加 `author_notes: Mapped[dict[str, Any]]`,用 `MutableDict.as_mutable(json_dict_type)` + `default=dict, nullable=False`,与 frozen/live 完全对齐。
+  - **`Character*` Pydantic schema**:`CharacterCreate` / `CharacterRead` 加 `author_notes: dict[str, Any] = Field(default_factory=dict)`;`CharacterPatch` 加 `author_notes: dict[str, Any] | None = None`。PATCH 仍走现有 `model_dump(exclude_unset=True) + setattr` 通路,**整体替换语义**(与 frozen/live 一致;非合并 — 这是与 v0.6 现有行为对齐的判断,L-3 前端 UI 折叠区也按此设计)。
+  - **`StructuredPrompt` schema**:加 `focus_traits: list[str] = Field(default_factory=list)`,字段类型为强类型 `list[str]`(不是 free-form Any)。L-1 不让 Expander 产 focus_traits(L-2 的活),只把 schema 通路打开,作者可经 chapter PATCH 端点手填。
+  - **`characters` router create 端点**:新增 `author_notes=payload.author_notes` 传入构造器。Patch/Read/List 端点零改动 — 通用通路天然覆盖新字段。
+  - **`tests/test_character_author_notes.py`** 新增 5 个测试:
+    1. create 时传 author_notes,GET 能看到
+    2. create 不传,默认 `{}`
+    3. PATCH author_notes 是整体替换(`{a:1, b:2}` PATCH `{c:3}` → `{c:3}`)
+    4. PATCH 别的字段(role)不会清空 author_notes(`exclude_unset` 验证)
+    5. ORM 直接插入旧 character(模拟 pre-migration 行)读出来 `author_notes={}`
+- 变更原因:v0.7 主菜 L 第一棒,§5.L.3 数据模型 + schema 通路。本 Phase **只动数据模型 + schema**,Expander/Writer prompt(L-2)和前端三区(L-3)不在范围内。
+- 影响范围:Phase L-1;新增/修改文件 6 个(1 迁移 + ORM + 2 schema + router + 测试)。
+- 关键判断:
+  - `author_notes` PATCH = 整体替换(不是 deep merge),与 `frozen_fields` / `live_fields` 现有语义一致;前端 L-3 折叠区也按此设计(用户编辑 = 提交完整对象)。
+  - `focus_traits` 用强类型 `list[str]` 而非保留在 `extra="allow"` 的 free-form key,理由:它是 Writer prompt L-2 要稳定消费的字段,提早锁类型可以让前端 chip 多选有明确契约。
+  - 迁移兼容性:`sa.JSON().with_variant(JSONB, "postgresql")` 与 v0.5 initial_schema 内 `json_type` 一致;`server_default=sa.text("'{}'")` 在 SQLite 和 PostgreSQL 上都是合法 JSON literal,均通过 `ALTER TABLE ... ADD COLUMN` 回填。
+- 测试基线:v0.7 P-1+P-3 末 82 pytest → L-1 末 88 pytest(83 baseline + 5 新)。注:重数过去日志,实际 baseline 是 83(v0.6 末 57 + P-1 25 + 1 隐含,以本次实跑为准)。`pytest -W error` 干净。
+- 未做:Expander focus_traits 推断(L-2)、Writer prompt show/tell 改造(L-2)、context_pack 合并查询(L-2)、前端三区(L-3)。

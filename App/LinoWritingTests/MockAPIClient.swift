@@ -20,6 +20,7 @@ public final class MockAPIClient: APIClientProtocol, @unchecked Sendable {
     public var onFinalize: ((String) -> FinalizeResult)?
     public var onReopen: ((String) -> Chapter)?
     public var onImport: ((String, ChapterImportRequest) -> ChapterImportResponse)?
+    public var onAdminReset: ((String, ChapterStatus) -> Chapter)?
 
     /// Captures the last `importChapter` payload so tests can assert that the
     /// Swift-side encoding (e.g. `runExtractor` → `run_extractor`) survived.
@@ -306,6 +307,25 @@ public final class MockAPIClient: APIClientProtocol, @unchecked Sendable {
             updatedCharacterIds: [],
             addedEventIds: []
         )
+    }
+
+    public func adminResetChapter(id: String, targetStatus: ChapterStatus) async throws -> Chapter {
+        recordCall("adminResetChapter")
+        try maybeThrow()
+        if let onAdminReset { return onAdminReset(id, targetStatus) }
+        guard let idx = chapters.firstIndex(where: { $0.id == id }) else {
+            throw AppError.notFound("chapter")
+        }
+        var c = chapters[idx]
+        // Mirror the backend's idempotency: if already at the target,
+        // updated_at is left alone. Otherwise rewrite status only;
+        // draft_text / structured_prompt are explicitly preserved.
+        if c.status != targetStatus {
+            c.status = targetStatus
+            c.updatedAt = Date()
+            chapters[idx] = c
+        }
+        return c
     }
 
     public func listAgentLogs(chapterId: String?, limit: Int) async throws -> [AgentLog] {

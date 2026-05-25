@@ -28,6 +28,13 @@ public final class ChapterEditorStore: ObservableObject {
     @Published public private(set) var isExpanding: Bool = false
     @Published public private(set) var isFinalizing: Bool = false
     @Published public private(set) var isImporting: Bool = false
+    /// In-flight flag for the §5.P.1 E "强制重置" path. Toolbar uses
+    /// it to disable the menu item while the network round-trip is in
+    /// flight so the user can't double-click and fire two redundant
+    /// admin_reset requests (the backend would happily idempotent them
+    /// per P-1+P-3 reviewer 🟡 #5, but the UI should still give clear
+    /// "in progress" feedback). P-2 reviewer 🟡 #2.
+    @Published public private(set) var isAdminResetting: Bool = false
 
     /// IDs the latest finalize OR import call modified — exposed for the
     /// right panel highlight. Both code paths write here because the
@@ -46,13 +53,21 @@ public final class ChapterEditorStore: ObservableObject {
     // MARK: Loading
 
     public func load(chapterId: String) async {
-        cancelStream()
+        // PROJECT_PLAN v0.7 §5.P.1 G: switching chapters must give a clean
+        // slate. Before this guard, `lastUpdatedCharacterIds` from a prior
+        // finalize/import would bleed into the new chapter's right-panel
+        // highlight (reviewer caught the red-dot leaking to chapter B after
+        // finalizing chapter A). Same risk for `isImporting`/`isExpanding`
+        // /`isFinalizing` if the user navigates away mid-action — the new
+        // chapter would render with a stale spinner. Reset everything to
+        // an idle baseline up front; if `api.getChapter` fails below we
+        // still want the wiped state so the empty view shows correctly.
+        resetAllPublishedToIdle()
         isLoading = true
         defer { isLoading = false }
         do {
             let chapter = try await api.getChapter(id: chapterId)
             self.chapter = chapter
-            self.writingState = .idle
         } catch let error as AppError {
             errorBus.publish(error)
             self.chapter = nil
@@ -62,6 +77,21 @@ public final class ChapterEditorStore: ObservableObject {
     }
 
     public func reset() {
+        resetAllPublishedToIdle()
+    }
+
+    /// Single source of truth for "wipe every per-chapter @Published back
+    /// to an idle baseline". Called from both `load(chapterId:)` (so
+    /// switching chapters never leaks state) and `reset()` (book/workspace
+    /// teardown), plus the `adminReset` escape hatch which needs the same
+    /// clean slate after force-rewriting the backend chapter status.
+    ///
+    /// `isLoading` is intentionally **not** touched here — it's owned by
+    /// the calling async function via its own `defer` and represents
+    /// "network in flight", not per-chapter state.
+    private func resetAllPublishedToIdle() {
+        // Tear down any in-flight SSE stream first so its task doesn't
+        // race to flip `writingState` back to .streaming after we clear it.
         cancelStream()
         chapter = nil
         writingState = .idle
@@ -240,6 +270,47 @@ public final class ChapterEditorStore: ObservableObject {
     /// Returns the full response so callers can highlight `updated_character_ids`
     /// and refresh stores. Returns `nil` on failure; the error is already
     /// published to `ErrorBus`.
+    /// Force-reset a stuck chapter to an editable state via
+    /// `POST /chapters/{id}/admin_reset` (PROJECT_PLAN v0.7 §5.P.1 E).
+    ///
+    /// The backend accepts any current status (including `writing` and
+    /// `finalized`) and rewrites it to `targetStatus` while preserving
+    /// `draft_text` / `structured_prompt`. Used as the "我卡死了" escape
+    /// hatch when a chapter is stranded after an SSE crash, client kill,
+    /// or server restart mid-stream.
+    ///
+    /// After success the entire @Published surface is wiped — `isStreaming`,
+    /// `lastUpdatedCharacterIds`, etc. are all stale once the underlying
+    /// chapter has been forcibly rewritten under us. The fresh chapter
+    /// is reinstalled afterwards so the editor view re-renders cleanly.
+    ///
+    /// Returns `true` on success. Errors are published to `ErrorBus`.
+    @discardableResult
+    public func adminReset(targetStatus: ChapterStatus = .draftReady) async -> Bool {
+        guard let chapter else { return false }
+        let chapterId = chapter.id
+        isAdminResetting = true
+        defer { isAdminResetting = false }
+        do {
+            let refreshed = try await api.adminResetChapter(
+                id: chapterId,
+                targetStatus: targetStatus
+            )
+            // Wipe every per-chapter flag first — the user just triggered a
+            // forced state change, so any in-flight `isImporting` /
+            // `isFinalizing` / streaming buffer is meaningless. Then
+            // reinstall the fresh chapter so the editor view re-renders.
+            resetAllPublishedToIdle()
+            self.chapter = refreshed
+            return true
+        } catch let error as AppError {
+            errorBus.publish(error)
+        } catch {
+            errorBus.publish(.transport(error.localizedDescription))
+        }
+        return false
+    }
+
     public func importChapter(_ payload: ChapterImportRequest) async -> ChapterImportResponse? {
         guard let chapter else { return nil }
         isImporting = true

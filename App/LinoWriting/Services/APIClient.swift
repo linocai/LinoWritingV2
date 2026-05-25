@@ -31,6 +31,7 @@ public protocol APIClientProtocol: Sendable {
     func finalize(chapterId: String) async throws -> FinalizeResult
     func reopen(chapterId: String) async throws -> Chapter
     func importChapter(id: String, payload: ChapterImportRequest) async throws -> ChapterImportResponse
+    func adminResetChapter(id: String, targetStatus: ChapterStatus) async throws -> Chapter
 
     // Admin
     func listAgentLogs(chapterId: String?, limit: Int) async throws -> [AgentLog]
@@ -317,6 +318,23 @@ public final class APIClient: APIClientProtocol, @unchecked Sendable {
             body: body(payload)
         )
         return try await send(req, as: ChapterImportResponse.self)
+    }
+
+    /// `POST /api/v1/chapters/{id}/admin_reset` — see PROJECT_PLAN §5.P.1 E.
+    ///
+    /// Force-resets a stuck chapter to a re-editable state. The backend
+    /// accepts any current status and rewrites it to `target_status` while
+    /// preserving `draft_text` / `structured_prompt`. The endpoint is
+    /// idempotent — calling it twice with the same target is a no-op on
+    /// the second call (no extra audit log row).
+    public func adminResetChapter(id: String, targetStatus: ChapterStatus) async throws -> Chapter {
+        let payload = ChapterAdminResetRequest(targetStatus: targetStatus)
+        let req = try makeRequest(
+            method: "POST",
+            path: "/api/v1/chapters/\(id)/admin_reset",
+            body: body(payload)
+        )
+        return try await send(req, as: Chapter.self)
     }
 
     // MARK: - Admin

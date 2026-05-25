@@ -241,6 +241,27 @@ public struct ChapterImportRequest: Codable, Sendable {
     }
 }
 
+/// Request body for `POST /api/v1/chapters/{id}/admin_reset`
+/// (PROJECT_PLAN v0.7 §5.P.1 E).
+///
+/// Used as an escape hatch when a chapter is stuck (SSE crash, server
+/// restart mid-stream, etc.). The backend's `AdminResetTarget` Literal
+/// only accepts `draft` / `prompt_ready` / `draft_ready` — passing
+/// `.writing` or `.finalized` will 422. Front-end callers always pass
+/// `.draftReady` (the default) so the user gets back to a state where
+/// they can re-finalize or re-write without losing existing text.
+public struct ChapterAdminResetRequest: Codable, Sendable {
+    public var targetStatus: ChapterStatus
+
+    enum CodingKeys: String, CodingKey {
+        case targetStatus = "target_status"
+    }
+
+    public init(targetStatus: ChapterStatus = .draftReady) {
+        self.targetStatus = targetStatus
+    }
+}
+
 /// Response envelope from `POST /api/v1/chapters/{id}/import`.
 ///
 /// Mirrors `FinalizeResult` exactly — backend §5.A.4 guarantees the same
