@@ -30,6 +30,19 @@ class ChapterImportRequest(BaseModel):
     run_extractor: bool = True
 
 
+# v0.7 §5.P.1 E — admin_reset escape hatch.
+# Used when a chapter is stuck in ``writing`` (SSE crashed, client died,
+# server restart mid-stream) and the user has no other way out. Only
+# states that the chapter could legitimately reach via the normal flow
+# are permitted as targets — ``writing`` (would re-stick) and
+# ``finalized`` (use /reopen instead) are excluded.
+AdminResetTarget = Literal["draft", "prompt_ready", "draft_ready"]
+
+
+class ChapterAdminResetRequest(BaseModel):
+    target_status: AdminResetTarget = "draft_ready"
+
+
 class ChapterSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

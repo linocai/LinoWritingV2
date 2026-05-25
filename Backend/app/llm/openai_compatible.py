@@ -10,14 +10,55 @@ auth token, and the model string passed in the payload.
 from __future__ import annotations
 
 import json
+import re
 import time
 from collections.abc import Iterator
+from threading import Event
 from typing import Any
 
 import httpx
 
 from app.llm.errors import LLMError
 from app.models.provider_key import ProviderKey
+
+# Maximum characters of an upstream 4xx response body to surface in error
+# messages / agent_log rows. Anything longer is truncated. See §5.P.1 A.
+UPSTREAM_BODY_LIMIT = 256
+
+# Regex patterns that look like credentials / bearer tokens. Anything matched
+# gets replaced with ``***`` before the body is embedded in an LLMError. We
+# intentionally keep this list short and high-signal: false positives are
+# cheap (a "***" instead of opaque text in an error message), false negatives
+# leak keys into agent_log preview rows that the frontend later renders.
+_REDACTION_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"Bearer\s+\S+", re.IGNORECASE),
+    re.compile(r"Authorization\s*:\s*\S+", re.IGNORECASE),
+    re.compile(r"sk-[A-Za-z0-9_\-]{8,}"),       # OpenAI default
+    re.compile(r"sk-ant-[A-Za-z0-9_\-]{8,}"),   # Anthropic native
+    re.compile(r"sk-or-[A-Za-z0-9_\-]{8,}"),    # OpenRouter
+    re.compile(r"sk_live_[A-Za-z0-9_\-]{8,}"),  # OpenAI restricted
+    re.compile(r"xai-[A-Za-z0-9_\-]{8,}"),      # xAI / Grok
+    re.compile(r"AIza[A-Za-z0-9_\-]{8,}"),      # Google (Gemini OpenAI-compat)
+)
+
+
+def _sanitize_error_body(body: str) -> str:
+    """Redact obvious secrets, then truncate.
+
+    Order matters: redact first, truncate second. If we truncated first the
+    final ``***`` substitution might land in the cut-off region and leak a
+    half-key. After redaction every secret-looking blob is replaced so the
+    truncated tail is safe.
+    """
+
+    if not body:
+        return ""
+    redacted = body
+    for pattern in _REDACTION_PATTERNS:
+        redacted = pattern.sub("***", redacted)
+    if len(redacted) > UPSTREAM_BODY_LIMIT:
+        redacted = redacted[:UPSTREAM_BODY_LIMIT] + "...(truncated)"
+    return redacted
 
 
 class OpenAICompatibleClient:
@@ -55,9 +96,23 @@ class OpenAICompatibleClient:
             raise LLMError("LLM JSON response was not an object", retryable=False)
         return parsed
 
-    def complete_stream(self, *, system: str, user: str, **kwargs: Any) -> Iterator[str]:
+    def complete_stream(
+        self,
+        *,
+        system: str,
+        user: str,
+        cancel_event: Event | None = None,
+        **kwargs: Any,
+    ) -> Iterator[str]:
+        # cancel_event is plumbed all the way down to the httpx.iter_lines()
+        # loop so we can stop pulling tokens from the upstream as soon as the
+        # client disconnects. See §5.P.1 D.
         payload = self._payload(system=system, user=user, stream=True, **kwargs)
-        response = self._stream(payload, timeout=kwargs.get("timeout", 180))
+        response = self._stream(
+            payload,
+            timeout=kwargs.get("timeout", 180),
+            cancel_event=cancel_event,
+        )
         yield from response
 
     def _payload(self, *, system: str, user: str, stream: bool, **kwargs: Any) -> dict[str, Any]:
@@ -92,7 +147,11 @@ class OpenAICompatibleClient:
                     raise LLMError(f"LLM upstream server error: {response.status_code}", retryable=True)
                 if response.status_code >= 400:
                     body = response.read().decode("utf-8", errors="replace")
-                    raise LLMError(f"LLM upstream request failed: {response.status_code} {body}", retryable=False)
+                    safe_body = _sanitize_error_body(body)
+                    raise LLMError(
+                        f"LLM upstream request failed: {response.status_code} {safe_body}",
+                        retryable=False,
+                    )
                 return response.json()
             except (httpx.TimeoutException, httpx.TransportError, LLMError) as exc:
                 retryable = getattr(exc, "retryable", True)
@@ -103,7 +162,13 @@ class OpenAICompatibleClient:
                 time.sleep(2**attempt)
         raise LLMError("LLM upstream request failed", retryable=True)
 
-    def _stream(self, payload: dict[str, Any], *, timeout: int) -> Iterator[str]:
+    def _stream(
+        self,
+        payload: dict[str, Any],
+        *,
+        timeout: int,
+        cancel_event: Event | None = None,
+    ) -> Iterator[str]:
         url = f"{self.base_url}/chat/completions"
         try:
             with httpx.stream(
@@ -116,11 +181,25 @@ class OpenAICompatibleClient:
                 if response.status_code >= 500:
                     raise LLMError(f"LLM upstream server error: {response.status_code}", retryable=True)
                 if response.status_code >= 400:
+                    # Drain (with sanitisation) before raising so the body
+                    # error message contains useful diagnostics minus secrets.
+                    safe_body = _sanitize_error_body(response.read().decode("utf-8", errors="replace"))
                     raise LLMError(
-                        f"LLM upstream request failed: {response.status_code} {response.text}",
+                        f"LLM upstream request failed: {response.status_code} {safe_body}",
                         retryable=False,
                     )
+                # Pre-loop cancel check — if the caller already cancelled
+                # before we even got past the response headers, bail out
+                # immediately. Closes the httpx response on context exit.
+                if cancel_event is not None and cancel_event.is_set():
+                    return
                 for line in response.iter_lines():
+                    # Check cancel *every* iteration, before doing any work,
+                    # so a fast cancel can't burn another token by sneaking
+                    # past while we json.loads / yield. The with-block exit
+                    # is what actually closes the upstream socket.
+                    if cancel_event is not None and cancel_event.is_set():
+                        return
                     if not line or line.startswith(":"):
                         continue
                     if not line.startswith("data:"):

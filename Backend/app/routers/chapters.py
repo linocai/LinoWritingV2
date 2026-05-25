@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 from queue import Empty, Queue
-from threading import Thread
+from threading import Event, Thread
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Body, Depends, Query, Response, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import delete, func, select
@@ -23,6 +23,7 @@ from app.models.chapter import Chapter
 from app.models.common import utc_now
 from app.models.timeline_event import TimelineEvent
 from app.schemas.chapter import (
+    ChapterAdminResetRequest,
     ChapterCreate,
     ChapterImportRequest,
     ChapterPatch,
@@ -36,6 +37,15 @@ from app.services.extractor_apply import apply_extractor_output
 
 router = APIRouter(tags=["chapters"])
 KEEPALIVE_SECONDS = 15
+
+# Explicit allowlist for PATCH /chapters/{id}. ChapterPatch schema already
+# only exposes these four fields, but we re-assert it at the router level
+# so that adding a new field to the schema later (e.g. status, source,
+# focus_traits) does NOT silently become a writable mass-assignment vector.
+# See §5.P.1 F.
+PATCHABLE_CHAPTER_FIELDS = frozenset(
+    {"title", "user_prompt", "structured_prompt", "draft_text"}
+)
 
 
 @router.get("/books/{book_id}/chapters")
@@ -64,7 +74,15 @@ def get_chapter(chapter_id: str, db: Session = Depends(get_db)) -> ChapterRead:
 @router.patch("/chapters/{chapter_id}", response_model=ChapterRead)
 def patch_chapter(chapter_id: str, payload: ChapterPatch, db: Session = Depends(get_db)) -> ChapterRead:
     chapter = _get_chapter(db, chapter_id)
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    incoming = payload.model_dump(exclude_unset=True)
+    # Defence in depth — even if ChapterPatch later gains a field, we
+    # refuse to assign anything outside the allowlist. Unknown keys are
+    # silently ignored (Pydantic already rejected them at parse time
+    # under the default ``extra='ignore'`` config, but if that ever
+    # changes we want this layer too).
+    for key, value in incoming.items():
+        if key not in PATCHABLE_CHAPTER_FIELDS:
+            continue
         if isinstance(value, BaseModel):
             value = value.model_dump(exclude_none=True)
         setattr(chapter, key, value)
@@ -292,6 +310,48 @@ def reopen_chapter(chapter_id: str, db: Session = Depends(get_db)) -> ChapterRea
     return ChapterRead.model_validate(chapter)
 
 
+@router.post("/chapters/{chapter_id}/admin_reset", response_model=ChapterRead)
+def admin_reset_chapter(
+    chapter_id: str,
+    payload: ChapterAdminResetRequest = Body(default_factory=ChapterAdminResetRequest),
+    db: Session = Depends(get_db),
+) -> ChapterRead:
+    """Force-reset a stuck chapter to a normal editable state.
+
+    v0.7 §5.P.1 E. Used when a chapter is stranded in ``writing`` (SSE
+    crash, client died, server restart mid-stream) and no normal path
+    can recover it. Allowed from *any* current status — that's the
+    whole point of an escape hatch — but the target is constrained
+    by ``ChapterAdminResetRequest`` to a safe re-editable state. The
+    chapter's ``draft_text`` / ``structured_prompt`` are deliberately
+    preserved so the user keeps whatever half-finished work was there.
+
+    An ``agent_logs`` row is written so the rescue is auditable.
+    """
+    chapter = _get_chapter(db, chapter_id)
+    from_status = chapter.status
+    to_status = payload.target_status
+    # Idempotent: if the chapter is already in the requested state, return
+    # without touching updated_at or writing a new agent_log row. Otherwise
+    # a user double-clicking the "重置" button (or the UI retrying on a
+    # flaky network) would spam the audit log with no-op rescues.
+    if from_status == to_status:
+        return ChapterRead.model_validate(chapter)
+    chapter.status = to_status
+    chapter.updated_at = utc_now()
+    log_agent_call(
+        db,
+        chapter_id=chapter.id,
+        agent_name="admin_reset",
+        input_data={"from_status": from_status, "to_status": to_status},
+        output_data=None,
+        started_at=None,
+    )
+    db.commit()
+    db.refresh(chapter)
+    return ChapterRead.model_validate(chapter)
+
+
 def _write_stream(
     db: Session,
     chapter_id: str,
@@ -303,17 +363,36 @@ def _write_stream(
     parts: list[str] = []
     chars = 0
     restored_or_completed = False
+    # Shared cancel signal. Set in the finally block when the generator is
+    # torn down (normal completion, error, or client disconnect). The
+    # producer thread checks it before each queue.put, and the LLM client
+    # checks it inside its iter_lines() loop, so cancellation propagates
+    # all the way down to closing the upstream socket. Without this,
+    # client-disconnect would leave the daemon thread running and keep
+    # pulling (billable) tokens until the model finished naturally.
+    # See §5.P.1 D.
+    cancel_event = Event()
     try:
         yield _sse("started", {"chapter_id": chapter_id})
         queue: Queue[tuple[str, object]] = Queue()
 
         def produce_tokens() -> None:
             try:
-                for token in WriterAgent(llm).stream(context):
+                for token in WriterAgent(llm).stream(context, cancel_event=cancel_event):
+                    if cancel_event.is_set():
+                        # Defensive: even if the LLM client somehow yielded
+                        # one more token after we signalled cancel, don't
+                        # bother enqueueing it — the consumer is gone.
+                        break
                     queue.put(("token", token))
-                queue.put(("done", None))
+                # Only mark done if we weren't cancelled — a cancelled
+                # stream is neither "done" nor "error" from the consumer's
+                # perspective, the generator is already being torn down.
+                if not cancel_event.is_set():
+                    queue.put(("done", None))
             except Exception as exc:
-                queue.put(("error", exc))
+                if not cancel_event.is_set():
+                    queue.put(("error", exc))
 
         Thread(target=produce_tokens, daemon=True).start()
 
@@ -378,6 +457,13 @@ def _write_stream(
             },
         )
     finally:
+        # Always signal cancel on the way out so the producer thread (and,
+        # transitively, the LLM client's iter_lines() loop) wakes up and
+        # exits. This is the critical bit for client-disconnect: FastAPI
+        # closes the generator, we hit this finally, the daemon thread
+        # sees the event and bails. Closing the httpx response is what
+        # actually tells the upstream to stop generating tokens.
+        cancel_event.set()
         if not restored_or_completed:
             db.rollback()
             try:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
+from threading import Event
 from typing import Any
 
 from app.llm.base import LLMClient
@@ -24,12 +25,17 @@ structured_prompt.must_not_happen 中的事件、元素和信息一字不提。
     def __init__(self, llm: LLMClient) -> None:
         self.llm = llm
 
-    def stream(self, context: dict[str, Any]) -> Iterator[str]:
+    def stream(
+        self,
+        context: dict[str, Any],
+        cancel_event: Event | None = None,
+    ) -> Iterator[str]:
         yield from self.llm.complete_stream(
             system=self.system_prompt,
             user=self._render_user_message(context),
             temperature=0.7,
             timeout=180,
+            cancel_event=cancel_event,
         )
 
     @staticmethod

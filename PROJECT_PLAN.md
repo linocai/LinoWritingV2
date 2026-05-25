@@ -902,3 +902,22 @@ v0.7 最后一笔 commit(发版同步那一笔),与 5 处版本号一起做。
 ### [2026-05-24] v0.7 plan 锁定(本文档版本 v0.7-draft)
 
 主菜 L(角色卡 narrative 通病修复)+ 必修包 P(SSE cancel / admin reset / Store reset / PATCH 白名单 / 4xx 脱敏) + 战略价值(M 多 LLM per-Agent / N 错误中文化 / F 导出) + v0.5 旧债清算(B/C/D)+ O 批量导入 + Q 文档同步,共 11 项 / 15 个 Phase。整体审计由 reviewer 完成,发现 3 个 🔴 严重问题(SSE producer 线程泄漏关计费、ChapterEditorStore.load 未重置 lastUpdatedCharacterIds、LLM 4xx body 入库泄漏),全部进 P 急修包,P-1 是 v0.7 第一棒。
+
+### [2026-05-25] Phase P-1 + P-3 后端急修包实施
+
+- 变更内容:
+  - **D (SSE producer cancel hook)**:`LLMClient` Protocol 加 `cancel_event: Event | None = None` kwarg(向后兼容,所有 mock 用 `**kwargs` 吸收);`OpenAICompatibleClient._stream` 在 `iter_lines()` 每次迭代前检查 `cancel_event.is_set()`,True 则直接 return(httpx with-block 退出会关 upstream socket,真正止血)。`WriterAgent.stream(context, cancel_event=...)` 透传。`_write_stream` generator 创建 `threading.Event`,在 finally 里 `cancel_event.set()`,producer thread 在每次 put token 前也检查 cancel 防止给已无人消费的 queue 堆 token。选用方案 A(显式 kwarg),而非方案 B(thread 强制 close httpx response),原因:更明确、易测、不依赖跨线程 cancel httpx 的不可移植行为。
+  - **A (LLM 4xx body 脱敏)**:新增 `_sanitize_error_body()`,先 regex 替换 `Bearer\s+\S+` / `Authorization:\s*\S+` / `sk-\S+` / `xai-\S+` / `sk-or-\S+` / `sk_live_\S+` 为 `***`,再截断到 256 字符(顺序很重要:截断在前会切断 redaction 漏半 key)。`_post_json` 和 `_stream` 的 4xx 分支都换用。
+  - **F (ChapterPatch 白名单字段)**:`ChapterPatch` schema 本身已经是 4 字段白名单(title / user_prompt / structured_prompt / draft_text),保留不动;router 内加 `PATCHABLE_CHAPTER_FIELDS` 常量 + 显式 if-not-in-allowlist:continue,防御未来给 schema 加字段时静默打开 mass-assignment 漏洞。决策:Pydantic + router 两层防御,各负其责。
+  - **E (P-3) admin_reset 端点**:`POST /chapters/{id}/admin_reset`,body 可选 `{target_status?}`,默认 `draft_ready`,只允许 `{draft, prompt_ready, draft_ready}`(`writing`/`finalized` 在 schema 层拒绝)。无 ensure_chapter_status 检查 — 任意状态可入,这是 escape hatch 的本意。保留 draft_text / structured_prompt 不动。写一条 `agent_logs` 行,`agent_name="admin_reset"`,`input_preview` 装 `{from_status, to_status}` JSON 供审计。
+  - **L (SSE cancel 测试)**:新增 `tests/test_sse_cancel.py` 5 个测试:
+    1. `OpenAICompatibleClient._stream` 在 cancel 预设时立即 return(用 patch httpx.stream 喂假 SSE)
+    2. cancel 在迭代中途设置时,后续 token 不再 yield
+    3. `WriterAgent.stream(cancel_event=...)` 正确转发到 LLM
+    4. 直接驱动 `_write_stream` generator + `.close()` 模拟 client disconnect,验证 chapter.status 不卡 writing
+    5. 同上,enumerate threads 验证 producer thread 不 leak
+  - 测试设计偏离:原 plan 提示用 TestClient 模拟 client disconnect,实际发现 TestClient 的 ASGI in-process 实现会 buffer 整个 SSE response,无法忠实模拟 disconnect 中断。改用直接驱动 `_write_stream` generator 并调用 `.close()`(这就是 FastAPI 在 disconnect 时实际做的事),完成等价验证。
+- 变更原因:试运营 reviewer 报告的 3 个🔴 严重问题(SSE 线程泄漏关计费、PATCH 漏洞、4xx 入库泄漏)+ 1 个🟡 自救路径(admin_reset)+ 锁契约测试(L)。P-1 是 v0.7 第一棒,完成。
+- 影响范围:Phase P-1(D / A / F / L)+ P-3(E),后端急修包完整落地。
+- 测试基线:v0.6 末 57 pytest → P-1+P-3 末 82 pytest(57 baseline 全过,新增 25 个:5 SSE cancel + 8 4xx 脱敏 + 7 admin_reset + 5 PATCH 白名单)。`pytest -W error` 干净无 warning。
+- 未做:P-2 前端(另一 builder)、L 主菜(L-1/L-2/L-3 下一轮)、M / N / F / O / B / C / D / Q 其它 v0.7 项。
