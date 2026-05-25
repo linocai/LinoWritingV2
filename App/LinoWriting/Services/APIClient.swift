@@ -49,6 +49,10 @@ public protocol APIClientProtocol: Sendable {
     // Per-Agent active key (§5.M / M-1)
     func getActiveAgentKey(agentRole: AgentRole) async throws -> ActiveAgentKeyRead
     func setActiveAgentKey(agentRole: AgentRole, providerKeyId: String?) async throws -> ActiveAgentKeyRead
+
+    // Export (§5.F)
+    func exportBook(id: String, format: ExportFormat, includeDrafts: Bool) async throws -> (data: Data, suggestedFilename: String)
+    func exportChapter(id: String, format: ExportFormat) async throws -> (data: Data, suggestedFilename: String)
 }
 
 /// Concrete URLSession-backed client.
@@ -445,6 +449,98 @@ public final class APIClient: APIClientProtocol, @unchecked Sendable {
             body: body(payload)
         )
         return try await send(req, as: ActiveAgentKeyRead.self)
+    }
+
+    // MARK: - Export (§5.F)
+
+    /// `GET /api/v1/books/{id}/export?format=…&include_drafts=…` —
+    /// returns the raw body + the filename suggested by the backend
+    /// via ``Content-Disposition``.
+    ///
+    /// The body is *not* JSON — it's plain Markdown / TXT. ``FileSaver``
+    /// takes the tuple and writes it to a user-picked location.
+    public func exportBook(
+        id: String,
+        format: ExportFormat,
+        includeDrafts: Bool
+    ) async throws -> (data: Data, suggestedFilename: String) {
+        let q: [URLQueryItem] = [
+            URLQueryItem(name: "format", value: format.rawValue),
+            URLQueryItem(name: "include_drafts", value: includeDrafts ? "true" : "false")
+        ]
+        let req = try makeRequest(
+            method: "GET",
+            path: "/api/v1/books/\(id)/export",
+            query: q,
+            accept: format.contentType
+        )
+        let (data, resp) = try await performRaw(req)
+        let filename = Self.parseSuggestedFilename(from: resp)
+            ?? "untitled.\(format.fileExtension)"
+        return (data, filename)
+    }
+
+    /// `GET /api/v1/chapters/{id}/export?format=…` — single-chapter
+    /// variant. Same response handling as ``exportBook``.
+    public func exportChapter(
+        id: String,
+        format: ExportFormat
+    ) async throws -> (data: Data, suggestedFilename: String) {
+        let q: [URLQueryItem] = [URLQueryItem(name: "format", value: format.rawValue)]
+        let req = try makeRequest(
+            method: "GET",
+            path: "/api/v1/chapters/\(id)/export",
+            query: q,
+            accept: format.contentType
+        )
+        let (data, resp) = try await performRaw(req)
+        let filename = Self.parseSuggestedFilename(from: resp)
+            ?? "chapter.\(format.fileExtension)"
+        return (data, filename)
+    }
+
+    /// Parse the suggested filename out of an HTTP ``Content-Disposition``
+    /// header. Prefers RFC 5987 ``filename*=UTF-8''…`` (the encoded form
+    /// the backend emits in ``build_content_disposition``) because that
+    /// preserves Chinese; falls back to the plain ``filename="…"`` if
+    /// only that variant is present.
+    ///
+    /// Returns ``nil`` when neither form is recognisable so the caller
+    /// can fall back to a sensible default (e.g. ``untitled.md``).
+    static func parseSuggestedFilename(from response: HTTPURLResponse) -> String? {
+        // Field name lookup is case-insensitive per HTTP, but
+        // `allHeaderFields` on `HTTPURLResponse` uses canonical casing
+        // on Darwin so the exact key works in practice. We probe both
+        // common spellings just to be safe with mocks/tests.
+        let raw = (response.value(forHTTPHeaderField: "Content-Disposition")
+                   ?? response.value(forHTTPHeaderField: "content-disposition"))
+        guard let header = raw else { return nil }
+
+        // Try ``filename*=UTF-8''<encoded>`` first.
+        if let encoded = header.range(of: "filename*=UTF-8''", options: .caseInsensitive) {
+            let tail = header[encoded.upperBound...]
+            // The encoded value runs until the next ``;`` or end-of-line.
+            let endIdx = tail.firstIndex(of: ";") ?? tail.endIndex
+            let percent = String(tail[..<endIdx]).trimmingCharacters(in: .whitespaces)
+            if let decoded = percent.removingPercentEncoding, !decoded.isEmpty {
+                return decoded
+            }
+        }
+        // Fallback: ``filename="<value>"`` (ASCII; only useful when the
+        // backend or a proxy stripped the encoded form).
+        if let plain = header.range(of: "filename=", options: .caseInsensitive) {
+            let tail = header[plain.upperBound...]
+            // Strip surrounding quotes if present.
+            var value = String(tail.prefix { $0 != ";" })
+                .trimmingCharacters(in: .whitespaces)
+            if value.hasPrefix("\""), value.hasSuffix("\""), value.count >= 2 {
+                value = String(value.dropFirst().dropLast())
+            }
+            if !value.isEmpty {
+                return value
+            }
+        }
+        return nil
     }
 }
 

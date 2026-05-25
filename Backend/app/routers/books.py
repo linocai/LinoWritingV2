@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Response, status
+from typing import Literal
+
+from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -11,8 +13,19 @@ from app.models.chapter import Chapter
 from app.models.character import Character
 from app.models.common import utc_now
 from app.schemas.book import BookCreate, BookPatch, BookRead
+from app.services.exporter import (
+    build_content_disposition,
+    build_filename,
+    export_book_markdown,
+    export_book_txt,
+)
 
 router = APIRouter(tags=["books"])
+
+# v0.7 §5.F — supported export formats. Pydantic-style ``Literal`` so
+# FastAPI auto-rejects anything else as 422 before the handler is even
+# called.
+ExportFormat = Literal["markdown", "txt"]
 
 
 @router.get("/books")
@@ -60,6 +73,49 @@ def touch_book(book_id: str, db: Session = Depends(get_db)) -> Response:
     book.last_opened_at = utc_now()
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/books/{book_id}/export")
+def export_book(
+    book_id: str,
+    format: ExportFormat = Query(default="markdown"),
+    include_drafts: bool = Query(default=False),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Export an entire book as Markdown or plain text.
+
+    See PROJECT_PLAN §5.F for the layout decisions. By default only
+    ``finalized`` chapters are included — pass ``include_drafts=true``
+    to also dump everything still in draft.
+
+    The response body is the raw text (NOT wrapped in JSON), the
+    ``Content-Type`` matches the selected format (``text/markdown`` or
+    ``text/plain``) and the ``Content-Disposition`` header carries an
+    RFC 5987 ``filename*`` so non-ASCII book titles (i.e. Chinese)
+    survive every browser/Mac client.
+    """
+    book = _get_book(db, book_id)
+    chapters = list(
+        db.scalars(
+            select(Chapter).where(Chapter.book_id == book.id).order_by(Chapter.index)
+        ).all()
+    )
+
+    if format == "markdown":
+        body = export_book_markdown(book, chapters, include_drafts=include_drafts)
+        media_type = "text/markdown; charset=utf-8"
+        extension = "md"
+    else:
+        body = export_book_txt(book, chapters, include_drafts=include_drafts)
+        media_type = "text/plain; charset=utf-8"
+        extension = "txt"
+
+    filename = build_filename(book.title, extension)
+    return Response(
+        content=body,
+        media_type=media_type,
+        headers={"Content-Disposition": build_content_disposition(filename)},
+    )
 
 
 def _get_book(db: Session, book_id: str) -> Book:

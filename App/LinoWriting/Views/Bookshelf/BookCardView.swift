@@ -7,6 +7,16 @@ public struct BookCardView: View {
     public let book: Book
 
     @State private var isHovered: Bool = false
+    /// True while an export request is in flight. Used to disable the
+    /// hover button + show a spinner so a double-click can't fire two
+    /// downloads. Per-card local state — keeping it off ``ErrorBus`` /
+    /// any store means cards on other rows are unaffected.
+    @State private var isExporting: Bool = false
+
+    /// Injected via ``AppEnvironment`` so the export button can call
+    /// ``APIClient.exportBook`` without going through a store
+    /// (export has no shared model state — it's a download).
+    @EnvironmentObject var environment: AppEnvironment
 
     public init(book: Book) { self.book = book }
 
@@ -26,6 +36,7 @@ public struct BookCardView: View {
                         .multilineTextAlignment(.center)
                         .padding(12)
                 )
+                .overlay(alignment: .topTrailing) { exportButton }
                 .aspectRatio(3.0/4.0, contentMode: .fit)
                 .shadow(
                     color: .black.opacity(isHovered ? 0.25 : 0.15),
@@ -55,6 +66,58 @@ public struct BookCardView: View {
             }
         }
         #endif
+    }
+
+    /// v0.7 §5.F — hover-only "export" pill in the top-right corner of
+    /// the book cover. The simplified flow (per plan recommendation):
+    /// default to **markdown + finalized only**, no format picker; one
+    /// click takes the user straight to the save panel. Power users
+    /// who want TXT or include_drafts can do it via the future
+    /// Settings → Export Preferences (out of scope for v0.7).
+    @ViewBuilder
+    private var exportButton: some View {
+        if isHovered {
+            Button {
+                guard !isExporting else { return }
+                runExport()
+            } label: {
+                Group {
+                    if isExporting {
+                        ProgressView()
+                            .controlSize(.small)
+                            .progressViewStyle(.circular)
+                    } else {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                }
+                .font(.callout)
+                .frame(width: 28, height: 28)
+                .background(.regularMaterial, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .disabled(isExporting)
+            .padding(8)
+            .help("导出本书为 Markdown（仅含已完成章节）")
+        }
+    }
+
+    private func runExport() {
+        isExporting = true
+        Task {
+            defer { isExporting = false }
+            do {
+                let (data, suggested) = try await environment.apiClient.exportBook(
+                    id: book.id,
+                    format: .markdown,
+                    includeDrafts: false
+                )
+                try await FileSaver.save(data: data, suggestedFilename: suggested)
+            } catch let error as AppError {
+                environment.errorBus.publish(error)
+            } catch {
+                environment.errorBus.publish(.transport(error.localizedDescription))
+            }
+        }
     }
 
     private var footnote: String {

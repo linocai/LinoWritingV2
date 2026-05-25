@@ -103,4 +103,115 @@ public final class ChaptersStore: ObservableObject {
             // Soft-fail; the row will keep showing "加载中…" or empty.
         }
     }
+
+    /// Publish a batch-level error message to the shared bus (used by
+    /// `NewChapterSheet` when **every** chapter in a batch failed and
+    /// the sheet wants to surface a single aggregated toast instead of
+    /// the failure-summary dialog). Wraps `errorBus.publish` so callers
+    /// don't need a direct handle to the bus.
+    public func errorBusPublishFromBatch(_ message: String) {
+        errorBus.publish(message, critical: false)
+    }
+
+    /// Batch create + import a list of `ParsedChapter`s in source order
+    /// (PROJECT_PLAN v0.7 §5.O batch import).
+    ///
+    /// **Sequential, not parallel.** Three reasons:
+    ///   1. The Extractor runs LLM calls per chapter; firing 50 in
+    ///      parallel will instantly hit any provider's rate limit and
+    ///      cause cascading 429s.
+    ///   2. The backend's `extractor_apply` writes character live_fields
+    ///      and timeline events; two concurrent imports against the
+    ///      same book would race on `pending_field_highlights` JSONB.
+    ///   3. The status state machine on `chapters` table is per-chapter,
+    ///      but the progress callback semantics ("第 N 章导入中…") would
+    ///      be meaningless if all 50 returned at once.
+    ///
+    /// **Failure handling: continue, don't stop.** If chapter 23 fails
+    /// (network blip, LLM 429, 409 status conflict), we keep going so
+    /// 24..N still land. Each failure is recorded as `.failure(AppError)`
+    /// in the returned array; the caller is expected to surface "N/M
+    /// 章失败" UI from the result list. **No** ErrorBus publish here —
+    /// the caller decides whether one transient failure should toast or
+    /// only the aggregated end-of-batch dialog should.
+    ///
+    /// Side effects:
+    ///   - Successful chapters are `upsert`ed into `self.chapters` as
+    ///     they finish, so the sidebar list grows in real time while
+    ///     the import is running (gives the user visual feedback).
+    ///   - `selectedChapterId` is **not** changed; the user stays on
+    ///     whatever chapter they were viewing.
+    ///   - `progress` is called on the main actor after each chapter
+    ///     completes (success or failure). The first call comes after
+    ///     the first chapter, so the UI shows "1/N" rather than "0/N"
+    ///     at the start.
+    public func batchCreateAndImport(
+        parsedChapters: [ParsedChapter],
+        runExtractor: Bool,
+        progress: @MainActor (Int, Int) -> Void
+    ) async -> [Result<Chapter, AppError>] {
+        guard let bookId = currentBookId else { return [] }
+        let total = parsedChapters.count
+        var results: [Result<Chapter, AppError>] = []
+
+        for (i, parsed) in parsedChapters.enumerated() {
+            let outcome = await createAndImportOne(
+                bookId: bookId,
+                parsed: parsed,
+                runExtractor: runExtractor
+            )
+            results.append(outcome)
+            // Reflect success to the sidebar immediately. Failures are
+            // not appended — they have no chapter to show.
+            if case .success(let chapter) = outcome {
+                upsert(chapter)
+            }
+            progress(i + 1, total)
+        }
+        return results
+    }
+
+    /// One step of `batchCreateAndImport`: POST /chapters → POST /import.
+    /// Pulled out so the loop body stays readable and the two-call
+    /// failure surface ("createChapter failed" vs "importChapter
+    /// failed") is uniform — either error maps to the same
+    /// `Result.failure(AppError)` shape with the message preserved.
+    private func createAndImportOne(
+        bookId: String,
+        parsed: ParsedChapter,
+        runExtractor: Bool
+    ) async -> Result<Chapter, AppError> {
+        let create = ChapterCreateRequest(userPrompt: "", title: parsed.title)
+        let created: Chapter
+        do {
+            created = try await api.createChapter(bookId: bookId, create)
+        } catch let error as AppError {
+            return .failure(error)
+        } catch {
+            return .failure(.transport(error.localizedDescription))
+        }
+
+        let importPayload = ChapterImportRequest(
+            draftText: parsed.body,
+            title: parsed.title,
+            summary: nil,
+            runExtractor: runExtractor
+        )
+        do {
+            let response = try await api.importChapter(id: created.id, payload: importPayload)
+            return .success(response.chapter)
+        } catch let error as AppError {
+            // The skeleton chapter we just created still exists on the
+            // backend with empty draft_text. Leave it — the user may
+            // want to retry just that one chapter via the per-chapter
+            // import sheet, and silently deleting it would lose the
+            // `chapters.index` slot they're expecting. Sidebar shows
+            // the empty draft row from `upsert` below the failure list.
+            upsert(created)
+            return .failure(error)
+        } catch {
+            upsert(created)
+            return .failure(.transport(error.localizedDescription))
+        }
+    }
 }

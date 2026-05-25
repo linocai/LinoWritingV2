@@ -1243,3 +1243,60 @@ v0.7 最后一笔 commit(发版同步那一笔),与 5 处版本号一起做。
   3. 作者忙别的去了,过会儿回来想:刚才那 toast 说啥来着? → Settings → 第三个 tab "最近错误" → 看到 `[18:53:01] 章节当前正在「写作」中,无法开始写作`(三角橙 icon + 完整文本 + 可选中复制)。
   4. 再后来连续 3 次 SSE 失败 / Extractor 422,history 攒到 4 条 → 列表里按时间倒序显示,可选中复制贴给作者朋友吐槽。
   5. 想清掉历史 → 点 header "清空" → 整列清空(toast 如果还在屏幕上不受影响)。
+
+### [2026-05-25] Phase F 章节/全书导出实施
+
+- 变更内容:
+  - **后端**:新增 `Backend/app/services/exporter.py`(纯 string-concat 服务层,零 DB 访问),四个 export 函数 `export_book_markdown` / `export_book_txt` / `export_chapter_markdown` / `export_chapter_txt` + 共享 helper `build_filename` / `build_content_disposition`(RFC 5987 双 form 发 `filename` 与 `filename*=UTF-8''…`,Chinese 标题 percent-encoded)。
+  - **新端点**:
+    - `GET /api/v1/books/{book_id}/export?format={markdown|txt}&include_drafts={true|false}` — Pydantic `Literal["markdown","txt"]` 校验,非法 format 422;`include_drafts=false` 默认仅含 finalized 章;header `Content-Type: text/markdown; charset=utf-8` 或 `text/plain`;`Content-Disposition: attachment; filename="ascii_fallback"; filename*=UTF-8''<encoded>` 双 form。
+    - `GET /api/v1/chapters/{chapter_id}/export?format=…` — 单章导出,filename `第N章·title.{md,txt}`(无 title 时 `第N章`)。
+    - 路径里的 chapter / book 不存在 → `i18n_not_found("chapter")` / `i18n_not_found("book")` 走 §5.N 中文模板;未带 Bearer → 401 由 global middleware。
+  - **后端测试** `Backend/tests/test_export.py` 15 个(plan 要求 ≥8):
+    1. book markdown default omits drafts(标题 H1 / 章节 H2 / 仅 finalized / `---` 分隔)
+    2. book markdown world_setting 多行 blockquote(`> 架空东亚` / `> 民国十年`)
+    3. book markdown include_drafts=true 包含所有章 + 按 index 升序排
+    4. book txt 使用 `========` 分隔,无 `#` markdown
+    5. chapter markdown(`### book.title` + `## 第 N 章 · title` + 正文)
+    6. chapter txt(`《book.title》` + heading + 正文)
+    7-8. book / chapter 404 with i18n_not_found 中文消息
+    9-10. format=pdf / format=html 422
+    11-12. 无 Bearer 时 book / chapter 401
+    13. book Content-Disposition 含 RFC 5987 `filename*=UTF-8''<percent-encoded 夜雨长歌.md>`
+    14. chapter Content-Disposition 含 `第N章·雨夜山洞.txt` percent-encoded
+    15. 无 format 参数默认 markdown
+  - **前端**:
+    - **新 `Models/ExportFormat.swift`**:`enum ExportFormat: String { case markdown, txt }` + `fileExtension` / `contentType` / `displayName`;rawValue 严格对齐后端 `Literal["markdown","txt"]` query 值。
+    - **`Services/APIClient.swift`** Protocol + 实现新增 `exportBook(id:format:includeDrafts:)` 与 `exportChapter(id:format:)`,返回 `(data: Data, suggestedFilename: String)`;复用既有 `performRaw` 拿 `(Data, HTTPURLResponse)`,从 response 解析 Content-Disposition。新增 static `APIClient.parseSuggestedFilename(from:)` — 优先 `filename*=UTF-8''…` percent-decode,fallback `filename="…"`,header 缺失返 nil(caller 用 `untitled.{md,txt}` 兜底)。
+    - **新 `Services/FileSaver.swift`**:`@MainActor static func save(data:suggestedFilename:)` — macOS 路径走 `NSSavePanel`(`allowedContentTypes` 按 ext 映射 UTType.text / .plainText)+ atomic write;iOS 路径写 temp + `UIDocumentPickerViewController(forExporting:asCopy:)` stub(plan 优先 macOS,§5.F 明文允许 iOS 简化)。用户取消 panel 视为 no-op 不报错;write 失败 throw `AppError.transport(...)` 给 ErrorBus。
+    - **`Views/Bookshelf/BookCardView.swift`**:hover 时书卡封面右上角显示 `square.and.arrow.up` 按钮(`.regularMaterial` 圆形背景),per-card `@State isExporting` 防双击;点击调 `apiClient.exportBook(id, .markdown, includeDrafts: false)` → `FileSaver.save` → 失败走 ErrorBus。注入 `@EnvironmentObject var environment: AppEnvironment` 直接拿 apiClient + errorBus(不走 store,因为 export 无 shared model state)。
+    - **`Views/Workspace/Editor/ChapterToolbar.swift`**:P-2 的 `moreMenu`(三点)加新菜单项 `Label("导出本章", systemImage: "square.and.arrow.up")` 在原"强制重置状态"上方 + `Divider()` 分隔;`@State isExportingChapter` 防双击;调 `apiClient.exportChapter(id, .markdown)` → `FileSaver.save` → 失败走 ErrorBus。
+    - **`LinoWritingTests/MockAPIClient.swift`**:新增 `exportBook` / `exportChapter` mock + `lastExportBookCall` / `lastExportChapterCall` capture hook;sample body 返回固定 `# title\n` / `## 第N章·title\n`,suggestedFilename `{book.title}.{ext}` / `第N章·title.{ext}`。
+  - **前端测试** `LinoWritingTests/ExportTests.swift` 11 个(plan 要求 ≥4):
+    1-3. `ExportFormat.fileExtension` / `contentType` / `rawValue` 锁后端契约
+    4. `parseSuggestedFilename` 优先 RFC 5987 form,正确 percent-decode `夜雨长歌.md`
+    5. fallback 到 plain `filename="foo.txt"`
+    6. header 缺失返 nil
+    7. exportBook 通过 mock,断言 `lastExportBookCall.format/.includeDrafts/.id` 全部捕获
+    8. includeDrafts=true 透传
+    9. exportBook 未知 id → `.notFound`
+    10. exportChapter 捕获 id + format,filename `第1章·山洞.md`
+    11. 无 title 时 chapter filename fallback `第1章.txt`
+- 变更原因:v0.7 §5.F。写完一本想分享 / 备份 / 投稿,作者需要"一键出文件";v0.6 此前要么走 DB dump 要么手抄章节,均不切实际。本 Phase 给章节级 + 全书级两个粒度。
+- 影响范围:Phase F 全部落地;后端新增 2 个文件(`services/exporter.py` + `tests/test_export.py`),修改 2 个文件(`routers/books.py` / `routers/chapters.py`);前端新增 3 个文件(`Models/ExportFormat.swift` / `Services/FileSaver.swift` / `LinoWritingTests/ExportTests.swift`),修改 4 个文件(`Services/APIClient.swift` / `Views/Bookshelf/BookCardView.swift` / `Views/Workspace/Editor/ChapterToolbar.swift` / `LinoWritingTests/MockAPIClient.swift`)。不动 O 涉及的 NewChapterSheet / ChapterSplitter / ChaptersStore.import 批量逻辑;不动 v0.7 已 commit 的 N / B-fld / C-tl / M / L / P 系列内容;不动 admin_reset / Material 视觉 / animation。
+- 关键判断:
+  - **简化版书卡入口(默认 markdown + finalized only)**:plan §5.F.2 给两个选项 — 完整 popover(format + include_drafts) 与 简化(hover 按钮直接默认)。选简化,理由:① v0.7 仍是试运营版,书卡是高频画面,加 popover 会扰动 hover layout / contextMenu UX;② 默认 markdown 是 95% 用户首选(可贴博客 / 分享 / 转 Word);③ 高级用户(要 txt / include_drafts)可以后续在 Settings 加偏好设置或用 curl 直击 API。
+  - **`AppEnvironment` 注入而非走 store**:export 是无状态的"下载",没有共享 model 需要更新(不像 `ChaptersStore.import` 要 swap 列表 row),也不该污染 store 的 `@Published`。直接 inject environment 拿 apiClient + errorBus,书卡 / toolbar 各自局部 `@State isExporting` 防双击。
+  - **`Content-Disposition` 双 form(plain + filename\*=UTF-8''…)**:RFC 6266 / 5987 规范的标准做法。原因:① macOS Foundation / Safari / Chrome 都识别 `filename*=`,Chinese 标题原样保留;② 老 / 简陋客户端仍能读到 ASCII fallback(虽然 Chinese 字符被 `?` 替换,但至少有个文件名)。前端 `parseSuggestedFilename` 优先 encoded form。
+  - **`build_filename` 删除 path-separator 但保留 Chinese**:`/`, `\`, `\0`, `\r`, `\n` 替换为 `_`(防 user-controlled filename 走 NSSavePanel 时被解释为目录路径)。Chinese / emoji / 标点保留 — `NSSavePanel.nameFieldStringValue` 接受任意字符串,FS 写入时 macOS 自己处理。
+  - **macOS NSSavePanel 用户取消 = no-op**:`panel.runModal() != .OK` 时直接 return,不 publish error。`NSSavePanel` 的"cancel"是合法终止,与"transport failed"是两回事。
+  - **iOS 是 stub**:plan §5.F.2 明文 "macOS 优先,iOS 可选"。当前实现是 write temp + `UIDocumentPickerViewController(forExporting:)` 弹出导出 picker;async/await + UIKit modal 之间的 continuation dance 留到 iOS 正式发版再做。`xcodebuild build -destination 'generic/platform=iOS'` 通过 = 编译路径无错。
+  - **测试中 finalize 路径需要至少一个角色**:`MockLLMClient.complete_json` 在非 expander context 下 `context["characters"][0]` 硬 unwrap(`conftest.py:46`),没有角色 → IndexError。`_seed_book_with_chapters` 在创建 book 后 + 创建 chapters 前显式 POST 一个角色才让 finalize 跑得通。这是 conftest 的 quirk,非 §5.F 范围。
+- 测试基线:
+  - 后端:N 末 158 pytest → F 末 173 pytest(158 baseline 全过 + 15 新),`pytest -W error` 干净。
+  - 前端:N 末 74 XCTest(以本次实际 baseline 为准 — 期间 §5.O 另一 builder 在本地新增了 12 个 `ChapterSplitterTests`,其中 2 个已经在 baseline 失败,与 F 无关 / 不在 F 范围,需 §5.O 自己 builder 修)→ F 末 99 XCTest 通过(`-skip-testing:ChapterSplitterTests`,74 baseline + 11 新 + 14 baseline 已稳定的其它测试)。`xcodebuild build` macOS + iOS 双平台 0 error 0 warning。
+- 未做:O(批量章节导入)/ D(Admin Log Panel UI)/ Q(发版同步)等 v0.7 其它项。`§5.O ChapterSplitter` 的 2 个 baseline 失败不在 F 范围内,留给 O builder。
+- 端到端 happy path(用户操作):
+  1. **全书导出**:书架页面 → 鼠标 hover 任意书卡 → 封面右上角浮现一个圆形带 `square.and.arrow.up` 图标的按钮 → 点一下 → NSSavePanel 弹出,默认文件名 `《书名》.md`(包含 Chinese 字符)→ 用户选保存位置 / 改名 → 点 "Save" → MD 文件落在所选目录,内容:H1 书名 + 可选 world_setting blockquote + 所有 finalized 章节(H2 `## 第 N 章 · 标题`),章节间 `---` 分隔;草稿章节默认不在。
+  2. **单章导出**:进入某章 ChapterEditor → 工具栏最右 `ellipsis.circle` 三点菜单(P-2 已有的) → 点开 → 第一项 `导出本章`(`square.and.arrow.up` 图标) → 点击 → NSSavePanel 弹出,默认文件名 `第N章·title.md` → 保存 → 文件内容:`### {书名}` 作 caption + `## 第 N 章 · {章节标题}` + 正文。无 title 时 fallback `第N章.md`。
+  3. **错误路径**:Bearer 失效或后端不通 → ErrorBus 收到 transport / unauthorized → 右下角 Toast(N 的 i18n message)→ 同样会在 Settings → 最近错误 tab 回看。NSSavePanel 用户取消时无 Toast(取消不是 error)。

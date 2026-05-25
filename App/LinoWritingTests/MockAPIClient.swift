@@ -27,7 +27,7 @@ public final class MockAPIClient: APIClientProtocol, @unchecked Sendable {
     public var onWrite: ((String) -> [SSEEvent])?
     public var onFinalize: ((String) -> FinalizeResult)?
     public var onReopen: ((String) -> Chapter)?
-    public var onImport: ((String, ChapterImportRequest) -> ChapterImportResponse)?
+    public var onImport: ((String, ChapterImportRequest) throws -> ChapterImportResponse)?
     public var onAdminReset: ((String, ChapterStatus) -> Chapter)?
 
     /// Captures the last `importChapter` payload so tests can assert that the
@@ -340,7 +340,7 @@ public final class MockAPIClient: APIClientProtocol, @unchecked Sendable {
         recordCall("importChapter")
         lastImportPayload = payload
         try maybeThrow()
-        if let onImport { return onImport(id, payload) }
+        if let onImport { return try onImport(id, payload) }
         guard let idx = chapters.firstIndex(where: { $0.id == id }) else {
             throw AppError.notFound("chapter")
         }
@@ -553,5 +553,50 @@ public final class MockAPIClient: APIClientProtocol, @unchecked Sendable {
                 apiKeyMask: key.apiKey
             )
         }
+    }
+
+    // MARK: - Export (§5.F mock)
+
+    /// Captures the last ``exportBook`` arguments so tests can assert the
+    /// query parameters made it through encoding unchanged. Mirrors the
+    /// ``lastImportPayload`` / ``lastSetActiveAgentPayload`` hooks.
+    public var lastExportBookCall: (id: String, format: ExportFormat, includeDrafts: Bool)?
+    /// Same idea for ``exportChapter``.
+    public var lastExportChapterCall: (id: String, format: ExportFormat)?
+
+    public func exportBook(
+        id: String,
+        format: ExportFormat,
+        includeDrafts: Bool
+    ) async throws -> (data: Data, suggestedFilename: String) {
+        recordCall("exportBook")
+        lastExportBookCall = (id, format, includeDrafts)
+        try maybeThrow()
+        guard let book = books.first(where: { $0.id == id }) else {
+            throw AppError.notFound("book")
+        }
+        let filename = "\(book.title).\(format.fileExtension)"
+        // Sample body: just the book title — enough for tests to assert
+        // round-tripping. Production app uses the real export endpoint.
+        let data = Data("# \(book.title)\n".utf8)
+        return (data, filename)
+    }
+
+    public func exportChapter(
+        id: String,
+        format: ExportFormat
+    ) async throws -> (data: Data, suggestedFilename: String) {
+        recordCall("exportChapter")
+        lastExportChapterCall = (id, format)
+        try maybeThrow()
+        guard let chapter = chapters.first(where: { $0.id == id }) else {
+            throw AppError.notFound("chapter")
+        }
+        let title = (chapter.title ?? "").isEmpty
+            ? "第\(chapter.index)章"
+            : "第\(chapter.index)章·\(chapter.title!)"
+        let filename = "\(title).\(format.fileExtension)"
+        let data = Data("## \(title)\n".utf8)
+        return (data, filename)
     }
 }

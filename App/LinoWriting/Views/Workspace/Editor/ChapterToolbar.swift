@@ -10,6 +10,10 @@ public struct ChapterToolbar: View {
     @EnvironmentObject var chapterEditorStore: ChapterEditorStore
     @EnvironmentObject var chaptersStore: ChaptersStore
     @EnvironmentObject var charactersStore: CharactersStore
+    /// v0.7 §5.F — needed by "导出本章" in the overflow menu so the
+    /// toolbar can hit ``APIClient.exportChapter`` + ``FileSaver`` without
+    /// piping every export through a store (no shared model state).
+    @EnvironmentObject var environment: AppEnvironment
 
     @State private var titleDraft: String
     /// Drives the §5.P.1 E "force-reset" confirmation alert. Owned here
@@ -18,6 +22,10 @@ public struct ChapterToolbar: View {
     /// content doesn't need to survive toolbar rebuilds the way the
     /// import sheet does.
     @State private var showResetConfirm: Bool = false
+    /// True while ``runExportChapter`` is awaiting the network /
+    /// NSSavePanel. Disables the menu item to prevent double-clicks
+    /// firing two downloads.
+    @State private var isExportingChapter: Bool = false
 
     public init(chapter: Chapter, onImportTap: @escaping () -> Void = {}) {
         self.chapter = chapter
@@ -68,15 +76,22 @@ public struct ChapterToolbar: View {
         }
     }
 
-    /// Hidden "更多" menu — currently only hosts the §5.P.1 E escape hatch.
-    /// Lives on the trailing edge of the toolbar (after the primary action
-    /// buttons) so it's findable but doesn't compete with the main flow.
-    /// Available in every chapter status, including `writing` and
-    /// `finalized`, because that's exactly when the user needs an escape
-    /// hatch — the backend admin_reset accepts any source state.
+    /// Hidden "更多" menu — hosts the §5.P.1 E escape hatch + the §5.F
+    /// per-chapter export action. Lives on the trailing edge of the
+    /// toolbar (after the primary action buttons) so it's findable but
+    /// doesn't compete with the main flow. Available in every chapter
+    /// status, including `writing` and `finalized`, because both menu
+    /// items are escape-hatch / out-of-band actions.
     @ViewBuilder
     private var moreMenu: some View {
         Menu {
+            Button {
+                runExportChapter()
+            } label: {
+                Label("导出本章", systemImage: "square.and.arrow.up")
+            }
+            .disabled(isExportingChapter)
+            Divider()
             Button {
                 showResetConfirm = true
             } label: {
@@ -94,6 +109,28 @@ public struct ChapterToolbar: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .help("更多操作")
+    }
+
+    /// v0.7 §5.F — fetch the chapter export from the backend and hand
+    /// it to ``FileSaver``. Defaults to Markdown (matches the book-card
+    /// flow on the shelf so the user gets a consistent experience).
+    private func runExportChapter() {
+        guard !isExportingChapter else { return }
+        isExportingChapter = true
+        Task {
+            defer { isExportingChapter = false }
+            do {
+                let (data, suggested) = try await environment.apiClient.exportChapter(
+                    id: chapter.id,
+                    format: .markdown
+                )
+                try await FileSaver.save(data: data, suggestedFilename: suggested)
+            } catch let error as AppError {
+                environment.errorBus.publish(error)
+            } catch {
+                environment.errorBus.publish(.transport(error.localizedDescription))
+            }
+        }
     }
 
     /// Whitelist mirrors the backend's `ensure_chapter_status` set

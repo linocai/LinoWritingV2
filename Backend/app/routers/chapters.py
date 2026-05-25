@@ -4,6 +4,7 @@ import json
 from collections.abc import Iterator
 from queue import Empty, Queue
 from threading import Event, Thread
+from typing import Literal
 
 from fastapi import APIRouter, Body, Depends, Query, Response, status
 from fastapi.responses import StreamingResponse
@@ -39,7 +40,16 @@ from app.schemas.chapter import (
 from app.services.agent_logging import log_agent_call, now_ms
 from app.services.chapter_state import ensure_chapter_status
 from app.services.context_pack import build_expander_context, build_extractor_context, build_writer_context
+from app.services.exporter import (
+    build_content_disposition,
+    build_filename,
+    export_chapter_markdown,
+    export_chapter_txt,
+)
 from app.services.extractor_apply import apply_extractor_output
+
+# v0.7 §5.F — same Literal trick as in books.py.
+ExportFormat = Literal["markdown", "txt"]
 
 router = APIRouter(tags=["chapters"])
 KEEPALIVE_SECONDS = 15
@@ -331,6 +341,44 @@ def reopen_chapter(chapter_id: str, db: Session = Depends(get_db)) -> ChapterRea
     db.commit()
     db.refresh(chapter)
     return ChapterRead.model_validate(chapter)
+
+
+@router.get("/chapters/{chapter_id}/export")
+def export_chapter(
+    chapter_id: str,
+    format: ExportFormat = Query(default="markdown"),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Export a single chapter as Markdown or plain text.
+
+    PROJECT_PLAN §5.F. Mirrors the book-level endpoint but produces a
+    standalone file — useful for sharing one chapter without dumping
+    the entire book. No ``include_drafts`` toggle here: explicitly
+    exporting one chapter implies the user wants it regardless of
+    state.
+
+    Filename is ``第N章·title.{md,txt}`` (URL-encoded for non-ASCII).
+    """
+    chapter = _get_chapter(db, chapter_id)
+    book = _get_book(db, chapter.book_id)
+
+    if format == "markdown":
+        body = export_chapter_markdown(chapter, book)
+        media_type = "text/markdown; charset=utf-8"
+        extension = "md"
+    else:
+        body = export_chapter_txt(chapter, book)
+        media_type = "text/plain; charset=utf-8"
+        extension = "txt"
+
+    title = (chapter.title or "").strip()
+    base = f"第{chapter.index}章·{title}" if title else f"第{chapter.index}章"
+    filename = build_filename(base, extension)
+    return Response(
+        content=body,
+        media_type=media_type,
+        headers={"Content-Disposition": build_content_disposition(filename)},
+    )
 
 
 @router.post("/chapters/{chapter_id}/admin_reset", response_model=ChapterRead)

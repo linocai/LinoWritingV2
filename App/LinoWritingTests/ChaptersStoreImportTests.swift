@@ -171,6 +171,247 @@ final class ChaptersStoreImportTests: XCTestCase {
         XCTAssertEqual(chaptersStore.chapters.first?.status, .finalized)
     }
 
+    // MARK: - v0.7 §5.O Batch import
+
+    func test_batchCreateAndImport_allSuccess_returnsAllSuccessResults() async {
+        let mock = MockAPIClient()
+        let bus = ErrorBus()
+        let book = try! await mock.createBook(BookCreateRequest(title: "B", coverColor: nil))
+        let store = ChaptersStore(api: mock, errorBus: bus)
+        await store.load(bookId: book.id)
+
+        let parsed = [
+            ParsedChapter(index: 0, title: "山洞", body: "山洞里很黑。"),
+            ParsedChapter(index: 1, title: "河边", body: "小马喝水。"),
+            ParsedChapter(index: 2, title: "村口", body: "夜深。")
+        ]
+
+        var progressCalls: [(Int, Int)] = []
+        let results = await store.batchCreateAndImport(
+            parsedChapters: parsed,
+            runExtractor: true,
+            progress: { c, t in progressCalls.append((c, t)) }
+        )
+
+        XCTAssertEqual(results.count, 3)
+        for result in results {
+            if case .failure = result {
+                XCTFail("expected all success, got \(result)")
+            }
+        }
+        XCTAssertEqual(store.chapters.count, 3, "sidebar should now show 3 chapters")
+        XCTAssertEqual(store.chapters.allSatisfy { $0.source == .imported }, true)
+        XCTAssertEqual(store.chapters.allSatisfy { $0.status == .finalized }, true)
+        XCTAssertNil(bus.current, "happy path must not publish to the error bus")
+    }
+
+    func test_batchCreateAndImport_progressCallback_calledOncePerChapter() async {
+        let mock = MockAPIClient()
+        let bus = ErrorBus()
+        let book = try! await mock.createBook(BookCreateRequest(title: "B", coverColor: nil))
+        let store = ChaptersStore(api: mock, errorBus: bus)
+        await store.load(bookId: book.id)
+
+        let parsed = (0..<5).map {
+            ParsedChapter(index: $0, title: "第\($0 + 1)章", body: "正文\($0)")
+        }
+
+        var progressCalls: [(Int, Int)] = []
+        _ = await store.batchCreateAndImport(
+            parsedChapters: parsed,
+            runExtractor: false,
+            progress: { c, t in progressCalls.append((c, t)) }
+        )
+
+        XCTAssertEqual(progressCalls.count, 5, "progress should be called once per chapter")
+        XCTAssertEqual(progressCalls.first?.0, 1, "first call uses 1-based current")
+        XCTAssertEqual(progressCalls.last?.0, 5)
+        XCTAssertTrue(progressCalls.allSatisfy { $0.1 == 5 },
+                      "total should be constant across all calls")
+    }
+
+    func test_batchCreateAndImport_middleFailure_continuesAndRecordsFailure() async {
+        let mock = MockAPIClient()
+        let bus = ErrorBus()
+        let book = try! await mock.createBook(BookCreateRequest(title: "B", coverColor: nil))
+        let store = ChaptersStore(api: mock, errorBus: bus)
+        await store.load(bookId: book.id)
+
+        let parsed = (0..<3).map {
+            ParsedChapter(index: $0, title: "第\($0 + 1)章", body: "正文\($0)")
+        }
+
+        // Fail the 2nd chapter's import specifically. The mock's onImport
+        // closure receives `(id, payload)`; chapter id #2 maps to the
+        // 2nd parsed chapter because we create them in order. We don't
+        // know that id ahead of time, so use the body text to detect.
+        mock.onImport = { id, payload in
+            if payload.draftText == "正文1" {
+                throw AppError.upstream("模拟 LLM 429", retryable: true)
+            }
+            // Default success — mirror MockAPIClient's stock body.
+            // We can't reach the original closure-free path through the
+            // mock when onImport is set, so reconstruct it here.
+            let now = Date()
+            let updated = Chapter(
+                id: id,
+                bookId: book.id,
+                index: 0,
+                title: payload.title,
+                draftText: payload.draftText,
+                status: .finalized,
+                source: .imported,
+                createdAt: now,
+                updatedAt: now
+            )
+            return ChapterImportResponse(
+                chapter: updated,
+                updatedCharacterIds: [],
+                addedEventIds: []
+            )
+        }
+
+        let results = await store.batchCreateAndImport(
+            parsedChapters: parsed,
+            runExtractor: true,
+            progress: { _, _ in }
+        )
+
+        XCTAssertEqual(results.count, 3, "all 3 should be attempted even after failure")
+        guard case .success = results[0] else { return XCTFail("ch 0 should succeed") }
+        guard case .failure(let err) = results[1] else { return XCTFail("ch 1 should fail") }
+        guard case .success = results[2] else { return XCTFail("ch 2 should succeed") }
+        XCTAssertEqual(err.message, "模拟 LLM 429")
+        XCTAssertNil(bus.current,
+                     "batch should NOT publish per-chapter failures to ErrorBus — the sheet aggregates")
+    }
+
+    /// Importantly: a per-chapter failure must **not** abort the loop.
+    /// Verify by checking that all 3 progress callbacks fire even with
+    /// the middle one failing.
+    func test_batchCreateAndImport_failureDoesNotShortCircuitProgress() async {
+        let mock = MockAPIClient()
+        let bus = ErrorBus()
+        let book = try! await mock.createBook(BookCreateRequest(title: "B", coverColor: nil))
+        let store = ChaptersStore(api: mock, errorBus: bus)
+        await store.load(bookId: book.id)
+
+        let parsed = (0..<3).map {
+            ParsedChapter(index: $0, title: "T\($0)", body: "正文\($0)")
+        }
+
+        mock.onImport = { id, payload in
+            if payload.draftText == "正文1" {
+                throw AppError.upstream("boom", retryable: false)
+            }
+            let now = Date()
+            return ChapterImportResponse(
+                chapter: Chapter(
+                    id: id,
+                    bookId: book.id,
+                    index: 0,
+                    title: payload.title,
+                    draftText: payload.draftText,
+                    status: .finalized,
+                    source: .imported,
+                    createdAt: now,
+                    updatedAt: now
+                ),
+                updatedCharacterIds: [],
+                addedEventIds: []
+            )
+        }
+
+        var progress: [(Int, Int)] = []
+        _ = await store.batchCreateAndImport(
+            parsedChapters: parsed,
+            runExtractor: false,
+            progress: { c, t in progress.append((c, t)) }
+        )
+
+        XCTAssertEqual(progress.count, 3)
+        XCTAssertEqual(progress.map { $0.0 }, [1, 2, 3],
+                       "progress current must advance even past a failed chapter")
+    }
+
+    /// Serial execution: each chapter's `createChapter` must complete
+    /// before the next chapter's begins. Verify by ordering of the
+    /// recorded calls on the mock — `createChapter` for chapter N
+    /// must happen before `createChapter` for chapter N+1.
+    func test_batchCreateAndImport_runsSequentially() async {
+        let mock = MockAPIClient()
+        let bus = ErrorBus()
+        let book = try! await mock.createBook(BookCreateRequest(title: "B", coverColor: nil))
+        let store = ChaptersStore(api: mock, errorBus: bus)
+        await store.load(bookId: book.id)
+
+        let parsed = (0..<4).map {
+            ParsedChapter(index: $0, title: "T\($0)", body: "B\($0)")
+        }
+
+        // Snapshot pre-batch calls so we measure only what the batch run added.
+        let preCount = mock.calls.count
+        _ = await store.batchCreateAndImport(
+            parsedChapters: parsed,
+            runExtractor: false,
+            progress: { _, _ in }
+        )
+        let batchCalls = Array(mock.calls[preCount...])
+
+        // Expected sequence: createChapter, importChapter, createChapter,
+        // importChapter, … (× 4). If anything ran in parallel the calls
+        // would interleave differently.
+        let expected = ["createChapter", "importChapter",
+                        "createChapter", "importChapter",
+                        "createChapter", "importChapter",
+                        "createChapter", "importChapter"]
+        XCTAssertEqual(batchCalls, expected,
+                       "calls must alternate strictly create→import per chapter")
+    }
+
+    func test_batchCreateAndImport_emptyInput_returnsEmpty() async {
+        let mock = MockAPIClient()
+        let bus = ErrorBus()
+        let book = try! await mock.createBook(BookCreateRequest(title: "B", coverColor: nil))
+        let store = ChaptersStore(api: mock, errorBus: bus)
+        await store.load(bookId: book.id)
+
+        var progressCalled = false
+        let results = await store.batchCreateAndImport(
+            parsedChapters: [],
+            runExtractor: true,
+            progress: { _, _ in progressCalled = true }
+        )
+
+        XCTAssertEqual(results.count, 0)
+        XCTAssertFalse(progressCalled, "no chapters → no progress callbacks")
+        XCTAssertEqual(store.chapters.count, 0)
+    }
+
+    func test_batchCreateAndImport_runExtractorFlag_propagatesToPayload() async {
+        let mock = MockAPIClient()
+        let bus = ErrorBus()
+        let book = try! await mock.createBook(BookCreateRequest(title: "B", coverColor: nil))
+        let store = ChaptersStore(api: mock, errorBus: bus)
+        await store.load(bookId: book.id)
+
+        let parsed = [ParsedChapter(index: 0, title: "T", body: "B")]
+
+        _ = await store.batchCreateAndImport(
+            parsedChapters: parsed,
+            runExtractor: false,
+            progress: { _, _ in }
+        )
+        XCTAssertEqual(mock.lastImportPayload?.runExtractor, false)
+
+        _ = await store.batchCreateAndImport(
+            parsedChapters: parsed,
+            runExtractor: true,
+            progress: { _, _ in }
+        )
+        XCTAssertEqual(mock.lastImportPayload?.runExtractor, true)
+    }
+
     // MARK: helpers
 
     private func jsonObject<T: Encodable>(from value: T) throws -> [String: Any] {
