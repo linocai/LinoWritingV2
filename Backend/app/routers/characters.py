@@ -35,6 +35,7 @@ def create_character(book_id: str, payload: CharacterCreate, db: Session = Depen
         role=payload.role,
         frozen_fields=payload.frozen_fields,
         live_fields=payload.live_fields,
+        author_notes=payload.author_notes,
     )
     db.add(character)
     db.commit()
@@ -47,10 +48,23 @@ def get_character(character_id: str, db: Session = Depends(get_db)) -> Character
     return CharacterRead.model_validate(_get_character(db, character_id))
 
 
+# Second-layer allowlist mirroring the chapters router pattern from
+# §5.P.1 F. The Pydantic CharacterPatch schema is *already* a whitelist
+# (it only exposes these 5 fields), but a router-side allowlist guards
+# against a future maintainer carelessly adding read-only fields (e.g.
+# book_id, id) to CharacterPatch and accidentally opening a
+# mass-assignment vector. L-1 reviewer 🟡 #2.
+PATCHABLE_CHARACTER_FIELDS = frozenset(
+    {"name", "role", "frozen_fields", "live_fields", "author_notes"}
+)
+
+
 @router.patch("/characters/{character_id}", response_model=CharacterRead)
 def patch_character(character_id: str, payload: CharacterPatch, db: Session = Depends(get_db)) -> CharacterRead:
     character = _get_character(db, character_id)
     for key, value in payload.model_dump(exclude_unset=True).items():
+        if key not in PATCHABLE_CHARACTER_FIELDS:
+            continue
         setattr(character, key, value)
     character.updated_at = utc_now()
     db.commit()

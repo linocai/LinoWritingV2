@@ -29,6 +29,14 @@ class Character(Base):
         default=dict,
         nullable=False,
     )
+    # v0.7 §5.L.3 — author's "actor cheat sheet" (motivation, past wounds,
+    # secrets). Writer reads it for understanding but MUST NOT narrate it
+    # directly (enforced via Writer system prompt in L-2).
+    author_notes: Mapped[dict[str, Any]] = mapped_column(
+        MutableDict.as_mutable(json_dict_type),
+        default=dict,
+        nullable=False,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

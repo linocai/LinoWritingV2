@@ -12,6 +12,9 @@ class CharacterCreate(BaseModel):
     role: str | None = None
     frozen_fields: dict[str, Any] = Field(default_factory=dict)
     live_fields: dict[str, Any] = Field(default_factory=dict)
+    # v0.7 §5.L.3 — author's private "cheat sheet" notes; whole-object replace
+    # semantics on PATCH, same as frozen_fields / live_fields.
+    author_notes: dict[str, Any] = Field(default_factory=dict)
 
 
 class CharacterPatch(BaseModel):
@@ -19,6 +22,7 @@ class CharacterPatch(BaseModel):
     role: str | None = None
     frozen_fields: dict[str, Any] | None = None
     live_fields: dict[str, Any] | None = None
+    author_notes: dict[str, Any] | None = None
 
 
 class CharacterRead(BaseModel):
@@ -30,5 +34,6 @@ class CharacterRead(BaseModel):
     role: str | None
     frozen_fields: dict[str, Any]
     live_fields: dict[str, Any]
+    author_notes: dict[str, Any] = Field(default_factory=dict)
     created_at: UtcDatetime
     updated_at: UtcDatetime

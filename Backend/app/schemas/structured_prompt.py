@@ -20,6 +20,12 @@ class StructuredPrompt(BaseModel):
     ] | None = None
     target_word_count: int | None = Field(default=None, gt=0)
     extra_notes: str | None = None
+    # v0.7 §5.L.3 — 0-2 trait names the chapter is allowed to "重点 emerge".
+    # Populated by Expander in L-2 (not yet — L-1 only opens the schema slot);
+    # authors may edit it via the chapter PATCH endpoint. Free-form strings,
+    # not validated against any registry — the Writer prompt treats them as
+    # narrative hints, not strict tags.
+    focus_traits: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def require_chapter_goal(self) -> "StructuredPrompt":
