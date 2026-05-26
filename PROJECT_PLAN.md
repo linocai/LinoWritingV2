@@ -3,7 +3,7 @@
 > 本文档是 v0.6 起的**单一项目行动依据**。前端、后端、契约层全部合并在此。
 > v0.1–v0.5 期间使用 `PLAN_FRONTEND.md` / `PLAN_BACKEND.md` 双契约工作流，作为 v0.5 契约存档保留，不再更新。
 >
-> 文档版本：v0.7.1（已发布）
+> 文档版本：v0.8-draft
 > 关联存档：`PLAN_FRONTEND.md`（v0.5 前端契约存档）、`PLAN_BACKEND.md`（v0.5 后端契约存档）
 
 ---
@@ -181,11 +181,18 @@ LinoWritingV2/
 | **O** | 批量章节导入 | ✅ v0.7 | §5.O |
 | **P** | v0.7 急修包（SSE cancel / admin reset / Store reset / PATCH 白名单 / 4xx 脱敏） | ✅ v0.7 | §5.P |
 | **Q** | 文档同步（PROJECT_PLAN §2 + README 漂移修复） | ✅ v0.7 | §5.Q |
+| **R** | iOS 三档响应式 + 触控适配（K 的 iOS 版） | 🎯 v0.8 **主菜** | §5.R |
+| **S** | 后端 PostgreSQL 切换 + 容器化（生产 Docker / 反代 / 持久卷） | 🎯 v0.8 **必修** | §5.S |
+| **T** | 安全硬化（ProviderKey 加密 / rate limit / HTTPS / secret manager） | 🎯 v0.8 **必修** | §5.T |
+| **U** | 客户端 → 云后端切换（BACKEND_URL / ATS / SSE 长连接调优） | 🎯 v0.8 | §5.U |
+| **V** | iOS Provisioning + TestFlight 上架 | ⚫ 已剔除（作者自用 + 免费 Apple Dev 账号） | §5.V |
 
 剔除项（不进路线图）：
 - ⚫ G. 卷/章节分组
 - ⚫ H. 写作统计面板
 - ⚫ I. 章节历史版本/diff
+- ⚫ V. TestFlight 上架（自用，Xcode → device 直装 + 7 天 re-sign 即可，详 §5.R.9）
+- ⚫ 多租户 / 多用户（作者自用永久 out of scope，单 token Bearer 即可）
 
 ---
 
@@ -352,6 +359,87 @@ LinoWritingV2/
 - 本文档 §7 变更日志加新条目
 - git commit 标 `v0.7: …`
 - LinoI.app 重新打包 + ad-hoc 签名 + 部署 ~/Desktop
+
+---
+
+### 4.4 v0.8 — 🚧 进行中
+
+**目标**:把 LinoWriting 从"单机 macOS 试运营"升级为"iOS + 云后端"双形态。用户原话:**"我准备做 iOS + 把后端搬到云上;这也是 v0.8 的目标"**。
+
+v0.6 / v0.7 都是 macOS 单机 + 本地 backend,iOS 在 Simulator 能编过但 UI 大量是 stub,backend 在 `lino_writing.db` SQLite 文件里只能服务一个人。v0.8 要交付的是:**iPhone / iPad 能像 macOS app 一样写作 + LinoI 启动直接连上 HTTPS 云后端 + ProviderKey 不再裸奔**。多租户 / Web 客户端 / 付费墙留 v0.9+。
+
+**清单**:
+
+```
+🔴 必修(云上线前不做就出事)
+[ ] S — 后端 PostgreSQL 切换 + 容器化(§5.S)
+[ ] T — 安全硬化:ProviderKey 加密 + rate limit + HTTPS + secret manager(§5.T)
+
+🥇 主菜
+[ ] R — iOS 三档响应式 + 触控适配 + 免费 Apple Dev 自用安装工作流(§5.R)
+[ ] U — 客户端 → 云后端切换(BACKEND_URL / ATS / SSE 长连接调优,§5.U)
+
+🧹 v0.7 旧债清算
+[ ] 老英文 errors helper(conflict / not_found / upstream)收回 — N 计划内未做
+[ ] M-2 灰显视觉(per-Agent picker 选项级 disable)
+[ ] F iOS UIDocumentPicker 真正 await(目前 stub)— 并入 R
+[ ] O 批量导入 cancel 按钮 + failure skeleton 文档化
+[ ] D-log MockAPIClient 排序 / infinite-scroll 防抖 / setFilter 竞态
+```
+
+**Phase 排序**(12 个 Phase,按依赖+并行机会排):
+
+| 序号 | Phase | 内容 | 类型 | 依赖 | 可并行 |
+|---|---|---|---|---|---|
+| 1 | **S-1** PG 切换(dev) | dev `docker-compose.yml` 起 Postgres 16 + `alembic upgrade head` 在 PG 上一次性跑通 + pytest 切到 PG 跑一遍抓 dialect-only bug + `config.py default database_url` 改 Postgres,SQLite 仅留测试 fixture | 后端 | — | ✅ 与 R-1 并行 |
+| 2 | **T-1** ProviderKey 加密 | `ProviderKey.api_key` Fernet 加密 + KEK 从环境读 + Alembic data migration 把现有明文加密回写 + 兼容老明文行(read-side dual,写一律加密) | 后端 | S-1 | — |
+| 3 | **T-2** Rate limit + 脱敏强化 | `slowapi` 或自写 in-memory middleware(per-token + per-endpoint 写限速,防 LLM key 烧钱)+ access log 脱敏 + HSTS header + CORS 收窄 | 后端 | T-1 | ✅ 与 S-2 并行 |
+| 4 | **S-2** Dockerfile 审计 + prod compose | 多阶段构建 + 非 root user + healthcheck + gunicorn `--worker-class uvicorn.workers.UvicornWorker` + `deploy/docker-compose.prod.yml` 修订(env_file 路径 + secrets 改 docker secrets 或部署平台 env) | 后端 | S-1 | ✅ 与 T-2 并行 |
+| 5 | **S-3** 部署目标选型 + 首次上线 | Fly.io / Render / Hetzner VPS 三选一(详见 §5.S.4),secret manager 配 KEK + DB password + api_token,Caddy 自动 HTTPS,真域名,production smoke test(/health 200 + write 端到端) | 部署 | S-2 + T-1 + T-2 | — |
+| 6 | **R-1** iOS WorkspaceView 重写 | iPad 用 `NavigationSplitView(sidebar=ChapterList, detail=Editor, inspector=RightPanel)`;iPhone 用 `NavigationStack` + 两 sheet(章节列表 + 右栏);删除现 `iOSLayout` 的"右上角弹 sheet"过渡实现 | 前端 | — | ✅ 与 S 系列并行 |
+| 7 | **R-2** iOS 三档响应式 | iPhone (compact width) / iPad portrait / iPad landscape 三档断点(`horizontalSizeClass` + `verticalSizeClass`);列宽 / inspector 默认可见性 / sheet vs split 切换 | 前端 | R-1 | — |
+| 8 | **R-3** iOS 触控 affordances + 平台分支补齐 | 长按代替 hover、swipe 代替 `.contextMenu`、`.topBarLeading/.topBarTrailing/.bottomBar` 全梳理 + FileSaver / BookCardView / ChapterListView / TimelineTabView / SettingsView / ProviderKeyEditSheet 的 `#if os(iOS)` 分支全部从 stub 补到 production | 前端 | R-1 + R-2 | — |
+| 9 | **R-4** iOS XCTest 矩阵 + 自用直装工作流 | XCTest 在 iPhone 14 / iPad Pro 11" simulator 双跑;现有 120 个 baseline 维持,新增至少 20 个 iOS 路径覆盖(NavigationSplitView 切栏、sheet 唤起、UIDocumentPicker mock);README 写 7 天 re-sign 工作流(详 §5.R.9) | 前端 | R-3 | — |
+| 10 | **U-1** BACKEND_URL 生产默认 + Settings | LinoI 启动首屏 / `SettingsView` Connection tab:默认 URL 从 `http://localhost:8787` 换成 `https://<prod-domain>` + 可改输入框 + Keychain 旧 localhost 数据迁移策略(留 vs 清,详见 §5.U.3) | 全栈 | S-3 | — |
+| 11 | **U-2** SSE 长连接调优 + ATS | uvicorn `--timeout-keep-alive 75` + Caddy 关 buffer(`flush_interval -1`) + iOS Info.plist `NSAppTransportSecurity` 禁非 HTTPS + 真机 SSE write 流连续 1 分钟不断 | 全栈 | U-1 + S-3 | — |
+| 12 | **Z** 文档同步 + v0.8 发版 | PROJECT_PLAN §1 / §2 / §3 更新 + App/Backend README + 5 处版本号 → 0.8.0 + LinoI v0.8 打包 + 云部署 cutover 步骤 | 全栈 | 全部完成 | — |
+
+**关键约束**(依赖顺序的物理原因):
+- **S-3 必须先于一切 R 真机测试**:iPhone / iPad 真机连不上 `localhost`(只有 Simulator 同机才行)。R 阶段开发期可用 Simulator + localhost,但**真机验收**必须先有 S-3 上线的云域名,否则 R-4 / U-2 走不通。
+- **T-1 必须先于 S-3**:云上 ProviderKey 明文存 Postgres 等于把 OpenAI/xAI/Anthropic 的钱包贴公网。任何 secret leak 都会立刻烧钱。
+- **T-2 必须先于 S-3**:无 rate limit 上公网 + 单租户静态 token = 任何泄漏的 token 都是无限刷 LLM 的肉鸡。
+- **S-2 与 T-2 可并行**:Dockerfile 重构与 middleware 添加正交,改的文件不冲突。
+- **R-1 与 S 系列可并行**:iOS UI 重写不碰后端契约,Simulator + localhost backend 全程可开发。
+- **U 系列必须等 S-3**:客户端切生产域名前,生产域名必须先 up。
+- **V 已剔除**(2026-05-26 用户拍板):作者自用 + 免费 Apple Developer 账号,Xcode → device 直装 + 7 天 re-sign 工作流即可,无需 TestFlight。详 §5.R.9 / §5.V。
+
+**发版同步清单**(v0.8 收尾用):
+- 前端 `App/project.yml` 的 `MARKETING_VERSION` → `0.8`
+- 后端 `Backend/pyproject.toml` + `Backend/app/main.py` + `Backend/app/routers/health.py` + `Backend/tests/test_auth.py` → `0.8.0`
+- 本文档 §7 变更日志加新条目
+- git commit 标 `v0.8: iOS + cloud backend`
+- **LinoI macOS 打包**:仍 ad-hoc(单机自用)/ 或随 V 走 Developer ID 真签
+- **LinoI iOS 打包**:走 V(TestFlight) 或仍 Simulator-only(无 V)
+- **云部署 cutover 步骤**(写进 §5.S.5 部署 runbook):
+  1. `alembic upgrade head` 跑在 prod PG
+  2. 切 DNS A/AAAA → prod IP
+  3. Caddy `tls` 自动签证
+  4. LinoI 客户端发新版,启动首屏让用户改 BACKEND_URL 到新域名
+  5. 老 SQLite `lino_writing.db` 留本机不删,作 rollback 资产
+
+**范围控制**(明确**不**在 v0.8 内):
+
+🚫 永久 out of scope(作者自用项目,不进任何路线图):
+- ❌ **多租户 / 多用户**(JWT、user_id 列、tenant scoping)— 单用户静态 Bearer 永远够用;§5.T.4 的 AuthContext plumbing **已撤销**,保持当前 `require_bearer_token` 简洁
+- ❌ **TestFlight / Apple Developer Program 付费版** — 免费 Dev 账号 + Xcode→device 直装 + 每周 re-sign,详 §5.R.9
+
+⏳ 推 v0.9+(看后续优先级):
+- ❌ Web 客户端(浏览器写作 UI)
+- ❌ 付费墙 / billing / 计量(无意义,自用)
+- ❌ Anthropic 原生 API 适配(OpenRouter 路径已够)
+- ❌ Android 客户端
+- ❌ 离线模式(iOS 无网时本地缓存写作)
+- ❌ 章节实时协作(WebSocket)
 
 ---
 
@@ -940,6 +1028,486 @@ v0.7 最后一笔 commit(发版同步那一笔),与 5 处版本号一起做。
 
 ---
 
+### 5.R iOS 三档响应式 + 触控适配 🎯 **v0.8 主菜**
+
+#### 5.R.1 动机
+
+v0.7 iOS 处于"编译过 / UI 是 stub"状态:
+- `WorkspaceView.iOSLayout` 只有 editor + 右上角按钮弹一个 sheet 显示 RightPanel,**没有章节侧栏**,作者切章节要回到根视图
+- 没有 `NavigationSplitView`,iPad 上的 split-view 优势完全没用上
+- `FileSaver.swift` iOS 分支是 `// TODO` 级 stub(F 已知残留),无法真正保存
+- v0.6 K-1 的"响应式三档断点"是 macOS 专属(窗口宽度判定),iOS 完全不适用 — iPhone / iPad / iPad landscape 是 size class + orientation 联合判定
+- 多处 hover 微交互(BookCard / ChapterListView 行)在 iOS 上无意义,需要换 swipe / 长按
+- Keychain ACL 在 iOS 上没有"始终允许"勾选,行为与 macOS 不同 — 当前代码若有依赖弹框确认会卡
+
+v0.8 主菜:让 iPhone / iPad 都能跑出 macOS 同等质量的写作体验。
+
+#### 5.R.2 设计决策
+
+| 决策点 | 选择 |
+|---|---|
+| 三档断点 | **iPhone (compact width)** / **iPad portrait (regular width + portrait)** / **iPad landscape (regular width + landscape)** |
+| iPad layout | `NavigationSplitView(sidebar=ChapterListView, detail=EditorView, inspector=RightPanelView)`,iPad portrait 默认折 inspector,landscape 默认展 |
+| iPhone layout | `NavigationStack`,根视图 = EditorView,toolbar 两个按钮:左 = "章节" sheet(ChapterList),右 = "辅助" sheet(RightPanel) |
+| 触控 affordance | 长按代替 hover(BookCard / ChapterListView 显选项菜单);swipe-to-action(ChapterListView 行左滑显删除 / 右滑显导出) |
+| 工具栏 placement | iPhone 主要按钮 `.topBarTrailing` + 写作 primary CTA `.bottomBar`;iPad 全部 `.topBarTrailing` |
+| FileSaver | `UIDocumentPickerViewController` (export mode) 真正 await;via `UIViewControllerRepresentable` wrapper |
+| Keychain | iOS 无 ACL 弹框,直接 read/write 即可;Keychain wrapper 内 `kSecAttrAccessible = .afterFirstUnlockThisDeviceOnly`,不跨设备同步 |
+| 字体 | serif 设定保留;iOS 上 dynamic type 跟系统(`.font(.system(.body, design: serif ? .serif : .default))` 自动响应) |
+
+#### 5.R.3 NavigationSplitView 契约(iPad)
+
+```swift
+NavigationSplitView(columnVisibility: $columnVisibility) {
+    ChapterListView()                          // sidebar
+        .navigationSplitViewColumnWidth(min: 220, ideal: 280, max: 360)
+} content: {
+    EditorView()                               // detail
+} detail: {
+    RightPanelView()                           // inspector
+        .navigationSplitViewColumnWidth(min: 280, ideal: 320, max: 420)
+}
+.navigationSplitViewStyle(.balanced)
+```
+
+- `columnVisibility` 默认值:
+  - iPad portrait: `.doubleColumn`(sidebar + detail,inspector 折叠;toolbar 按钮可唤出)
+  - iPad landscape: `.all`(三栏全开)
+- 通过 `@Environment(\.horizontalSizeClass)` + `@Environment(\.verticalSizeClass)` 检测当前档位,onChange 更新 `columnVisibility`
+- 用户手动 toggle 后保留状态(同 macOS inspector 行为)
+
+#### 5.R.4 iPhone NavigationStack 契约
+
+```swift
+NavigationStack {
+    EditorView()
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button(action: { showChaptersSheet = true }) {
+                    Image(systemName: "list.bullet")
+                }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(action: { showRightPanelSheet = true }) {
+                    Image(systemName: "info.circle")
+                }
+            }
+        }
+}
+.sheet(isPresented: $showChaptersSheet) { ChapterListView() }
+.sheet(isPresented: $showRightPanelSheet) { RightPanelView() }
+```
+
+写作 primary CTA(展开提纲 / 写作 / finalize)放在 `.bottomBar`,大手指可达。
+
+#### 5.R.5 每个 `#if os(iOS)` 文件补齐清单
+
+| 文件 | 当前状态 | v0.8 要做 |
+|---|---|---|
+| `Platform/FileSaver.swift` | iOS 分支 `// TODO`,直接返回 nil | 改为 `UIDocumentPickerViewController(.export)` wrapper,真正 await user 选目录;返回选中的 URL |
+| `Views/Workspace/WorkspaceView.swift` `iOSLayout` | editor + 右上角 sheet | R-1 重写为 size-class-aware:iPhone NavigationStack,iPad NavigationSplitView |
+| `Views/Components/BookCardView.swift` | hover 抬升(macOS) | iOS 加 `.onLongPressGesture` 显选项菜单(打开 / 导出 / 删除);hover 分支 `#if os(macOS)` 包住 |
+| `Views/Workspace/Editor/ChapterListView.swift` | macOS `.contextMenu` 右键 | iOS 加 `.swipeActions(edge: .trailing)` 删除 / `.swipeActions(edge: .leading)` 导出 |
+| `Views/Workspace/Editor/TimelineTabView.swift` | macOS hover × 删除 | iOS 改长按弹 ActionSheet 选删除 / 编辑 |
+| `Views/Root/SettingsView.swift` | macOS 4-tab TabView | iOS 改 `Form` + `Section`(原生 iOS Settings 风格);macOS 保 TabView 不动 |
+| `Views/Components/ProviderKeyEditSheet.swift` | macOS sheet 380×500 | iOS 改 `NavigationStack` + `.presentationDetents([.large])`,Done / Cancel 在 navigationBar |
+| `Views/Workspace/Editor/RightPanelView.swift` | 当前 iOS 已经能渲染 | 配合 R-1 嵌进 NavigationSplitView inspector,sheet wrapper 改为 R-1 内 sheet 一致 wrap |
+
+#### 5.R.6 接口契约
+
+**不**新增 / 不修改后端 API。纯前端 R 阶段。
+
+新增 / 修改的 Swift 类型:
+
+```swift
+// Models/UI/PlatformLayout.swift (新)
+enum iOSLayoutMode {
+    case iPhone           // compact width
+    case iPadPortrait     // regular + portrait
+    case iPadLandscape    // regular + landscape
+}
+
+extension EnvironmentValues {
+    var iOSLayoutMode: iOSLayoutMode { ... }
+}
+```
+
+#### 5.R.7 风险与 open question
+
+- **iPad mini 多窗口(Split View)**:多任务时 iPad 也可能进入 compact width — R-2 必须按 size class 而不是 device idiom 判定,否则 iPad split-view 用户体验崩
+- **iOS 26+ 与 iOS 18 行为差异**:`.inspector` modifier 在 iOS 17+ 才有;`NavigationSplitView` iOS 16+。`project.yml` 当前 iOS deployment target = ?(open question:builder 启动 R-1 时先 grep `project.yml`,如低于 iOS 17 需要升)
+- **Keychain ACL**:iOS Keychain 没有 macOS 的"始终允许"弹框,但**首次 read 会在 lock screen 后触发解锁**;若用户 BACKEND_URL 改到云域名后立即触发 SSE,可能撞 keychain access denied。需在 `KeychainStore` 加 retry 一次的兜底
+- **iOS Simulator 不支持 keychain `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` 的某些边界条件**:R-4 测试要在真机抽 1 次
+
+#### 5.R.8 验收标准
+
+- iPhone 14 simulator:全流程(创建书 → 创建章 → 写作 → finalize → 导出)能跑通,无卡死,无 stub 提示
+- iPad Pro 11" portrait simulator:三栏 split-view 默认 double-column,toolbar 按钮唤出 inspector
+- iPad Pro 11" landscape simulator:三栏全开
+- 真机(作者本人 iPhone)抽 1 次:Keychain + UIDocumentPicker + SSE 跑通
+- XCTest 120 baseline 全过 + 新增 ≥ 20 个 iOS 路径测试
+- `xcodebuild -destination 'platform=iOS Simulator,name=iPhone 14'` build clean
+
+#### 5.R.9 自用直装工作流(免费 Apple Developer 账号)
+
+**2026-05-26 作者拍板**:此项目永久作者自用,免费 Apple Dev 账号 + Xcode → device 直装,不走 TestFlight(详 §5.V 已剔除)。
+
+**约束(免费账号特性)**:
+- Personal Team **签名证书 7 天有效**;第 8 天起 app 启动会被 iOS 拒(unable to verify app)
+- Apple ID 绑定设备数上限 **3 台**(iPhone / iPad / iPod touch 合计)
+- Bundle ID 任意,无需 Apple 注册(沿用 `com.lino.linowriting.LinoWriting`,与 macOS Keychain 连续性一致)
+- 不能上 TestFlight、不能上 App Store、不能邀别人测
+
+**周复用工作流**:
+1. iPhone / iPad 连 USB 或同 Wi-Fi(Xcode 15+ 支持 wireless debug)
+2. Xcode Project → Signing & Capabilities → Team 选作者 Personal Team
+3. `xcodegen generate` → 打开 `LinoWriting.xcodeproj` → 顶部 destination 选自己 iPhone → Product → Run
+4. app 安装到 device,有效期 7 天
+5. 第 8 天起 app 启动会失败 → 重复步骤 3(15 秒搞定)
+6. **Keychain 数据连续性**:7 天 re-sign 后 bundle ID + device 不变 → Keychain item 保留,不需要重新填 backend URL / token
+
+**`project.yml` 配置切换(R-3 阶段做)**:
+
+当前(ad-hoc,仅 macOS):
+```yaml
+CODE_SIGN_STYLE: Manual
+CODE_SIGNING_ALLOWED: NO
+CODE_SIGN_IDENTITY: ""
+```
+
+iOS 自用打开后(R-3):
+```yaml
+# macOS 配置仍 ad-hoc(本地 codesign --sign - 不需要 team)
+# iOS 配置走 Automatic + Personal Team
+CODE_SIGN_STYLE: Automatic
+CODE_SIGNING_ALLOWED: YES        # iOS 必须签
+DEVELOPMENT_TEAM: <作者 Personal Team ID>
+```
+
+**R-4 收尾时**:README 加一段"iOS 自用安装步骤"(给作者自己以后忘了对照用)。
+
+#### 5.R.10 风险与 open question(R.9 新增)
+
+- **iOS deployment target**:`project.yml` 当前 iOS deployment target = 17.0(`.inspector` 需 iOS 17+),作者 iPhone iOS 版本 ≥ 17 即兼容,< 17 则需降级 modifier 选项(open question:R-1 启动前 verify)
+- **`DEVELOPMENT_TEAM` 在 git 仓库**:Personal Team ID 不算 secret,但散在 `project.yml` 里会污染 git diff — 改 `xcconfig` 外置,或 `.env.local`(open question)
+- **7 天 re-sign 自动化**:Xcode 命令行 `xcodebuild -destination 'platform=iOS,id=<udid>'` build + install,可写脚本一键,但需 device UDID 配在脚本里。R-4 可选交付 `scripts/install-ios.sh`
+
+---
+
+### 5.S 后端 PostgreSQL 切换 + 容器化 🎯 **v0.8 必修**
+
+#### 5.S.1 动机
+
+v0.7 后端的现状:
+- `config.py` 默认 `database_url: sqlite+pysqlite:///./lino_writing.db`,**数据库文件在仓库根目录**,云上不能依赖
+- `.env.example` 已经写 `postgresql+psycopg`,SQLAlchemy + Alembic 已经 dual-dialect(`with_variant(postgresql.JSONB)`),Postgres 切换**数据层是 ready 的**
+- `Backend/Dockerfile`、`Backend/docker-compose.yml`、`Backend/deploy/docker-compose.prod.yml` 已存在(早期搭),但**从未真正部署过**,可能漂移
+- 没有 process manager(开发用 uvicorn 直接跑),prod 应当 gunicorn + uvicorn workers
+- 8 条 Alembic 迁移从未在 Postgres 上一次性 `upgrade head` 全跑过
+
+云上线前必须先把这些缝补齐。
+
+#### 5.S.2 设计决策
+
+| 决策点 | 选择 |
+|---|---|
+| dev 数据库 | dev `docker-compose.yml` 起 Postgres 16(默认 dev,不再 SQLite) |
+| 测试数据库 | pytest **CI 跑 Postgres**(通过 `pytest-postgresql` 或 docker-compose service);**本地快速测试**保留 SQLite(`DATABASE_URL=sqlite+pysqlite:///:memory:`) |
+| `config.py` 默认 | 改为 `postgresql+psycopg://lino:lino@localhost:5432/lino` — 让 dev 直觉一致;SQLite 仅在显式设 `DATABASE_URL` 时启用 |
+| 仓库根 `lino_writing.db` | gitignore + 文档警告 — 不删现有文件防 v0.7 用户回滚 |
+| process manager | `gunicorn -k uvicorn.workers.UvicornWorker -w 2 app.main:app`(SSE 每个 worker 独立,2 worker 够单用户) |
+| 镜像 | `python:3.11-slim` 多阶段构建(builder 装 deps 缓存 + runtime 拷代码)+ 非 root `appuser` + `HEALTHCHECK CMD curl -f http://localhost:8787/api/v1/health` |
+| 反向代理 | Caddy 2(已在 `deploy/`,沿用)— 自动 HTTPS,SSE buffer 关闭 |
+| 部署目标 | open question,详见 §5.S.4 |
+
+#### 5.S.3 Dockerfile / compose 改造
+
+**新 Dockerfile**(多阶段 + 非 root):
+
+```dockerfile
+FROM python:3.11-slim AS builder
+WORKDIR /build
+RUN pip install --no-cache-dir --upgrade pip uv
+COPY pyproject.toml uv.lock ./
+RUN uv pip install --system --no-cache .
+
+FROM python:3.11-slim AS runtime
+RUN useradd --create-home --uid 10001 appuser
+USER appuser
+WORKDIR /app
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=builder /usr/local/bin/alembic /usr/local/bin/uvicorn /usr/local/bin/gunicorn /usr/local/bin/
+COPY --chown=appuser:appuser . .
+EXPOSE 8787
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s CMD \
+  python -c "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8787/api/v1/health').status == 200 else 1)"
+CMD ["sh", "-c", "alembic upgrade head && gunicorn -k uvicorn.workers.UvicornWorker -w 2 -b 0.0.0.0:8787 --timeout-keep-alive 75 app.main:app"]
+```
+
+**`deploy/docker-compose.prod.yml`** 在已有基础上加:
+- backend `read_only: true` + tmpfs `/tmp`(防容器内部写文件)
+- backend `cap_drop: [ALL]`(只保留 net_bind 等必要 cap)
+- postgres `volumes: postgres_data:/var/lib/postgresql/data:Z`(SELinux 兼容)
+- 加 `restart: unless-stopped` 全员
+- Caddy `Caddyfile` 加:
+  ```
+  reverse_proxy backend:8787 {
+      flush_interval -1               # SSE 不 buffer
+      transport http {
+          read_timeout 90s            # 比 keep-alive 75s 略长
+      }
+  }
+  ```
+
+#### 5.S.4 部署目标候选评估(open question — 作者决策)
+
+| 候选 | 月成本(估) | SSE 延迟 | 持久卷(PG data) | 一键 rollback | 备注 |
+|---|---|---|---|---|---|
+| **Fly.io** | $5–15(machines + 1G volume) | 极低(global anycast) | volume 持久但单 region;PG 走 Fly Postgres add-on 或自建 | `fly releases rollback` 一键 | dev 友好,Dockerfile 直接 `fly deploy`;volume 备份要手动 |
+| **Render** | $7(Starter)+ $7(PG) ≈ $14 | 中(US/EU region) | managed PG,自动备份 | dashboard 一键 | 最省心,无 ops;但 SSE 在 free tier idle 时会被 cold start |
+| **Hetzner VPS** | €4.5(CX22) | 低(自选 region) | 完全自控(LVM/zfs) | 自己写 `docker-compose down && checkout && up` | 最便宜 + 最自由,但要自管 OS 安全更新 / 监控 / 备份脚本 |
+
+**评估维度**(留作者选):
+- **成本**:Hetzner < Fly.io ≈ Render
+- **SSE 延迟**:Fly.io < Hetzner < Render
+- **管理负担**:Render < Fly.io < Hetzner
+- **数据主权**:Hetzner > Fly.io > Render(EU data center 友好度)
+- **rollback 友好**:Render = Fly.io > Hetzner
+- **PG 备份方便度**:Render > Fly.io > Hetzner
+
+**Planner 推荐**:**Fly.io**(SSE 友好 + Dockerfile 直接复用 + 月成本可控)。但作者可基于"已有 Hetzner 账号 / 已有 Render 项目"等沉没成本改选。**S-3 启动前必须先定**,否则 secret manager 配置 / 域名 DNS / Caddyfile 等都不同。
+
+#### 5.S.5 部署 runbook(S-3 完成后落地)
+
+1. 注册域名(如 `lino-writing.app`)+ DNS A 记录 → 部署目标 IP
+2. 部署目标 secret 配置:`POSTGRES_PASSWORD` / `API_TOKEN` / `KEK_SECRET`(供 T-1) / `CORS_ORIGINS=https://lino-writing.app`
+3. `docker compose -f deploy/docker-compose.prod.yml up -d`
+4. Caddy 自动签 Let's Encrypt 证书
+5. `curl https://lino-writing.app/api/v1/health` → `{"status":"ok","version":"0.8.0"}`
+6. LinoI mac/iOS 客户端把 BACKEND_URL 改到 `https://lino-writing.app`,跑一次 write 端到端
+
+#### 5.S.6 接口契约变化
+
+**API 端点**:零变化(纯部署 / 数据层)。
+
+**env 变量新增**:
+- `KEK_SECRET`(T-1 用)
+- `CORS_ORIGINS`(T-2 用,收窄为 `https://lino-writing.app,linowriting://`)
+- `POSTGRES_PASSWORD`(prod compose 强制要求)
+- `DATABASE_URL`(prod 由 compose 注入,dev 由 `.env` 提供)
+
+**Alembic 迁移**:零新增(仅验证现有 8 条在 PG 上 `upgrade head` 干净;data migration 留 T-1)。
+
+**`config.py` 改动**:
+```python
+database_url: str = "postgresql+psycopg://lino:lino@localhost:5432/lino"
+# (was: "sqlite+pysqlite:///./lino_writing.db")
+```
+
+#### 5.S.7 风险与 open question
+
+- **uv.lock 与 Dockerfile builder 同步**:v0.7 引入 uv.lock,Dockerfile 已用 `pip install -e .` 但未走 uv 路径 — S-2 要切到 `uv pip install`
+- **gunicorn + SSE generator**:gunicorn worker 同步模式不能跑 async generator,**必须用 `uvicorn.workers.UvicornWorker`**(已在设计内,但 reviewer 必须 verify)
+- **PG JSONB vs SQLite JSON 差异**:已有 `with_variant`,但 query-side(如 `.contains()` / `->'key'`)若有 SQLite-only 写法会爆 — S-1 跑 pytest 抓
+- **alembic upgrade head 在 prod 自动跑 vs 手动跑**:Dockerfile CMD 里自动跑方便但风险高(一笔失败的迁移容器起不来);**建议手动:cutover 前 SSH 进容器 `alembic upgrade head`,确认后再 `up -d` backend**
+
+#### 5.S.8 验收标准
+
+- `docker compose up` (dev) 起 PG + backend,全 175 pytest 在 PG 上跑通,`-W error` 干净
+- `docker compose -f deploy/docker-compose.prod.yml up -d` (prod) 起 PG + backend + caddy,`https://<domain>/api/v1/health` 返回 200
+- LinoI macOS 客户端连云后端,完整 write 流(expand → write → finalize)跑通
+- prod Postgres `pg_dump` 备份脚本(沿用 `deploy/backup.sh`) cron 配置示例写进 README
+
+---
+
+### 5.T 安全硬化 🎯 **v0.8 必修**
+
+#### 5.T.1 动机
+
+本地单用户裸奔可以,云上裸奔出事。v0.7 的安全态势:
+- ProviderKey 明文存数据库(OpenAI / xAI / Anthropic 的钱包)
+- 无 rate limit(任何泄漏的 api_token 是无限刷 LLM 的肉鸡)
+- `cors_origins: str = Field(default="*")` 完全敞开
+- LLM 4xx body 已脱敏(v0.7 P-1 A),但**access log 还未脱敏**
+- `.env` 在仓库 / 本地文件系统;云上必须改 secret manager
+- 单租户静态 Bearer `api_token` v0.8 保留;**多租户永久 out of scope**(2026-05-26 作者拍板,§5.T.4)
+
+#### 5.T.2 设计决策
+
+| 决策点 | 选择 |
+|---|---|
+| ProviderKey 加密 | **Fernet (AES-128-CBC + HMAC-SHA256)**(`cryptography` 包,Python 标准)— `api_key` 列存 base64 ciphertext;KEK 从 `KEK_SECRET` 环境变量读 |
+| KEK 长度 | 32 字节 base64 url-safe(Fernet 标准) |
+| 老明文行迁移 | Alembic data migration:遍历 `provider_keys`,检测**不是** Fernet 格式(`gAAAAA` 开头)则视为明文,加密回写 |
+| Read-side dual | 读 row 时先尝试 Fernet decrypt;`InvalidToken` 则当明文返回(向后兼容,迁移完成后下个版本删 fallback) |
+| Rate limit | `slowapi` middleware(基于 `limits` 包);per-token + per-endpoint;write 系列(`/chapters/*/expand|write|import|finalize`)限 30/min;其它读端点 600/min |
+| HTTPS-only | Caddy 已自动 HTTPS;backend 加 HSTS header(`Strict-Transport-Security: max-age=31536000; includeSubDomains`) |
+| CORS | `CORS_ORIGINS` 从 `*` 收窄为 `https://<prod-domain>,linowriting://`(LinoI custom URL scheme 留 hook) |
+| Access log 脱敏 | uvicorn `access_log_handler` 自定义 filter,re-apply `_sanitize_error_body` 同款 regex(防 query string / body 含 sk-/Bearer) |
+| ~~Multi-tenant hook~~ | **已撤销**(2026-05-26):沿用现 `require_bearer_token`,不加 `AuthContext` plumbing。详 §5.T.4 |
+
+#### 5.T.3 接口契约变化
+
+**Alembic 迁移**:`202605270001_encrypt_provider_keys`(data-only,无 schema 变更):
+- upgrade:遍历所有 `provider_keys` 行,api_key 不是 Fernet 格式则加密 + 回写
+- downgrade:遍历所有 `provider_keys` 行,Fernet 格式则解密 + 回写明文
+
+**新 env 变量**:
+- `KEK_SECRET`(32-byte url-safe base64;启动时验证格式,无效 → fail-fast)
+
+**新 endpoint 行为**:
+- 所有 write 路径加 rate limit;超限返回 `429 Too Many Requests` + `Retry-After` header + `details.code = "rate_limited"`(中文 i18n 模板:"请求过于频繁,请稍候再试")
+
+**前端影响**:
+- ErrorMapping 加 429 处理,Toast 显中文 + 倒计时
+- 其它端点 / DTO 零变化
+
+#### 5.T.4 ~~multi-tenant hook~~ — **已撤销**(2026-05-26)
+
+作者拍板:此项目永久单用户自用,多租户**永远**不做。当前 `require_bearer_token` 静态 Bearer 是最简也是最终方案,不需要 `AuthContext` plumbing。
+
+理由:YAGNI — plumbing 本身有维护成本(每个 router endpoint 加 `Depends`),而开关永远不会被打开。如未来真要做多租户(极不可能),`require_bearer_token` → `get_current_auth(AuthContext)` 的重构是机械替换,完全等到那天再说。
+
+T-2 仍按原计划做 rate limit / HSTS / CORS 收窄 / access log 脱敏 — 这些**与租户数无关**,云上线必须项。
+
+#### 5.T.5 风险与 open question
+
+- **Fernet 还是 AES-GCM**:Fernet 简单但 IV 处理黑盒;AES-GCM 性能略好但要自己管 nonce。**Planner 选 Fernet**(简单 + Python 标准);如作者有性能要求(单 row 加密耗时 < 0.1ms,影响微乎其微),改 AES-GCM 也可
+- **KEK 轮换**:v0.8 不做 multi-key rotation(单 KEK)。轮换时需要先解密老 row 用旧 KEK 再加密新 KEK,留 v0.8.x
+- **rate limit 在 multi-worker 下**:gunicorn 2 worker 各自 in-memory limiter → per-worker 限制翻倍。**单用户场景影响小**;v0.9 多租户时换 Redis-backed limiter
+- **HSTS includeSubDomains**:确认作者域名是否会用 `dev.lino-writing.app` 等子域,若会则慎开 — open question
+
+#### 5.T.6 验收标准
+
+- pytest 新增 ≥ 15 个测试:
+  - Fernet round-trip(encrypt → store → read → decrypt 匹配)
+  - 老明文 row read fallback(模拟 pre-migration row)
+  - Alembic 迁移 idempotent(跑两次不重复加密)
+  - rate limit 命中 → 429 + Retry-After + 中文 message
+  - rate limit 未命中正常 200
+- `bandit -r app/` 安全静态检查 0 high severity
+- 启动时 `KEK_SECRET` 无效 → fail-fast(进程退出码 1)
+- prod cutover 后 `psql -c "SELECT api_key FROM provider_keys"` 全是 `gAAAAA...` ciphertext
+
+---
+
+### 5.U 客户端 → 云后端切换 🎯 **v0.8**
+
+#### 5.U.1 动机
+
+云后端 up 之后,客户端要能"开箱直连":
+- LinoI 首次启动时 BACKEND_URL 默认值是 `http://localhost:8787` — 云上线后这个默认对新用户毫无意义
+- iOS 真机连 `http://localhost:8787` 直接超时(没人在那监听);连 `http://` 任意地址会被 ATS 拒
+- SSE 在公网长连接(write 流可能跑 1-3 分钟)需要调 uvicorn keep-alive + Caddy buffer
+- 老用户 v0.7 macOS 的 Keychain 里已经有 `lino.localhost:8787.token` — 切到生产域名要不要清?
+
+#### 5.U.2 设计决策
+
+| 决策点 | 选择 |
+|---|---|
+| 默认 BACKEND_URL | `https://<prod-domain>`(由 S-3 选定后写死);保留 `Settings → Connection → BACKEND_URL` 输入框给作者改回 localhost 自测 |
+| Keychain key | 当前是 `lino.{host}.token`;切域名后**自动迁移**:启动时检测旧 `lino.localhost:8787.token` 是否存在,若存在 + 新 host token 不存在 → 不动老 row(保留作者本地继续用),只在新 host token 上提示作者填一次 |
+| SSE keep-alive | uvicorn `--timeout-keep-alive 75` + Caddy `flush_interval -1` + 客户端 URLSession `timeoutIntervalForRequest = 120, timeoutIntervalForResource = 600` |
+| iOS ATS | Info.plist `NSAppTransportSecurity` 不显式 disable;默认仅 HTTPS;不加 exception domains(强制 HTTPS) |
+| dev 自测 | 作者本地跑 backend(`http://localhost:8787`)走 ATS exception?**不加** — 用 iOS Simulator 本机调试时 Apple 允许 `http://localhost` 是默认允许的(ATS Network.framework 例外);真机不能用 http,需要走云后端或本地 backend + HTTPS(mkcert) |
+| macOS dev | 不受 ATS 限制(NSURLSession on macOS 默认 ATS 不强制),保留 localhost dev 流畅 |
+
+#### 5.U.3 Keychain 迁移决策
+
+**open question**:切到生产域名时,老 `lino.localhost:8787.token` 怎么办?
+
+**选 A(planner 推荐)**:**两不动,提示一次**
+- 不删旧 row(作者改回 localhost 还能用)
+- 不自动 migrate token 到新 host(token 在云上可能不同)
+- 启动时若新 host 无 token → SettingsView Connection tab 顶部红 banner "请填入云后端 API token"
+
+**选 B**:自动 migrate
+- 旧 token 直接复制到新 host key — 风险:作者云后端 token 未必和本地一样,导致一上来就 401
+
+**选 C**:清掉旧的
+- 反预期,作者本机 dev 时还要重填,体验差
+
+→ 落 A。
+
+#### 5.U.4 接口契约变化
+
+**前端代码改动**:
+- `Services/Settings.swift`(or `AppEnvironment`):`defaultBackendURL` 改为生产域名(S-3 后填)
+- `Stores/AppStore.swift` 启动时 token 检测逻辑加 banner trigger
+- `Services/SSEClient.swift`:URLSession config `timeoutIntervalForRequest = 120, timeoutIntervalForResource = 600`(若当前不是)
+- `App/project.yml` iOS Info.plist 不加 `NSAppTransportSecurity`(空对象 = 默认 HTTPS only)
+
+**后端代码改动**:
+- `main.py` uvicorn startup args 由 Dockerfile CMD 控制(`--timeout-keep-alive 75`)
+- `deploy/Caddyfile` 已在 §5.S.3 改
+
+#### 5.U.5 风险与 open question
+
+- **iOS Simulator localhost dev**:Apple 在某些 Xcode 版本下对 simulator localhost 也强制 ATS,需要在 R-4 启动前 verify;若撞墙,project.yml 加 dev-only Info.plist 变体豁免 `localhost`
+- **HTTPS cert pinning**:暂不做(用 Let's Encrypt 即可);v0.9+ 若需要可加 NSPinnedDomains
+- **SSE 在弱网下断流**:URLSession 自动 retry 不适用 SSE(会丢已收的 token)— 客户端需要"流断了 → 提示 + Stop 状态;不自动重连"(其实当前已是这行为,确认即可)
+
+#### 5.U.6 验收标准
+
+- iPhone 14 真机连 `https://<prod-domain>`:create book → expand → write(SSE 跑满 60+ 秒不断)→ finalize → export 全跑通
+- macOS 上 LinoI 设 BACKEND_URL = `http://localhost:8787` 仍可工作(dev backwards compat)
+- 401 token 错误时 Settings 顶部 banner 提示
+- iOS XCTest 加 1 个测试:启动时若 host 无 token,AppStore 触发 `pendingTokenSetupBanner = true`
+
+---
+
+### 5.V iOS Provisioning + TestFlight 上架 ⚫ **已剔除**
+
+> **2026-05-26 作者拍板:此项**永久**不做。** 作者自用项目 + 免费 Apple Developer 账号,Xcode → device 直装 + 7 天 re-sign 工作流即可,无任何邀测 / 上架需求。本节保留作历史决策记录,但 §4.4 Phase 表已删除 V,候选池 §3 已标 ⚫。日后真要做时再重新评估。详 §5.R.9。
+
+---
+
+#### 5.V.1 动机(也是 v0.8 范围 open question)
+
+当前 `project.yml` 设 `CODE_SIGNING_ALLOWED: NO`,ad-hoc 签名 — **能在自己设备本机自测,但**:
+- 不能上 TestFlight(Apple 必须真签)
+- 不能给别人邀测(provision profile 限制)
+- 不能上 App Store
+
+**v0.8 决策点**(留作者):
+- (a) **仅自用** → V 不做,v0.8 收尾时 R/S/T/U 完成即可发版,LinoI iOS 通过 Xcode → device 直接安装
+- (b) **邀请 1-3 个朋友 beta** → V 做,但只发 internal testers(无需 Apple Review,但需 Developer Program $99/yr)
+- (c) **公开 TestFlight** → V 做,需 Apple Review(2-3 天),正式 store 还需更长
+
+**Planner 推荐**:**先 (a)**,v0.8 内不做 V;R/S/T/U 完成 + 真机自测即可发 0.8.0;TestFlight 留 v0.8.x。理由:
+- Apple Developer Program 注册要时间(账号验证 1-7 天,国内开发者发票 / 银行卡审查更长)
+- TestFlight build 走 archive + upload + processing,首次配 1-2 天打磨
+- v0.8 主菜是 iOS + 云后端跑通,先让这两件事 ship,beta 用户分发独立推进
+
+#### 5.V.2 设计决策(若 V 入 v0.8)
+
+| 决策点 | 选择 |
+|---|---|
+| Apple Developer Program | $99/yr,个人 account(作者邮箱注册);企业账号($299/yr)不需要 |
+| Bundle ID | **生产 / dev 分开**:`com.lino.linowriting`(prod,App Store + TestFlight)/ `com.lino.linowriting.dev`(local dev) — 避免 dev sandbox 污染 prod TestFlight 用户数据 |
+| Code signing | `project.yml`:`CODE_SIGNING_ALLOWED: YES`,`CODE_SIGN_STYLE: Automatic`,`DEVELOPMENT_TEAM: <team ID>`,prod target 用 prod bundle ID |
+| Provisioning profile | Xcode 自动管(Automatic signing) |
+| TestFlight metadata | App name `LinoI`,short description "LLM-assisted novel writing",test instructions 简单写"先在 Settings 里填 LLM provider key 再写章节" |
+| Build 流程 | `xcodebuild archive` → `xcodebuild -exportArchive -exportOptionsPlist` → `xcrun altool --upload-app`(或 Xcode Organizer 上传) |
+
+#### 5.V.3 接口契约
+
+零后端契约变化。仅前端 `project.yml` + Apple developer portal 配置。
+
+#### 5.V.4 风险与 open question
+
+- **国内 Apple ID 注册周期**:作者 Apple ID 是否已经是 Developer? open question
+- **Bundle ID `com.lino.linowriting` 已被占用风险**:Apple 全球唯一性,需注册时检查;若被占用,换 `app.lino.linowriting` 或类似
+- **Keychain 数据迁移**:若 bundle ID 从 `com.lino.linowriting.LinoWriting`(v0.7 ad-hoc) 改为 `com.lino.linowriting`(v0.8 prod) **不一致 → keychain access group 不同 → 老 token 丢**。**决策**:沿用 `com.lino.linowriting.LinoWriting`(v0.6/v0.7 Q phase 已锁的),保 Keychain 连续性 — 但 prod TestFlight bundle ID 必须和 ad-hoc 一致才行,即 v0.6 锁的就是 prod bundle ID,这点 v0.7 Q phase log 已经记下
+
+#### 5.V.5 验收标准(若入)
+
+- TestFlight build processed + 至少 1 个 internal tester 安装并跑通 write 流
+- archive 流程文档化进 `App/README.md`
+- `xcodebuild archive -scheme LinoWriting -destination 'generic/platform=iOS'` 干净 + 上传成功
+
+---
+
 ## 6. 历史文档索引
 
 | 文件 | 用途 | 状态 |
@@ -1471,3 +2039,36 @@ v0.7 主线 13 个 Phase(L-1 / L-2 / L-3 / M-1 / M-2 / N / B-fld / C-tl / F / O 
 **LinoI.app 重新打包**(Q 同步动作):macOS arm64 Release build + ad-hoc `codesign --force --deep --sign -` + 部署 `~/Desktop/LinoI.app`,bundle 7.0 MB,signature 仍为 ad-hoc(单用户本机 keychain 信任,Gatekeeper 拒绝但 LinoI 自用场景不需要)。版本号 LinoI.app 内 `CFBundleShortVersionString=0.7`、`CFBundleExecutable=LinoI`、`CFBundleIdentifier=com.lino.linowriting.LinoWriting`(沿用以保 Keychain 连续性)。
 
 **v0.7 已知残留 todo**(详见 §1.3):各 phase reviewer 留下的 🔵 非阻塞建议,全部留 v0.7.x 或 v0.8+ 视优先级处理。**当前可发版试运营**。
+
+### [2026-05-26] v0.8 plan 锁定(本文档版本 v0.8-draft)
+
+v0.8 目标:**iOS + 云后端**双形态升级,用户原话"我准备做 iOS + 把后端搬到云上;这也是 v0.8 的目标"。候选池新增 5 项 R/S/T/U/V,详案落 §5.R–§5.V,Phase 排序 + 依赖 + 范围控制落 §4.4。
+
+**初版关键决策**(planner):
+- **部署目标**:留 open question,planner 给三候选(Fly.io / Render / Hetzner VPS)+ 6 维评估表,**推荐 Fly.io**(SSE 友好 + Dockerfile 复用 + 月成本 $5–15);作者最终决策。
+- **iOS 范围**:三档响应式(iPhone compact / iPad portrait / iPad landscape)+ NavigationSplitView (iPad) + NavigationStack (iPhone) + 8 个 `#if os(iOS)` stub 文件全部补到 production + 至少 20 个新 XCTest;**真机验收必须等 S-3 上线**(物理依赖)。
+- **必修包**:S(PG + 容器化)+ T(ProviderKey 加密 + rate limit + HTTPS)— **云上线物理前置**,跳过任一项 = 钱包 / token 公网裸奔。
+
+### [2026-05-26] v0.8 plan lock-in(作者拍板收口)
+
+作者答 planner 两 open question,锁死 v0.8 范围:
+
+1. **TestFlight (V) 永久不做** — 作者自用 + 免费 Apple Developer 账号,Xcode → device 直装 + 7 天 re-sign 工作流即可。
+   - §3 候选池:V 状态 🎯 → ⚫ 已剔除
+   - §4.4 清单:🟢 扩展组整段删除(V 是唯一项)
+   - §4.4 Phase 排序表:**13 → 12 个 Phase**(删 V 行,Z 顺位移上)
+   - §4.4 关键约束:V 项改"已剔除"理由
+   - §4.4 范围控制:V 进永久 out 段
+   - §5.V:顶部加 ⚫ 戳记 + 撤销说明,详案正文保留作历史
+   - §5.R 新增 §5.R.9 自用直装工作流(Personal Team 7 天证书 / Xcode→device / `project.yml` Automatic + Team ID 切换 / Keychain 数据连续性) + §5.R.10 风险段
+
+2. **多租户永久不做** — 作者自用项目,单 token Bearer 永远够用。
+   - §5.T.4 multi-tenant `AuthContext` plumbing **撤销**:不加 `Depends(get_current_auth)`,沿用现 `require_bearer_token`,YAGNI
+   - §4.4 范围控制:多租户从"推 v0.9+"移到"永久 out of scope"
+   - §3 候选池:剔除项段加"多租户 / 多用户"
+
+**剩余 open question**(等作者后续拍):
+- **部署目标具体选谁**:planner 仍推 Fly.io,作者已问"哪个云",等明确锁定
+- **iOS deployment target**:`project.yml` 当前 iOS 17.0,作者 iPhone 版本是否 ≥ 17 待 verify
+
+锁后 v0.8 = **12 个 Phase**(S-1/T-1/T-2/S-2/S-3/R-1/R-2/R-3/R-4/U-1/U-2/Z),S 与 R 大部分并行,真机验收处汇合。
