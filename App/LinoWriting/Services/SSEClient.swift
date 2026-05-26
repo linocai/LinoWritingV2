@@ -104,8 +104,24 @@ public final class SSEParser {
 
 /// Streaming client that opens an SSE connection and yields `SSEEvent`s.
 public final class SSEClient: @unchecked Sendable {
-    public init(session: URLSession = .shared) {
-        self.session = session
+    /// Build a URLSession tuned for SSE long-lived writes against the cloud backend.
+    /// v0.8 Phase U-2 (§5.U.2):
+    ///   - `timeoutIntervalForRequest = 120`  — upper bound on gap between chunks / first byte.
+    ///     公网长链路 + Nginx `proxy_read_timeout 120s` 对齐(§5.S.3)。
+    ///   - `timeoutIntervalForResource = 600` — upper bound on total stream duration.
+    ///     Writer 一章通常 1-3 分钟,留 10 分钟余量防 outlier 章节。
+    /// 注：SSE 弱网断流时,URLSession 不会自动重试(会丢已收 token);客户端处理是
+    /// "进入 .failed(upstream, retryable: true) 状态,用户决定重新生成",见
+    /// `ChapterEditorStore.startWriting` / `refreshAfterIncompleteStream`(§5.U.5)。
+    public static func makeDefaultSession() -> URLSession {
+        let cfg = URLSessionConfiguration.default
+        cfg.timeoutIntervalForRequest = 120
+        cfg.timeoutIntervalForResource = 600
+        return URLSession(configuration: cfg)
+    }
+
+    public init(session: URLSession? = nil) {
+        self.session = session ?? SSEClient.makeDefaultSession()
     }
 
     private let session: URLSession

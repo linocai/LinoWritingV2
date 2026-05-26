@@ -193,9 +193,12 @@ public final class ChapterEditorStore: ObservableObject {
                     await self.refreshAfterIncompleteStream(onDone: onDone)
                 }
             } catch let error as AppError {
+                // v0.8 Phase U-2 (§5.U.5): SSE 弱网断流不自动重连(会丢已收 token);
+                // 落到 .failed 状态由 toolbar 让用户主动决定重新生成 / 取消。
                 self.writingState = .failed(error)
                 if error != .cancelled { self.errorBus.publish(error) }
             } catch {
+                // v0.8 Phase U-2 (§5.U.5): 同上,transport 层断开 = 提示 + Stop 状态,不重连。
                 let mapped = AppError.transport(error.localizedDescription)
                 self.writingState = .failed(mapped)
                 self.errorBus.publish(mapped)

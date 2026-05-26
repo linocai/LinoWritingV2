@@ -84,7 +84,11 @@ public final class APIClient: APIClientProtocol, @unchecked Sendable {
 
     public init(session: URLSession = .shared, config: @escaping ConfigProvider) {
         self.session = session
-        self.sseClient = SSEClient(session: session)
+        // v0.8 Phase U-2 (§5.U.2): SSE 走自己的 timeout-tuned URLSession
+        // (timeoutIntervalForRequest = 120s / forResource = 600s),不复用
+        // 常规 REST 用的 short-timeout `.shared` session。
+        // Tests 可通过 `SSEClient(session:)` 直接注入 mock session 旁路。
+        self.sseClient = SSEClient()
         self.configProvider = config
     }
 
