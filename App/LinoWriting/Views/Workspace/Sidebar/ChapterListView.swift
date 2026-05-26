@@ -36,13 +36,8 @@ public struct ChapterListView: View {
     private var list: some View {
         List(selection: $chaptersStore.selectedChapterId) {
             ForEach(chaptersStore.sorted) { chapter in
-                row(chapter: chapter)
+                rowWithAffordances(chapter: chapter)
                     .tag(Optional(chapter.id))
-                    .contextMenu {
-                        Button(role: .destructive) {
-                            pendingDeleteId = chapter.id
-                        } label: { Text("删除") }
-                    }
             }
         }
         .listStyle(.sidebar)
@@ -58,6 +53,31 @@ public struct ChapterListView: View {
         } message: { _ in
             Text("章节及其正文、结构化提示、关联事件都会删除。")
         }
+    }
+
+    /// v0.8 §5.R.5 — platform affordance wrapper around `row(...)`.
+    /// macOS keeps the right-click context menu; iOS picks up a trailing
+    /// swipe-to-delete (destructive, full-swipe disabled so the user
+    /// can't blow a chapter away by accident).
+    @ViewBuilder
+    private func rowWithAffordances(chapter: ChapterSummary) -> some View {
+        #if os(macOS)
+        row(chapter: chapter)
+            .contextMenu {
+                Button(role: .destructive) {
+                    pendingDeleteId = chapter.id
+                } label: { Text("删除") }
+            }
+        #else
+        row(chapter: chapter)
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                Button(role: .destructive) {
+                    pendingDeleteId = chapter.id
+                } label: {
+                    Label("删除", systemImage: "trash")
+                }
+            }
+        #endif
     }
 
     private func row(chapter: ChapterSummary) -> some View {

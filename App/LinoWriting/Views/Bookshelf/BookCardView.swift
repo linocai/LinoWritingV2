@@ -13,6 +13,13 @@ public struct BookCardView: View {
     /// any store means cards on other rows are unaffected.
     @State private var isExporting: Bool = false
 
+    /// v0.8 §5.R.5 — long-press on iOS surfaces an action sheet (export
+    /// is the only safe action for now; deletion lives on the Bookshelf
+    /// row, not the card). State is gated behind `#if os(iOS)` indirectly
+    /// — on macOS this Bool is just dead state, harmless to keep
+    /// declared so the body type is identical across platforms.
+    @State private var showActionSheet: Bool = false
+
     /// Injected via ``AppEnvironment`` so the export button can call
     /// ``APIClient.exportBook`` without going through a store
     /// (export has no shared model state — it's a download).
@@ -66,6 +73,32 @@ public struct BookCardView: View {
             }
         }
         #endif
+        #if os(iOS)
+        // v0.8 §5.R.5 — long-press (≥ 0.5s) replaces hover on touch.
+        // 0.5s matches Apple's default for `UILongPressGestureRecognizer`
+        // and avoids competing with the row tap that opens the book
+        // (decided by R-3 builder: shorter feels like a misfire, longer
+        // feels sluggish). Opens an ActionSheet with the same affordance
+        // the macOS hover button surfaces — "export" — plus a cancel.
+        .onLongPressGesture(minimumDuration: 0.5) {
+            showActionSheet = true
+        }
+        .confirmationDialog(
+            book.title,
+            isPresented: $showActionSheet,
+            titleVisibility: .visible
+        ) {
+            Button {
+                guard !isExporting else { return }
+                runExport()
+            } label: {
+                Text("导出为 Markdown")
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("仅包含已完成章节")
+        }
+        #endif
     }
 
     /// v0.7 §5.F — hover-only "export" pill in the top-right corner of
@@ -74,8 +107,15 @@ public struct BookCardView: View {
     /// click takes the user straight to the save panel. Power users
     /// who want TXT or include_drafts can do it via the future
     /// Settings → Export Preferences (out of scope for v0.7).
+    ///
+    /// v0.8 §5.R.5: on iOS the hover model doesn't apply — we surface
+    /// export through the long-press ActionSheet instead — so this
+    /// hover button is gated to macOS. Also keep the spinner overlay on
+    /// iOS when an export is in flight so the user sees feedback while
+    /// the picker is being prepared.
     @ViewBuilder
     private var exportButton: some View {
+        #if os(macOS)
         if isHovered {
             Button {
                 guard !isExporting else { return }
@@ -99,6 +139,19 @@ public struct BookCardView: View {
             .padding(8)
             .help("导出本书为 Markdown（仅含已完成章节）")
         }
+        #else
+        // iOS: only show a spinner overlay while an export started by
+        // the long-press ActionSheet is in flight. No tap target — the
+        // gesture lives on the whole card.
+        if isExporting {
+            ProgressView()
+                .controlSize(.small)
+                .progressViewStyle(.circular)
+                .frame(width: 28, height: 28)
+                .background(.regularMaterial, in: Circle())
+                .padding(8)
+        }
+        #endif
     }
 
     private func runExport() {

@@ -30,6 +30,18 @@ public struct SettingsView: View {
     }
 
     public var body: some View {
+        #if os(macOS)
+        macOSBody
+        #else
+        iOSBody
+        #endif
+    }
+
+    #if os(macOS)
+    /// macOS body: the v0.7 segmented-Picker + four-pane tabs at fixed
+    /// 560×540. Unchanged from v0.7 — R-3 only adds the iOS branch.
+    @ViewBuilder
+    private var macOSBody: some View {
         Group {
             if isFirstRun {
                 // First-run: skip the tab chrome entirely. The user hasn't
@@ -70,6 +82,71 @@ public struct SettingsView: View {
             }
         }
     }
+    #endif
+
+    #if os(iOS)
+    /// v0.8 §5.R.5 — iOS settings adopt the native Settings.app vibe:
+    /// `NavigationStack` + `Form` with each tab as a row that pushes
+    /// onto a detail screen. First-run still skips the chrome and
+    /// presents the connection form directly so the user can finish
+    /// onboarding without a stop in a menu.
+    @ViewBuilder
+    private var iOSBody: some View {
+        if isFirstRun {
+            NavigationStack {
+                ConnectionSettingsView(isFirstRun: true)
+                    .navigationTitle("配置连接")
+                    .navigationBarTitleDisplayMode(.inline)
+            }
+        } else {
+            NavigationStack {
+                Form {
+                    Section("后端") {
+                        NavigationLink {
+                            ConnectionSettingsView(isFirstRun: false)
+                                .navigationTitle("连接")
+                                .navigationBarTitleDisplayMode(.inline)
+                        } label: {
+                            Label("连接", systemImage: "antenna.radiowaves.left.and.right")
+                        }
+                    }
+                    Section("模型") {
+                        NavigationLink {
+                            ProviderKeysSettingsView()
+                                .navigationTitle("LLM Providers")
+                                .navigationBarTitleDisplayMode(.inline)
+                        } label: {
+                            Label("LLM Providers", systemImage: "key")
+                        }
+                    }
+                    Section("诊断") {
+                        NavigationLink {
+                            ErrorLogSettingsView()
+                                .navigationTitle("最近错误")
+                                .navigationBarTitleDisplayMode(.inline)
+                        } label: {
+                            Label("最近错误", systemImage: "exclamationmark.triangle")
+                        }
+                        NavigationLink {
+                            AgentLogSettingsView()
+                                .navigationTitle("Agent 日志")
+                                .navigationBarTitleDisplayMode(.inline)
+                        } label: {
+                            Label("Agent 日志", systemImage: "scroll")
+                        }
+                    }
+                }
+                .navigationTitle("设置")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("完成") { dismiss() }
+                    }
+                }
+            }
+        }
+    }
+    #endif
 }
 
 // MARK: - Connection tab
@@ -120,14 +197,18 @@ private struct ConnectionSettingsView: View {
             }
 
             HStack {
+                #if os(macOS)
                 if !isFirstRun {
                     Button("取消") { dismiss() }
                         .keyboardShortcut(.cancelAction)
                 }
+                #endif
                 Spacer()
                 Button("保存", action: save)
                     .buttonStyle(.borderedProminent)
+                    #if os(macOS)
                     .keyboardShortcut(.defaultAction)
+                    #endif
                     .disabled(!canSave)
             }
         }

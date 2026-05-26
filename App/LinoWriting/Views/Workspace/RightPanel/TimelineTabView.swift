@@ -151,8 +151,14 @@ private struct TimelineEventRow: View {
     let onDelete: () -> Void
 
     /// macOS hover state for the right-side trash button. iOS routes the
-    /// delete affordance through `.swipeActions` instead (see modifier).
+    /// delete + edit affordances through a long-press ActionSheet
+    /// instead (see modifier at the bottom of `body`).
     @State private var isHovered: Bool = false
+
+    /// v0.8 §5.R.5 — iOS long-press surfaces an ActionSheet with delete /
+    /// edit. State is declared cross-platform so the body type stays
+    /// identical; only iOS reads it.
+    @State private var showActionSheet: Bool = false
 
     /// Local working copy of the event text while in edit mode. Reset on
     /// every enter-into-edit via the `.onChange(isEditing)` below so a
@@ -235,11 +241,26 @@ private struct TimelineEventRow: View {
         .onChange(of: isEditing) { _, editing in
             if editing { draft = event.eventText }
         }
-        #if !os(macOS)
-        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-            Button(role: .destructive, action: onDelete) {
-                Label("删除", systemImage: "trash")
+        #if os(iOS)
+        // v0.8 §5.R.5 — long-press (0.5s) opens an ActionSheet with the
+        // same two operations the macOS hover trash + double-tap-to-edit
+        // expose. Guarded by `!isEditing` so a long-press while the
+        // TextEditor is open doesn't fight the editor for the gesture.
+        .onLongPressGesture(minimumDuration: 0.5) {
+            guard !isEditing else { return }
+            showActionSheet = true
+        }
+        .confirmationDialog(
+            "时间线事件",
+            isPresented: $showActionSheet,
+            titleVisibility: .visible
+        ) {
+            Button("编辑事件") {
+                draft = event.eventText
+                onStartEdit()
             }
+            Button("删除事件", role: .destructive, action: onDelete)
+            Button("取消", role: .cancel) {}
         }
         #endif
     }

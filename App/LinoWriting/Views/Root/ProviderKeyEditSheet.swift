@@ -97,76 +97,23 @@ public struct ProviderKeyEditSheet: View {
     private var isEditing: Bool { existing != nil }
 
     public var body: some View {
+        #if os(macOS)
+        macOSBody
+        #else
+        iOSBody
+        #endif
+    }
+
+    #if os(macOS)
+    /// macOS v0.7 layout: 520-wide sheet, header + Form + footer row of
+    /// Cancel / Save buttons with keyboard shortcuts. Unchanged from
+    /// v0.7 — R-3 only adds the iOS branch.
+    @ViewBuilder
+    private var macOSBody: some View {
         VStack(spacing: 18) {
             header
-
-            Form {
-                Section {
-                    LabeledRow(label: "别名") {
-                        TextField("如「主 Grok」", text: $keyLabel)
-                            .textFieldStyle(.roundedBorder)
-                    }
-                    LabeledRow(label: "Provider") {
-                        Picker("", selection: $preset) {
-                            ForEach(Preset.allCases) { p in
-                                Text(p.displayName).tag(p)
-                            }
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.menu)
-                        .onChange(of: preset) { _, newValue in
-                            applyPresetDefaults(newValue)
-                        }
-                    }
-                }
-
-                Section("Endpoint") {
-                    LabeledRow(label: "Base URL") {
-                        TextField("https://...", text: $baseUrl)
-                            .textFieldStyle(.roundedBorder)
-                            #if os(iOS)
-                            .keyboardType(.URL)
-                            .autocapitalization(.none)
-                            #endif
-                            .onChange(of: baseUrl) { _, _ in baseUrlEdited = true }
-                    }
-                    LabeledRow(label: "Model") {
-                        TextField("grok-4", text: $modelName)
-                            .textFieldStyle(.roundedBorder)
-                            .onChange(of: modelName) { _, _ in modelNameEdited = true }
-                    }
-                    LabeledRow(label: "API Key") {
-                        SecureField(isEditing ? "留空保持不变" : "sk-…", text: $apiKey)
-                            .textFieldStyle(.roundedBorder)
-                    }
-                }
-
-                Section {
-                    LabeledRow(label: "用途") {
-                        Picker("", selection: $agentRole) {
-                            Text("通用(任何 Agent 都可用)").tag(Optional<AgentRole>.none)
-                            ForEach(AgentRole.allCases, id: \.self) { r in
-                                Text("\(r.displayName) 专用").tag(Optional(r))
-                            }
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.menu)
-                    }
-                    Text("绑定到某 Agent 后,该 key 只能激活到对应 slot;通用 key 可激活到任意 slot。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .formStyle(.grouped)
-
-            if let submitError {
-                Text(submitError)
-                    .foregroundStyle(.red)
-                    .font(.callout)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
+            formContent
+            submitErrorView
             HStack {
                 Button("取消") { dismiss() }
                     .keyboardShortcut(.cancelAction)
@@ -180,6 +127,115 @@ public struct ProviderKeyEditSheet: View {
         .padding(24)
         .frame(width: 520)
         .onAppear(perform: prefill)
+    }
+    #endif
+
+    #if os(iOS)
+    /// v0.8 §5.R.5 — iOS adapts the sheet to native Settings.app idiom:
+    /// `NavigationStack` chrome with Cancel / Save in `.topBarLeading` /
+    /// `.topBarTrailing`, body is `.large` detent so the user gets a
+    /// full sheet (form is dense). No fixed width — let the device
+    /// decide.
+    @ViewBuilder
+    private var iOSBody: some View {
+        NavigationStack {
+            VStack(spacing: 12) {
+                formContent
+                submitErrorView
+                    .padding(.horizontal, 16)
+            }
+            .navigationTitle(isEditing ? "编辑 Key" : "添加 LLM Key")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(isEditing ? "保存" : "添加") {
+                        Task { await submit() }
+                    }
+                    .disabled(!canSubmit || store.isMutating)
+                }
+            }
+            .onAppear(perform: prefill)
+        }
+        .presentationDetents([.large])
+    }
+    #endif
+
+    /// Form body shared between macOS / iOS. Field-level differences
+    /// (iOS URL keyboard) are already gated inside the rows below.
+    @ViewBuilder
+    private var formContent: some View {
+        Form {
+            Section {
+                LabeledRow(label: "别名") {
+                    TextField("如「主 Grok」", text: $keyLabel)
+                        .textFieldStyle(.roundedBorder)
+                }
+                LabeledRow(label: "Provider") {
+                    Picker("", selection: $preset) {
+                        ForEach(Preset.allCases) { p in
+                            Text(p.displayName).tag(p)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .onChange(of: preset) { _, newValue in
+                        applyPresetDefaults(newValue)
+                    }
+                }
+            }
+
+            Section("Endpoint") {
+                LabeledRow(label: "Base URL") {
+                    TextField("https://...", text: $baseUrl)
+                        .textFieldStyle(.roundedBorder)
+                        #if os(iOS)
+                        .keyboardType(.URL)
+                        .autocapitalization(.none)
+                        #endif
+                        .onChange(of: baseUrl) { _, _ in baseUrlEdited = true }
+                }
+                LabeledRow(label: "Model") {
+                    TextField("grok-4", text: $modelName)
+                        .textFieldStyle(.roundedBorder)
+                        .onChange(of: modelName) { _, _ in modelNameEdited = true }
+                }
+                LabeledRow(label: "API Key") {
+                    SecureField(isEditing ? "留空保持不变" : "sk-…", text: $apiKey)
+                        .textFieldStyle(.roundedBorder)
+                }
+            }
+
+            Section {
+                LabeledRow(label: "用途") {
+                    Picker("", selection: $agentRole) {
+                        Text("通用(任何 Agent 都可用)").tag(Optional<AgentRole>.none)
+                        ForEach(AgentRole.allCases, id: \.self) { r in
+                            Text("\(r.displayName) 专用").tag(Optional(r))
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                }
+                Text("绑定到某 Agent 后,该 key 只能激活到对应 slot;通用 key 可激活到任意 slot。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    @ViewBuilder
+    private var submitErrorView: some View {
+        if let submitError {
+            Text(submitError)
+                .foregroundStyle(.red)
+                .font(.callout)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     private var header: some View {
