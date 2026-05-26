@@ -18,6 +18,11 @@ dependencies = [
   "httpx>=0.27",
   "pydantic-settings>=2.4",
   "psycopg[binary]>=3.2",
+  # v0.8 T-2 (§5.T): per-token rate limiting. ``slowapi`` is a thin
+  # FastAPI/Starlette wrapper over the ``limits`` library; we use it as
+  # an in-memory bucket store only (HZ prod is a single uvicorn worker,
+  # §5.S.2, so no Redis backing is needed).
+  "slowapi>=0.1.9",
   "SQLAlchemy>=2.0",
   "uvicorn[standard]>=0.30",
 ]

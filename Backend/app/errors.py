@@ -42,6 +42,8 @@ _TEMPLATES: dict[tuple[str, str], str] = {
     # --- LLM upstream ---
     ("upstream", "llm_no_active_key"): "尚未配置可用的 LLM Key，请先到设置里添加并设为 active",
     ("upstream", "llm_generic"): "LLM 服务调用失败：{detail}",
+    # --- Rate limit (v0.8 T-2, §5.T) ---
+    ("rate_limited", "request_too_frequent"): "请求过于频繁，请稍候再试",
     # --- Extractor output validation (services/extractor_apply.py) ---
     ("upstream", "extractor_missing_summary"): "Extractor 输出缺少 summary 字段",
     ("upstream", "extractor_bad_timeline_events"): "Extractor 输出的 timeline_events 不是数组",
@@ -182,6 +184,26 @@ def i18n_upstream(
         render_message("upstream", key, **vars),
         retryable=retryable,
         details=details,
+    )
+
+
+def i18n_rate_limited(retry_after_seconds: int) -> AppError:
+    """v0.8 T-2 (§5.T): 429 envelope used by the rate-limit middleware.
+
+    ``details.code = "rate_limited"`` and ``details.retry_after_seconds``
+    let the iOS / macOS ErrorMapping layer render a Toast + countdown
+    without parsing the Chinese message. The HTTP-level ``Retry-After``
+    header is set separately on the response by the middleware.
+    """
+    return AppError(
+        "rate_limited",
+        render_message("rate_limited", "request_too_frequent"),
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        retryable=True,
+        details={
+            "code": "rate_limited",
+            "retry_after_seconds": int(retry_after_seconds),
+        },
     )
 
 

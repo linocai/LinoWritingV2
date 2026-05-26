@@ -38,6 +38,7 @@ from app.llm.base import (
     get_writer_llm_client,
 )
 from app.main import app
+from app.middleware.rate_limit import reset_limiter
 from app import models  # noqa: F401
 
 
@@ -145,6 +146,13 @@ def db_session(session_factory: sessionmaker[Session]) -> Iterator[Session]:
 
 @pytest.fixture()
 def client(session_factory: sessionmaker[Session]) -> Iterator[TestClient]:
+    # v0.8 T-2 (§5.T): rate-limit counters live in-process. Clearing them
+    # at the start of every ``client`` fixture means each test starts
+    # with a fresh budget — otherwise the global Bearer token "test-token-value"
+    # would accumulate hits across the whole suite and the 31st write in
+    # *any* test could trip the limit unrelated to the test's intent.
+    reset_limiter()
+
     def override_db() -> Iterator[Session]:
         with session_factory() as session:
             yield session

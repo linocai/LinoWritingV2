@@ -10,7 +10,6 @@ auth token, and the model string passed in the payload.
 from __future__ import annotations
 
 import json
-import re
 import time
 from collections.abc import Iterator
 from threading import Event
@@ -21,26 +20,11 @@ import httpx
 from app.llm.errors import LLMError
 from app.models.provider_key import ProviderKey
 from app.services.encryption import decrypt_api_key
+from app.services.secret_redaction import redact_secrets
 
 # Maximum characters of an upstream 4xx response body to surface in error
 # messages / agent_log rows. Anything longer is truncated. See §5.P.1 A.
 UPSTREAM_BODY_LIMIT = 256
-
-# Regex patterns that look like credentials / bearer tokens. Anything matched
-# gets replaced with ``***`` before the body is embedded in an LLMError. We
-# intentionally keep this list short and high-signal: false positives are
-# cheap (a "***" instead of opaque text in an error message), false negatives
-# leak keys into agent_log preview rows that the frontend later renders.
-_REDACTION_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"Bearer\s+\S+", re.IGNORECASE),
-    re.compile(r"Authorization\s*:\s*\S+", re.IGNORECASE),
-    re.compile(r"sk-[A-Za-z0-9_\-]{8,}"),       # OpenAI default
-    re.compile(r"sk-ant-[A-Za-z0-9_\-]{8,}"),   # Anthropic native
-    re.compile(r"sk-or-[A-Za-z0-9_\-]{8,}"),    # OpenRouter
-    re.compile(r"sk_live_[A-Za-z0-9_\-]{8,}"),  # OpenAI restricted
-    re.compile(r"xai-[A-Za-z0-9_\-]{8,}"),      # xAI / Grok
-    re.compile(r"AIza[A-Za-z0-9_\-]{8,}"),      # Google (Gemini OpenAI-compat)
-)
 
 
 def _sanitize_error_body(body: str) -> str:
@@ -50,13 +34,15 @@ def _sanitize_error_body(body: str) -> str:
     final ``***`` substitution might land in the cut-off region and leak a
     half-key. After redaction every secret-looking blob is replaced so the
     truncated tail is safe.
+
+    v0.8 T-2 (§5.T): regex list lives in
+    :mod:`app.services.secret_redaction` so the uvicorn access-log filter
+    can share the same set without copy-pasting patterns that would drift.
     """
 
     if not body:
         return ""
-    redacted = body
-    for pattern in _REDACTION_PATTERNS:
-        redacted = pattern.sub("***", redacted)
+    redacted = redact_secrets(body)
     if len(redacted) > UPSTREAM_BODY_LIMIT:
         redacted = redacted[:UPSTREAM_BODY_LIMIT] + "...(truncated)"
     return redacted
