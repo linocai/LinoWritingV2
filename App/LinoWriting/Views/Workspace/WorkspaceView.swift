@@ -184,39 +184,167 @@ public struct WorkspaceView: View {
     #endif
 
     // MARK: iOS adaptive
+    //
+    // R-1 (v0.8) — rewrote ``iOSLayout`` from the v0.7 stub (editor + single
+    // sheet for the right panel, no chapter sidebar at all) into the contract
+    // defined in PROJECT_PLAN §5.R.3 / §5.R.4:
+    //   - iPad  → ``NavigationSplitView`` with ChapterList sidebar, editor
+    //              content, and RightPanel as the third (inspector) column.
+    //   - iPhone → ``NavigationStack`` rooted at the editor, with two sheets
+    //              (chapter list + right panel) reachable from the toolbar.
+    //
+    // R-1 detects iPad vs iPhone via ``UIDevice.current.userInterfaceIdiom``;
+    // R-2 will swap that for ``@Environment(\.horizontalSizeClass)`` so iPad
+    // multitasking (Split View / Slide Over) at compact width falls back to
+    // the iPhone layout. See ``iOSLayout`` below — that's the single point of
+    // change for R-2.
 
     #if !os(macOS)
-    @State private var showingRightPanel: Bool = false
+    /// Inspector / sidebar visibility for the iPad ``NavigationSplitView``.
+    /// R-1 keeps this naive (``.all`` by default — three columns open on iPad
+    /// of any orientation); R-2 will drive this from size class +
+    /// vertical/horizontal class so iPad portrait can default to
+    /// ``.doubleColumn`` (sidebar + content) and reveal the inspector via the
+    /// toolbar.
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    @State private var showChaptersSheet: Bool = false
+    @State private var showRightPanelSheet: Bool = false
+
+    /// Dispatcher — picks iPad vs iPhone layout once and hoists the shared
+    /// ``onChange`` reactions here so we don't duplicate them on both
+    /// branches.
+    ///
+    /// 🔵 R-2 entry point: replace the ``UIDevice.current.userInterfaceIdiom``
+    /// check below with ``@Environment(\.horizontalSizeClass)`` (and
+    /// ``verticalSizeClass`` if portrait/landscape behaviour diverges) so iPad
+    /// Split View / Slide Over at compact width correctly falls back to the
+    /// iPhone layout. The two branch views (``iPadLayout`` / ``iPhoneLayout``)
+    /// should stay as-is — only the dispatch condition changes.
     private var iOSLayout: some View {
-        NavigationStack {
-            HStack(spacing: 0) {
-                editor
+        Group {
+            if UIDevice.current.userInterfaceIdiom == .pad {
+                iPadLayout
+            } else {
+                iPhoneLayout
             }
-            .navigationTitle(book.title)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button { leaveWorkspace() } label: {
-                        Label("书架", systemImage: "chevron.left")
-                    }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { showingRightPanel = true } label: {
-                        Image(systemName: "rectangle.righthalf.inset.filled")
-                    }
-                }
-            }
-            .sheet(isPresented: $showingRightPanel) {
-                RightPanelView(tab: $rightPanelTab).padding()
-            }
-            .toolbarRole(.editor)
-            .toolbarBackground(.automatic, for: .navigationBar)
         }
         .onChange(of: chaptersStore.selectedChapterId) { _, newId in
             if let id = newId { Task { await chapterEditorStore.load(chapterId: id) } }
         }
         .onChange(of: chapterEditorStore.chapter?.id) { _, _ in
             updateTimelineSelection()
+        }
+    }
+
+    // MARK: iPad — NavigationSplitView (sidebar / content / inspector)
+
+    private var iPadLayout: some View {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            ChapterListView()
+                .navigationSplitViewColumnWidth(min: 220, ideal: 280, max: 360)
+        } content: {
+            ChapterEditorView()
+        } detail: {
+            RightPanelView(tab: $rightPanelTab)
+                .navigationSplitViewColumnWidth(min: 280, ideal: 320, max: 420)
+        }
+        .navigationSplitViewStyle(.balanced)
+        .navigationTitle(book.title)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    leaveWorkspace()
+                } label: {
+                    Label("书架", systemImage: "chevron.left")
+                }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    toggleInspectorColumn()
+                } label: {
+                    Label("辅助面板", systemImage: "rectangle.righthalf.inset.filled")
+                }
+            }
+        }
+        .toolbarRole(.editor)
+        .toolbarBackground(.automatic, for: .navigationBar)
+    }
+
+    /// Cycles the third (inspector) column on iPad without disturbing the
+    /// sidebar. Mirrors the macOS inspector-toggle behaviour.
+    private func toggleInspectorColumn() {
+        switch columnVisibility {
+        case .all:
+            columnVisibility = .doubleColumn
+        default:
+            columnVisibility = .all
+        }
+    }
+
+    // MARK: iPhone — NavigationStack + two sheets
+
+    private var iPhoneLayout: some View {
+        NavigationStack {
+            ChapterEditorView()
+                .navigationTitle(book.title)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button {
+                            leaveWorkspace()
+                        } label: {
+                            Label("书架", systemImage: "chevron.left")
+                        }
+                    }
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button {
+                            showChaptersSheet = true
+                        } label: {
+                            Label("章节", systemImage: "list.bullet")
+                        }
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            showRightPanelSheet = true
+                        } label: {
+                            Label("辅助面板", systemImage: "rectangle.righthalf.inset.filled")
+                        }
+                    }
+                }
+                .toolbarRole(.editor)
+                .toolbarBackground(.automatic, for: .navigationBar)
+        }
+        .sheet(isPresented: $showChaptersSheet) {
+            NavigationStack {
+                ChapterListView()
+                    .navigationTitle("章节")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("完成") { showChaptersSheet = false }
+                        }
+                    }
+            }
+            .presentationDetents([.large])
+            // Auto-dismiss the chapter picker once the user selects a chapter.
+            // Mirrors the macOS narrow-width sheet behaviour.
+            .onChange(of: chaptersStore.selectedChapterId) { _, _ in
+                showChaptersSheet = false
+            }
+        }
+        .sheet(isPresented: $showRightPanelSheet) {
+            NavigationStack {
+                RightPanelView(tab: $rightPanelTab)
+                    .navigationTitle("辅助面板")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("完成") { showRightPanelSheet = false }
+                        }
+                    }
+            }
+            .presentationDetents([.large])
         }
     }
     #endif
