@@ -38,6 +38,21 @@ public enum EditorFontDesign: String, Codable, CaseIterable, Sendable {
 public final class Settings: @unchecked Sendable {
     public static let shared = Settings()
 
+    /// v0.8 §5.U.2: production default backend URL. S-3 brought
+    /// `https://lw.linotsai.top` online; this string is the open-the-box
+    /// default that LinoI shows on a fresh install. Author can override
+    /// via Settings → Connection (e.g. back to `http://localhost:8787`
+    /// for dev) and the override persists in Keychain.
+    public static let defaultBackendURLString: String = "https://lw.linotsai.top"
+
+    /// v0.8 §5.U.2 DNS sanity check: when the production hostname above
+    /// resolves to anything other than this IP we surface a hijack banner
+    /// (router / WARP / VPN intercepting DNS). HZ origin IP per
+    /// `Backend/deploy/hz_info.md`. Kept as a small array so future
+    /// migrations (multi-IP, IPv6) can be added without code changes
+    /// to the probe call sites.
+    public static let trustedBackendIPs: [String] = ["118.178.122.194"]
+
     private let defaults: UserDefaults
     private let lastBookKey = "last_opened_book_id"
     private let sidebarWidthKey = "sidebar_width"

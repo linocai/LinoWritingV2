@@ -1,4 +1,7 @@
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 
 /// App settings.
 ///
@@ -165,54 +168,69 @@ private struct ConnectionSettingsView: View {
     @State private var error: String?
 
     var body: some View {
-        VStack(spacing: 18) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("配置后端连接")
-                    .font(.title2.weight(.semibold))
-                Text("请填入后端服务地址与访问 Token。两项都保存在本机 Keychain。")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            VStack(alignment: .leading, spacing: 12) {
-                fieldRow(
-                    label: "API Base URL",
-                    placeholder: "http://localhost:8787",
-                    text: $baseURLString
-                )
-                fieldRow(
-                    label: "API Token",
-                    placeholder: "•••••••••",
-                    text: $token,
-                    secure: true
-                )
-            }
-
-            if let error {
-                Text(error)
-                    .foregroundStyle(.red)
-                    .font(.callout)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-            HStack {
-                #if os(macOS)
-                if !isFirstRun {
-                    Button("取消") { dismiss() }
-                        .keyboardShortcut(.cancelAction)
+        ScrollView {
+            VStack(spacing: 18) {
+                if appStore.pendingTokenSetupBanner && !isFirstRun {
+                    TokenSetupBanner()
                 }
-                #endif
-                Spacer()
-                Button("保存", action: save)
-                    .buttonStyle(.borderedProminent)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("配置后端连接")
+                        .font(.title2.weight(.semibold))
+                    Text("请填入后端服务地址与访问 Token。两项都保存在本机 Keychain。")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                VStack(alignment: .leading, spacing: 12) {
+                    fieldRow(
+                        label: "API Base URL",
+                        placeholder: Settings.defaultBackendURLString,
+                        text: $baseURLString
+                    )
+                    fieldRow(
+                        label: "API Token",
+                        placeholder: "•••••••••",
+                        text: $token,
+                        secure: true
+                    )
+                }
+
+                if let error {
+                    Text(error)
+                        .foregroundStyle(.red)
+                        .font(.callout)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                HStack {
                     #if os(macOS)
-                    .keyboardShortcut(.defaultAction)
+                    if !isFirstRun {
+                        Button("取消") { dismiss() }
+                            .keyboardShortcut(.cancelAction)
+                    }
                     #endif
-                    .disabled(!canSave)
+                    Spacer()
+                    Button("保存", action: save)
+                        .buttonStyle(.borderedProminent)
+                        #if os(macOS)
+                        .keyboardShortcut(.defaultAction)
+                        #endif
+                        .disabled(!canSave)
+                }
+
+                #if os(macOS)
+                // v0.8 §5.U.2 macOS-only network self-test. iOS users
+                // typically can't edit /etc/hosts and don't share the
+                // author's WARP / router DNS hijack scenario, so the
+                // section is hidden on iOS.
+                NetworkSelfTestSection(currentURLString: baseURLString)
+                    .padding(.top, 8)
+                #endif
             }
+            .padding(28)
         }
-        .padding(28)
         .onAppear(perform: loadExisting)
     }
 
@@ -1037,3 +1055,307 @@ private struct AgentLogRow: View {
         }
     }
 }
+
+// MARK: - v0.8 §5.U.2 Token-setup banner
+
+/// Red banner at the top of the Connection tab. Displayed when
+/// `AppStore.pendingTokenSetupBanner == true`, i.e. the current `baseURL`'s
+/// host has no token in Keychain yet. Disappears the moment the author
+/// fills in the field and hits 保存 (`AppStore.saveCredentials` flips the
+/// flag back to `false`).
+private struct TokenSetupBanner: View {
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(Color.red)
+                .font(.body)
+                .padding(.top, 1)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("请填入云后端 API token")
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(.primary)
+                Text("LinoI 默认连接 \(Settings.defaultBackendURLString)。该后端在本机 Keychain 还没有对应 token，所有请求会因 401 被拒。请在下方填好 token 并保存。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.red.opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(Color.red.opacity(0.35), lineWidth: 1)
+        )
+    }
+}
+
+#if os(macOS)
+// MARK: - v0.8 §5.U.2 Network self-test (macOS only)
+
+/// "网络自检" sub-section inside the Connection tab. Two buttons:
+///
+///   - **检测 DNS** — resolves the hostname inside `currentURLString` via
+///     `NetworkProbe.resolve(host:)`. Surfaces a red WARP-hijack warning
+///     plus a one-click copy of the `/etc/hosts` override command when
+///     the resolved IP isn't in `Settings.trustedBackendIPs`.
+///
+///   - **测试连接** — hits `<URL>/api/v1/health` via
+///     `NetworkProbe.probeHealth(baseURL:)`. Mostly a sanity check that
+///     TLS + the reverse proxy are alive; `401` from the auth middleware
+///     is still considered "backend up".
+///
+/// iOS hides this whole section because:
+///   1. iOS real devices don't ship `/etc/hosts` and `sudo` is meaningless
+///   2. Cellular / corporate Wi-Fi don't usually carry the home-router
+///      hijack signature the author runs into on macOS.
+private struct NetworkSelfTestSection: View {
+
+    let currentURLString: String
+
+    @State private var dnsResult: NetworkProbe.DNSResult?
+    @State private var healthResult: NetworkProbe.HealthResult?
+    @State private var isResolvingDNS: Bool = false
+    @State private var isProbingHealth: Bool = false
+    @State private var copyConfirmation: String?
+
+    /// The exact one-liner the author should run in Terminal to override
+    /// DNS for the production hostname. Adds an `/etc/hosts` row, flushes
+    /// the DirectoryService cache, then HUPs `mDNSResponder` so the new
+    /// row takes effect immediately rather than after the next reboot.
+    private var hostsFixCommand: String {
+        let host = parsedHost ?? "lw.linotsai.top"
+        let ip = Settings.trustedBackendIPs.first ?? "118.178.122.194"
+        return "echo '\(ip)  \(host)' | sudo tee -a /etc/hosts && sudo dscacheutil -flushcache && sudo killall -HUP mDNSResponder"
+    }
+
+    private var parsedHost: String? {
+        URL(string: currentURLString.trimmingCharacters(in: .whitespaces))?.host
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "stethoscope")
+                Text("网络自检")
+                    .font(.callout.weight(.semibold))
+            }
+            Text("把上面填的 URL 解析到的 IP 和 HZ 实际 IP 对比；如果不一致，本机的 DNS 大概率被路由器或 WARP 截胡了。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 10) {
+                Button {
+                    Task { await runDNS() }
+                } label: {
+                    if isResolvingDNS {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Label("检测 DNS", systemImage: "globe")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .disabled(isResolvingDNS || parsedHost == nil)
+
+                Button {
+                    Task { await runHealth() }
+                } label: {
+                    if isProbingHealth {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Label("测试连接", systemImage: "bolt.horizontal")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .disabled(isProbingHealth || parsedHost == nil)
+            }
+
+            if let dns = dnsResult {
+                dnsResultBlock(dns)
+            }
+            if let h = healthResult {
+                healthResultBlock(h)
+            }
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.gray.opacity(0.06))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+        )
+    }
+
+    @ViewBuilder
+    private func dnsResultBlock(_ dns: NetworkProbe.DNSResult) -> some View {
+        if let err = dns.resolveError {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "xmark.octagon.fill").foregroundStyle(.orange)
+                Text("无法解析 hostname：\(err)")
+                    .font(.caption)
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        } else if dns.isTrusted {
+            HStack(spacing: 8) {
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                Text("DNS 解析正确  ·  \(dns.addresses.joined(separator: ", "))")
+                    .font(.caption)
+                    .foregroundStyle(.primary)
+            }
+        } else {
+            hijackWarning(resolvedAddresses: dns.addresses)
+        }
+    }
+
+    @ViewBuilder
+    private func hijackWarning(resolvedAddresses: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red)
+                    .padding(.top, 1)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("DNS 被劫持")
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(.red)
+                    Text("\(parsedHost ?? "hostname") 被本机解析到 \(resolvedAddresses.joined(separator: ", "))，不是 HZ 的 \(Settings.trustedBackendIPs.joined(separator: ", "))。通常是路由器、WARP 或某些『翻墙工具』全局接管 DNS 导致。")
+                        .font(.caption)
+                        .foregroundStyle(.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("修复（一行命令永久 override，跟 WARP 无关）：")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 4)
+                }
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                Text(hostsFixCommand)
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                    .padding(8)
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color.primary.opacity(0.06))
+            )
+
+            HStack {
+                Button {
+                    copyToClipboard(hostsFixCommand)
+                } label: {
+                    Label("复制命令", systemImage: "doc.on.doc")
+                }
+                .buttonStyle(.bordered)
+                if let confirmation = copyConfirmation {
+                    Text(confirmation)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .transition(.opacity)
+                }
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.red.opacity(0.06))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(Color.red.opacity(0.3), lineWidth: 1)
+        )
+    }
+
+    private struct HealthSummary {
+        let icon: String
+        let color: Color
+        let label: String
+    }
+
+    private static func summarise(_ h: NetworkProbe.HealthResult) -> HealthSummary {
+        guard let code = h.statusCode else {
+            return HealthSummary(icon: "questionmark.circle", color: .secondary, label: "")
+        }
+        switch code {
+        case 200..<300:
+            return HealthSummary(icon: "checkmark.circle.fill", color: .green,
+                                 label: "HTTP \(code)  ·  \(h.elapsedMS) ms  ·  后端正常")
+        case 401:
+            return HealthSummary(icon: "lock.shield", color: .blue,
+                                 label: "HTTP 401  ·  \(h.elapsedMS) ms  ·  后端通了，但 token 未通过 — token 还没填时这是预期")
+        default:
+            return HealthSummary(icon: "exclamationmark.triangle", color: .orange,
+                                 label: "HTTP \(code)  ·  \(h.elapsedMS) ms")
+        }
+    }
+
+    @ViewBuilder
+    private func healthResultBlock(_ h: NetworkProbe.HealthResult) -> some View {
+        if let err = h.transportError {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "xmark.octagon.fill").foregroundStyle(.orange)
+                Text("连接失败：\(err)  ·  \(h.elapsedMS) ms")
+                    .font(.caption)
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        } else if h.statusCode != nil {
+            let s = Self.summarise(h)
+            HStack(spacing: 8) {
+                Image(systemName: s.icon).foregroundStyle(s.color)
+                Text(s.label)
+                    .font(.caption)
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    // MARK: - Actions
+
+    private func runDNS() async {
+        guard let host = parsedHost, !host.isEmpty else { return }
+        isResolvingDNS = true
+        let result = await NetworkProbe.resolve(host: host)
+        dnsResult = result
+        isResolvingDNS = false
+    }
+
+    private func runHealth() async {
+        guard let url = URL(string: currentURLString.trimmingCharacters(in: .whitespaces)) else { return }
+        isProbingHealth = true
+        let result = await NetworkProbe.probeHealth(baseURL: url)
+        healthResult = result
+        isProbingHealth = false
+    }
+
+    /// Cross-platform pasteboard set. The whole section is wrapped in
+    /// `#if os(macOS)` so we only need NSPasteboard here, but the
+    /// helper stays small enough that an iOS port (if ever needed) is
+    /// a one-line `#else` away.
+    private func copyToClipboard(_ string: String) {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(string, forType: .string)
+        withAnimation(.easeInOut(duration: 0.15)) {
+            copyConfirmation = "已复制"
+        }
+        Task {
+            try? await Task.sleep(nanoseconds: 1_800_000_000)
+            await MainActor.run {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    copyConfirmation = nil
+                }
+            }
+        }
+    }
+}
+#endif
