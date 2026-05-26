@@ -1,0 +1,42 @@
+[Unit]
+Description=Lino Writing v2 backend (FastAPI)
+Documentation=https://github.com/linocai/LinoWritingV2
+After=network-online.target postgresql@16-main.service
+Wants=network-online.target
+Requires=postgresql@16-main.service
+
+[Service]
+Type=simple
+User=linowriting
+Group=linowriting
+WorkingDirectory=/opt/linowriting
+EnvironmentFile=/opt/linowriting/.env
+ExecStart=/opt/linowriting/.venv/bin/uvicorn app.main:app \
+    --host 127.0.0.1 --port 8787 \
+    --timeout-keep-alive 75 \
+    --log-level info
+Restart=on-failure
+RestartSec=3
+TimeoutStartSec=30
+TimeoutStopSec=20
+
+# Hardening — same posture as linofinance-api / 100j-api neighbors
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ReadWritePaths=/opt/linowriting
+
+# Logging — journald (邻居约定)
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=linowriting-api
+
+[Install]
+WantedBy=multi-user.target
