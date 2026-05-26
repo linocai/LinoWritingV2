@@ -34,11 +34,19 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False
 
 @event.listens_for(Engine, "connect")
 def set_sqlite_pragma(dbapi_connection, connection_record) -> None:  # type: ignore[no-untyped-def]
+    # v0.8 S-1: gate by dialect. Running ``PRAGMA foreign_keys=ON`` on a
+    # Postgres connection silently fails (caught by the bare ``except`` that
+    # used to live here), but the failed statement leaves the implicit
+    # Postgres transaction in 'aborted' state, blocking every subsequent
+    # statement on the same connection until ROLLBACK. Alembic startup
+    # discovered this when it tried ``SELECT pg_catalog.version()`` next.
+    # Detect SQLite by the dbapi module name (sqlite3 / pysqlite) — both
+    # land under the ``sqlite3`` module.
+    if not type(dbapi_connection).__module__.startswith("sqlite3"):
+        return
     cursor = dbapi_connection.cursor()
     try:
         cursor.execute("PRAGMA foreign_keys=ON")
-    except Exception:
-        pass
     finally:
         cursor.close()
 

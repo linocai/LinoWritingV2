@@ -13,6 +13,7 @@ Covers the contract from §5.M:
 """
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import pytest
@@ -140,6 +141,14 @@ def test_build_llm_client_without_agent_role_matches_v06_behavior(
     assert client.api_key == "sk-GENERIC-3333"
 
 
+@pytest.mark.skipif(
+    "postgresql" in os.environ.get("DATABASE_URL", ""),
+    reason=(
+        "SQLite-only PRAGMA foreign_keys toggle; on Postgres FK enforcement "
+        "is always on and can't be relaxed mid-transaction. The factory's "
+        "fallback path is dialect-agnostic, so SQLite coverage is enough."
+    ),
+)
 def test_load_active_provider_key_for_agent_stale_fk_falls_back(
     db_session: Session,
 ) -> None:

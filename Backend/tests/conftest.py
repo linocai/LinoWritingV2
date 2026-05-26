@@ -11,7 +11,11 @@ from sqlalchemy.orm import Session, sessionmaker
 
 TEST_TOKEN = "test-token-value"
 os.environ.setdefault("API_TOKEN", TEST_TOKEN)
+# v0.8 S-1: tests honour an externally-set DATABASE_URL (e.g. when running
+# against a local Postgres container to catch dialect-only bugs before HZ
+# cutover). Default stays SQLite in-memory for the fast dev cycle.
 os.environ.setdefault("DATABASE_URL", "sqlite+pysqlite://")
+TEST_DATABASE_URL = os.environ["DATABASE_URL"]
 
 from app.config import Settings, get_settings
 from app.db import Base, get_db, make_engine
@@ -107,7 +111,11 @@ def clear_all_llm_overrides() -> None:
 
 @pytest.fixture()
 def session_factory() -> Iterator[sessionmaker[Session]]:
-    engine = make_engine("sqlite+pysqlite://")
+    # v0.8 S-1: same engine URL the conftest reads at import time. When the
+    # operator sets `DATABASE_URL=postgresql+psycopg://...` before invoking
+    # pytest, every per-test schema is created/dropped on the live PG instance,
+    # which is exactly the dialect verification we want before HZ cutover.
+    engine = make_engine(TEST_DATABASE_URL)
     Base.metadata.create_all(bind=engine)
     factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False, future=True)
     try:
@@ -132,7 +140,7 @@ def client(session_factory: sessionmaker[Session]) -> Iterator[TestClient]:
     app.dependency_overrides[get_db] = override_db
     app.dependency_overrides[get_settings] = lambda: Settings(
         api_token=TEST_TOKEN,
-        database_url="sqlite+pysqlite://",
+        database_url=TEST_DATABASE_URL,
     )
     # v0.6+: get_llm_client is a DB-driven dependency; tests stub it directly
     # so we never need a real ProviderKey row for the happy path.
