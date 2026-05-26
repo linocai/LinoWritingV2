@@ -2,6 +2,8 @@
 
 SwiftUI 实现的 Mac/iOS 双平台原生 App，对接 `PLAN_FRONTEND.md` 描述的后端 API。
 
+> **iOS 自用安装：** 见 `README_iOS.md`（v0.8 §5.R.9：免费 Apple Developer 账号 + Xcode 直装 + 7 天 re-sign 工作流）。
+
 ## 环境
 
 - Xcode 16+ / 26.x

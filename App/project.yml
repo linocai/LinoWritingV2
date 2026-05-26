@@ -64,3 +64,81 @@ targets:
         BUNDLE_LOADER: "$(TEST_HOST)"
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/LinoI.app/Contents/MacOS/LinoI"
         GENERATE_INFOPLIST_FILE: YES
+
+  # R-4 (v0.8) — iOS-only logic test bundle. Mirrors LinoWritingTests but
+  # runs inside an iOS Simulator so we can exercise:
+  #   * NavigationSplitView + size class transitions (R-1 / R-2)
+  #   * iOS sheet presentationDetents defaults (R-3)
+  #   * UIDocumentPicker bridge entry points (R-3 FileSaver)
+  #   * long-press / swipe affordance store contracts (R-3)
+  # Plus a re-verification of platform-neutral store logic (ErrorBus,
+  # ChapterEditorStore, ChapterSplitter) on the iOS runtime to catch
+  # iOS-only dialect bugs.
+  #
+  # Logic tests only (XCTest, not XCUITest) — no new SPM dependencies
+  # (§5.R.6 forbids ViewInspector / SnapshotTesting). Real SwiftUI view
+  # tree behaviour stays in the human Simulator pass per §5.R.8.
+  LinoWritingTestsIOS:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: LinoWritingTestsIOS
+      # Reuse the hand-rolled APIClientProtocol mock from the macOS bundle
+      # rather than maintaining a parallel copy. xcodegen will add the
+      # file to both targets' compile lists; the file itself is platform
+      # neutral (no AppKit / UIKit imports).
+      - path: LinoWritingTests/MockAPIClient.swift
+    dependencies:
+      - target: LinoWriting
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.lino.linowriting.LinoWritingTestsIOS
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/LinoI.app/LinoI"
+        GENERATE_INFOPLIST_FILE: YES
+        # Restrict to iphone* platforms only so a `-destination
+        # platform=macOS` invocation auto-skips building this test
+        # bundle. Without this Xcode tries to resolve TEST_HOST against
+        # the macOS slice of LinoI.app (which doesn't include the
+        # iphoneos PlugIns dir) and fails the whole build.
+        SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
+        SUPPORTS_MACCATALYST: NO
+
+# Schemes — explicit so the macOS test invocation doesn't drag the iOS
+# test bundle into its TestAction (which would fail the build because
+# TEST_HOST resolves to an iphoneos product). The Xcode auto-scheme tries
+# to include every test bundle; we override that with two named schemes.
+schemes:
+  # Default scheme — exposes the app + both test bundles for Xcode UI use
+  # (developer can pick destination + only-testing filter manually).
+  LinoWriting:
+    build:
+      targets:
+        LinoWriting: all
+        LinoWritingTests: [test]
+        LinoWritingTestsIOS: [test]
+    test:
+      targets:
+        - LinoWritingTests
+        - LinoWritingTestsIOS
+  # macOS-only scheme for CLI `xcodebuild test`. Drops the iOS test
+  # bundle so a `-destination platform=macOS` invocation doesn't try to
+  # build it against the macOS slice.
+  LinoWriting-macOS:
+    build:
+      targets:
+        LinoWriting: all
+        LinoWritingTests: [test]
+    test:
+      targets:
+        - LinoWritingTests
+  # iOS-only scheme for CLI `xcodebuild test -destination 'platform=iOS
+  # Simulator,...'`. Mirrors the macOS one in shape.
+  LinoWriting-iOS:
+    build:
+      targets:
+        LinoWriting: all
+        LinoWritingTestsIOS: [test]
+    test:
+      targets:
+        - LinoWritingTestsIOS
