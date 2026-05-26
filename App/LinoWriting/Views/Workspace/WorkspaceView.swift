@@ -193,37 +193,40 @@ public struct WorkspaceView: View {
     //   - iPhone → ``NavigationStack`` rooted at the editor, with two sheets
     //              (chapter list + right panel) reachable from the toolbar.
     //
-    // R-1 detects iPad vs iPhone via ``UIDevice.current.userInterfaceIdiom``;
-    // R-2 will swap that for ``@Environment(\.horizontalSizeClass)`` so iPad
-    // multitasking (Split View / Slide Over) at compact width falls back to
-    // the iPhone layout. See ``iOSLayout`` below — that's the single point of
-    // change for R-2.
+    // R-2 (v0.8) — replaced the R-1 ``UIDevice.current.userInterfaceIdiom``
+    // dispatch with ``@Environment(\.horizontalSizeClass)`` (per §5.R.7) so
+    // iPad multitasking (Split View / Slide Over) at compact width correctly
+    // falls back to the iPhone layout. Added a ``GeometryReader``-driven
+    // portrait/landscape detection (width vs height aspect) so iPad portrait
+    // defaults to ``.doubleColumn`` (sidebar + detail, inspector folded) and
+    // iPad landscape defaults to ``.all`` (three columns open). The two
+    // branch views (``iPadLayout`` / ``iPhoneLayout``) themselves are
+    // unchanged from R-1 — only the dispatch + initial ``columnVisibility``
+    // change here.
 
     #if !os(macOS)
     /// Inspector / sidebar visibility for the iPad ``NavigationSplitView``.
-    /// R-1 keeps this naive (``.all`` by default — three columns open on iPad
-    /// of any orientation); R-2 will drive this from size class +
-    /// vertical/horizontal class so iPad portrait can default to
-    /// ``.doubleColumn`` (sidebar + content) and reveal the inspector via the
-    /// toolbar.
-    @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    /// Initialised to ``.doubleColumn`` (the more common portrait default);
+    /// the ``GeometryReader`` in ``iPadLayoutWithOrientation`` flips this to
+    /// ``.all`` on first appear when the device is in landscape.
+    @State private var columnVisibility: NavigationSplitViewVisibility = .doubleColumn
     @State private var showChaptersSheet: Bool = false
     @State private var showRightPanelSheet: Bool = false
+
+    /// R-2 — size-class-driven dispatch. ``horizontalSizeClass == .regular``
+    /// indicates iPad (full-screen or 2/3 Split View width); ``.compact``
+    /// covers iPhone *and* iPad mini / iPad Slide Over / iPad 1/2 Split View
+    /// — all of which deliberately fall back to the iPhone NavigationStack
+    /// layout per §5.R.7.
+    @Environment(\.horizontalSizeClass) private var hSizeClass
 
     /// Dispatcher — picks iPad vs iPhone layout once and hoists the shared
     /// ``onChange`` reactions here so we don't duplicate them on both
     /// branches.
-    ///
-    /// 🔵 R-2 entry point: replace the ``UIDevice.current.userInterfaceIdiom``
-    /// check below with ``@Environment(\.horizontalSizeClass)`` (and
-    /// ``verticalSizeClass`` if portrait/landscape behaviour diverges) so iPad
-    /// Split View / Slide Over at compact width correctly falls back to the
-    /// iPhone layout. The two branch views (``iPadLayout`` / ``iPhoneLayout``)
-    /// should stay as-is — only the dispatch condition changes.
     private var iOSLayout: some View {
         Group {
-            if UIDevice.current.userInterfaceIdiom == .pad {
-                iPadLayout
+            if hSizeClass == .regular {
+                iPadLayoutWithOrientation
             } else {
                 iPhoneLayout
             }
@@ -237,6 +240,37 @@ public struct WorkspaceView: View {
     }
 
     // MARK: iPad — NavigationSplitView (sidebar / content / inspector)
+
+    /// Wraps ``iPadLayout`` in a ``GeometryReader`` so the initial
+    /// ``columnVisibility`` follows the actual device orientation. On iPad
+    /// the ``verticalSizeClass`` is ``.regular`` in both portrait and
+    /// landscape, so size class alone cannot distinguish orientation —
+    /// width-vs-height aspect from GeometryReader is the reliable signal
+    /// (and also reacts to Split View width changes, not just rotation).
+    ///
+    /// 🔵 R-2 simplification: any width-vs-height threshold crossing
+    /// (rotation, Split View resize) overwrites the user's manual inspector
+    /// toggle from ``toggleInspectorColumn()``. §5.R.3 calls for preserving
+    /// the user's manual toggle "same as macOS inspector behaviour"; a
+    /// follow-up phase can introduce a state machine that freezes the
+    /// auto-response once the user has toggled within a single orientation.
+    private var iPadLayoutWithOrientation: some View {
+        GeometryReader { proxy in
+            iPadLayout
+                .onAppear {
+                    let isLandscape = proxy.size.width > proxy.size.height
+                    columnVisibility = isLandscape ? .all : .doubleColumn
+                }
+                .onChange(of: proxy.size) { _, newSize in
+                    let isLandscape = newSize.width > newSize.height
+                    let target: NavigationSplitViewVisibility =
+                        isLandscape ? .all : .doubleColumn
+                    if columnVisibility != target {
+                        columnVisibility = target
+                    }
+                }
+        }
+    }
 
     private var iPadLayout: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
