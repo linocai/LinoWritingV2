@@ -3,7 +3,7 @@
 > 本文档是 v0.6 起的**单一项目行动依据**。前端、后端、契约层全部合并在此。
 > v0.1–v0.5 期间使用 `PLAN_FRONTEND.md` / `PLAN_BACKEND.md` 双契约工作流，作为 v0.5 契约存档保留，不再更新。
 >
-> 文档版本：v0.7（已发布）
+> 文档版本：v0.7.1（已发布）
 > 关联存档：`PLAN_FRONTEND.md`（v0.5 前端契约存档）、`PLAN_BACKEND.md`（v0.5 后端契约存档）
 
 ---
@@ -40,7 +40,19 @@
 
 ---
 
-## 1. 当前版本状态 (v0.7 — 已发布)
+## 1. 当前版本状态 (v0.7.1 — 已发布)
+
+### 1.0 v0.7.1 微调(在 v0.7 之上)
+
+- **辅助面板**改用 macOS 14+ 原生 `.inspector(isPresented:)` modifier:
+  - 不再是窄屏弹出 sheet,而是真正的右侧滑入栏,可拖动宽度
+  - 工具栏图标 `sidebar.right` → `rectangle.righthalf.inset.filled`(Pages/Numbers 同款 inspector 标准符号),与左侧 `sidebar.left` 视觉拉开
+  - 跟随窗口宽度自动隐藏/展开,跨阈值时切换,阈值内保留用户手动 toggle
+  - `threeColumnLayout` / `twoColumnLayout` / `rightPanelSheet` 三套并行代码合并为单一 `macOSLayout` [§4.3]
+- **角色卡删除 `voice`(说话方式)字段**:
+  - 前端 `frozenScalarFields` 移除 `voice` 行;后端 Writer prompt 与 context_pack 不再引用
+  - Alembic `202605260002_drop_character_frozen_voice` 清掉历史数据 `frozen_fields.voice`
+  - 该字段的存在反而引诱 Writer 把"口头禅「啧」"逐字搬到正文,与 §5.L 主菜目标冲突 [§4.3]
 
 ### 1.1 v0.7 新增能力(在 v0.6 基础上)
 
@@ -226,6 +238,40 @@ LinoWritingV2/
 - 后端 `Backend/pyproject.toml` + `Backend/app/main.py` + `Backend/app/routers/health.py` + `Backend/tests/test_auth.py` → `0.6.0`
 - 本文档 §7 变更日志加新条目
 - git commit 标 `v0.6: …`
+
+---
+
+### 4.3 v0.7.1 — ✅ 已发布
+
+**目标**:v0.7 发布后用户试用马上反馈两个体验问题,做最小 patch release。
+
+**清单**:
+```
+🪟 UI 收纸
+[x] 辅助面板改 macOS 14+ 原生 .inspector(isPresented:) — 真正的右侧滑入栏,
+    可拖宽度,工具栏图标换成 rectangle.righthalf.inset.filled(Pages/Numbers
+    标准 inspector 符号),三套并行布局代码(three/two column + sheet)合并
+    为单一 macOSLayout。跨 wideBreakpoint 自动 toggle,阈值内保留手动状态。
+
+📋 角色卡精简
+[x] 删除 frozen 区 voice("说话方式")字段 — 字段名直接邀请 Writer 把
+    "口头禅「啧」"原样塞进正文,与 §5.L 主菜"角色卡是水库不是水桶"反向。
+    前端 frozenScalarFields 删行 + 后端 writer.py / context_pack.py 去引用 +
+    Alembic 202605260002 scrub frozen_fields.voice + 测试 fixture 替换为
+    background。
+```
+
+**Phase 排序**(两条全独立):
+
+| 序号 | Phase | 内容 | 测试基线 |
+|---|---|---|---|
+| 1 | **A-voice** | 删 voice 字段 + 数据迁移 + writer prompt / context_pack 去引用 + 测试 fixture | pytest 175 ✅ |
+| 2 | **B-inspector** | macOS WorkspaceView 改 `.inspector` + 图标换 `rectangle.righthalf.inset.filled` + 合并 layout 分支 | XCTest 120 ✅ + macOS/iOS build clean |
+
+**实际 commit**:
+- `<this commit>` v0.7.1 inspector + drop voice field
+
+**发版同步**:5 处版本号 `0.7.0 → 0.7.1` + LinoI.app v0.7.1 重新打包(ad-hoc 签名)。
 
 ---
 
@@ -1382,6 +1428,39 @@ v0.7 最后一笔 commit(发版同步那一笔),与 5 处版本号一起做。
   5. 滚动到列表底部 → 自动触发下一页(`loadMore` cursor 跟着 `entries.last.createdAt`,无 offset 漂移);没有更多记录时显示 `— 已是最早的记录 —`。
   6. 右上角 `刷新` 按钮强制 reset + 拉第一页(用户怀疑后端刚写入未刷出时使用)。
   7. 错误路径:后端 401 或断网 → ErrorBus toast `登录已过期...` 或 `网络异常...`(N 的中文模板) → 同样会出现在 `最近错误` tab 里回看。
+
+### [2026-05-26] **v0.7.1 发布(inspector + drop voice)**
+
+v0.7 试运营即时反馈的两条最小 patch:
+
+1. **macOS 辅助面板**改用 macOS 14+ 原生 `.inspector(isPresented:)` modifier。
+   原来的实现:宽屏走 `threeColumnLayout`(NavigationSplitView 三栏 detail =
+   RightPanelView),窄屏走 `twoColumnLayout` + `rightPanelSheet`(中央弹窗
+   sheet)+ 工具栏 `sidebar.right` 切换。问题:① 窄屏 sheet 不是右栏视觉而是
+   中央弹窗,② 工具栏 `sidebar.right` 与左侧 `sidebar.left` 几乎一致难分辨,③
+   两套布局并行维护两份。改造后:单一 `macOSLayout` + 单一 `.inspector` 绑定
+   `showingInspector`,跨 `wideBreakpoint`(1100) 阈值时 `onChange(of:
+   autoShowInspector)` 自动 toggle、阈值内保留用户手动状态。工具栏图标统一
+   换为 `rectangle.righthalf.inset.filled`(Pages / Numbers 标准 inspector 符
+   号),`commonToolbar` 内 trailing primaryAction 单按钮 toggle。
+   `rightPanelSheet` 与 `threeColumnLayout`/`twoColumnLayout` 分支删除,
+   `onChange(of: showRightPanelInline)` 清理。iOS 分支保持 sheet 但图标同步
+   换图。`xcodebuild macOS Debug build` + `iOS Simulator build` + `xcodebuild
+   test`(120 XCTest)三路全绿。
+
+2. **`voice` / "说话方式" 字段从 frozen 区彻底删除**。理由:字段名本身就是
+   邀请 Writer 把 `"口头禅「啧」"` 原样塞到正文(用户反馈"角色卡的每个细节
+   都被写到正文里"的典型源头之一),与 §5.L 主菜"角色卡是水库,不是必须排
+   空的水桶"反向。改动覆盖 7 处:
+   - `CharacterCardEditorView.frozenScalarFields` 删行
+   - `agents/writer.py` system_prompt 字段名举例 `"voice"` → `"background"`
+   - `services/context_pack.py::_character_brief` one_line fallback `core_traits → background → appearance`(去掉 voice)
+   - `tests/test_chapters_flow.py` + `tests/test_chapter_import.py` fixture 把 `voice` 替换为 `background`
+   - `APIClientTests.swift` + `CharacterAuthorNotesCodecTests.swift` JSON fixture 同步
+   - Alembic 迁移 `202605260002_drop_character_frozen_voice.py`:Postgres `frozen_fields - 'voice'` / SQLite `json_remove(...,'$.voice')`,downgrade 留空(语义上无法恢复)。`alembic upgrade head` 在 dev DB 单步成功。
+
+**测试基线**:pytest 175 + XCTest 120 全绿,与 v0.7 持平(本版本未新增/删除测试用例)。
+**LinoI.app v0.7.1 重新打包**:macOS arm64 Release build + ad-hoc `codesign --force --deep --sign -` + 部署 `~/Desktop/LinoI.app`。`CFBundleShortVersionString=0.7.1`,bundle ID 保持 `com.lino.linowriting.LinoWriting`(Keychain 连续性)。
 
 ### [2026-05-25] **v0.7 发布(Phase Q 收尾)**
 

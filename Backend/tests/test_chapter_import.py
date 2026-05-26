@@ -22,7 +22,7 @@ def _seed_book_character(client, auth_headers) -> tuple[dict, dict]:
         json={
             "name": "林夕",
             "role": "主角",
-            "frozen_fields": {"core_traits": "谨慎、敏锐", "voice": "说话简短"},
+            "frozen_fields": {"core_traits": "谨慎、敏锐", "background": "退役的痕迹追踪员"},
             "live_fields": {"current_status": "调查失踪案"},
         },
     ).json()

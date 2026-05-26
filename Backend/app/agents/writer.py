@@ -23,7 +23,7 @@ characters[*] 的 frozen_fields 和 author_notes 是**幕后参考** —
         "他骂了一句脏话，声音很轻。然后把自己的水袋递了过去。"
 
 同一项 trait 在整章里**最多用一次**作为行动驱动，不要反复 narrate。
-不要把字段名（如 "core_traits"、"voice"）或字段内容**逐字搬到正文**。
+不要把字段名（如 "core_traits"、"background"）或字段内容**逐字搬到正文**。
 角色卡是水库，不是必须排空的水桶 — 不自然的 trait 就完全不用。
 
 # 本章重点

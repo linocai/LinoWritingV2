@@ -10,11 +10,18 @@ public struct CharacterCardEditorView: View {
     @State private var authorNotesExpanded: Bool = false
 
     /// Recommended frozen-area scalar fields (text), in display order.
+    ///
+    /// v0.7.1 — removed the ``voice`` ("说话方式") row. It was meaningless as a
+    /// frozen trait: an LLM asked to write in a character's voice already
+    /// extracts speech patterns from ``core_traits`` + dialogue context, while
+    /// a literal "口头禅「啧」" line invited the Writer to drop it verbatim
+    /// every chapter — the exact "narrate-the-card" anti-pattern §5.L set out
+    /// to kill. The corresponding Alembic migration scrubs any stale
+    /// ``frozen_fields["voice"]`` on existing rows.
     private let frozenScalarFields: [(key: String, label: String, multiline: Bool)] = [
         ("core_traits", "核心性格", true),
         ("appearance", "外貌", true),
-        ("background", "背景", true),
-        ("voice", "说话方式", true)
+        ("background", "背景", true)
     ]
 
     /// Recommended live-area scalar fields.

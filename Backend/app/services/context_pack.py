@@ -207,7 +207,16 @@ def _character_brief(character: Character) -> dict[str, Any]:
     pool the Expander should reason about.
     """
     frozen = character.frozen_fields or {}
-    one_line = frozen.get("core_traits") or frozen.get("background") or frozen.get("voice") or ""
+    # v0.7.1 — dropped ``voice`` from the fallback chain. The field was removed
+    # from the recommended frozen scalars; we keep ``core_traits`` → ``background``
+    # → ``appearance`` so legacy rows without core_traits still get a sensible
+    # one-liner without resurrecting the deleted key.
+    one_line = (
+        frozen.get("core_traits")
+        or frozen.get("background")
+        or frozen.get("appearance")
+        or ""
+    )
     return {
         "id": character.id,
         "name": character.name,

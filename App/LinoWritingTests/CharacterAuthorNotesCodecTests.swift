@@ -62,7 +62,7 @@ final class CharacterAuthorNotesCodecTests: XCTestCase {
           "book_id": "22222222-2222-2222-2222-222222222222",
           "name": "林夕",
           "role": "主角",
-          "frozen_fields": {"voice": "口头禅「啧」"},
+          "frozen_fields": {"background": "退役的猎人"},
           "live_fields": {"goals": ["找妹妹"]},
           "author_notes": {"motivation": "救妹妹"},
           "created_at": "2026-05-25T10:00:00Z",

@@ -14,9 +14,15 @@ public struct WorkspaceView: View {
 
     // Responsive breakpoints (see PROJECT_PLAN §5.K.3).
     //
-    // width >= wideBreakpoint            → three panes expanded
-    // mediumBreakpoint <= width < wide   → sidebar + editor; right panel as drawer
-    // width < mediumBreakpoint           → sidebar collapsed to menu sheet; right panel as drawer
+    // width >= wideBreakpoint            → sidebar + editor + inspector all visible
+    // mediumBreakpoint <= width < wide   → sidebar + editor; inspector auto-collapsed (user can toggle)
+    // width < mediumBreakpoint           → sidebar collapsed to menu sheet; inspector auto-collapsed
+    //
+    // v0.7.1 — replaced the previous "sheet drawer at narrow widths" approach
+    // with the native ``.inspector(isPresented:)`` modifier. The inspector
+    // attaches to the detail column as a real right-side pane (not a centred
+    // sheet popup), supports drag-to-resize, and persists user toggle state
+    // across width transitions until the responsive threshold flips.
     private static let wideBreakpoint: CGFloat = 1100
     private static let mediumBreakpoint: CGFloat = 800
 
@@ -35,75 +41,83 @@ public struct WorkspaceView: View {
     // MARK: macOS responsive layout
 
     #if os(macOS)
-    /// User-controlled sidebar visibility for the two-column layouts. Mirrors
-    /// the width-based default but lets the user collapse the sidebar manually
-    /// once it has been auto-expanded.
+    /// User-controlled sidebar visibility. Mirrors the width-based default but
+    /// lets the user collapse the sidebar manually once it has been auto-expanded.
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     /// Whether the user has manually opened the sidebar sheet at narrow widths.
     @State private var showingSidebarSheet: Bool = false
-    /// Whether the user has manually opened the right panel sheet at narrow widths.
-    @State private var showingRightPanelSheetMac: Bool = false
+    /// Inspector (右侧辅助面板) presentation. Bound to ``.inspector`` so the
+    /// SwiftUI runtime owns the open/close animation; toolbar button toggles
+    /// this directly, width-threshold transitions sync it via ``onChange``.
+    @State private var showingInspector: Bool = true
+    /// Caches the previous "should-inspector-be-shown-inline" boolean so we
+    /// only force-sync the inspector on actual threshold crossings, not on
+    /// every layout pass with the same resolution category.
+    @State private var lastAutoInspectorShown: Bool = true
 
     @ViewBuilder
     private func macOSLayout(width: CGFloat) -> some View {
         // K-1 follow-up (🟡 1): on the first frame `GeometryReader` may report
         // width == 0, which would briefly classify the layout as narrow and
-        // collapse the sidebar. Treat zero/negative width as "still measuring"
-        // and assume the wide layout to avoid the flicker.
+        // collapse the sidebar/inspector. Treat zero/negative width as "still
+        // measuring" and assume the wide layout to avoid the flicker.
         let resolvedWidth = width > 0 ? width : Self.wideBreakpoint
-        let showRightPanelInline = resolvedWidth >= Self.wideBreakpoint
+        let autoShowInspector = resolvedWidth >= Self.wideBreakpoint
         let showSidebarInline = resolvedWidth >= Self.mediumBreakpoint
 
-        Group {
-            if showRightPanelInline {
-                threeColumnLayout
-            } else {
-                twoColumnLayout(showSidebarInline: showSidebarInline)
-            }
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            sidebar
+                .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 360)
+        } detail: {
+            editor
+                // v0.7.1 — native macOS 14 inspector: real right-side pane,
+                // not a centred sheet. ``inspectorColumnWidth`` mirrors the
+                // dimensions the previous detail column used so the visual
+                // footprint stays familiar. The only toggle button lives in
+                // ``commonToolbar`` below — no inspector-internal toolbar item
+                // to avoid double-bound primary actions.
+                .inspector(isPresented: $showingInspector) {
+                    RightPanelView(tab: $rightPanelTab)
+                        .inspectorColumnWidth(min: 300, ideal: 340, max: 460)
+                }
         }
-        .onChange(of: showRightPanelInline) { _, newValue in
-            // When the layout returns to wide, dismiss the right-panel sheet so
-            // the inline pane and the sheet do not show the same content.
-            if newValue { showingRightPanelSheetMac = false }
+        .navigationSplitViewStyle(.balanced)
+        .navigationTitle(book.title)
+        .toolbar {
+            commonToolbar(showSidebarInline: showSidebarInline)
+        }
+        .toolbarRole(.editor)
+        .toolbarBackground(.automatic, for: .windowToolbar)
+        .onChange(of: autoShowInspector) { _, shouldShow in
+            // Width threshold actually crossed → snap inspector to the new
+            // default. User's manual toggle within a single resolution
+            // category is preserved because onChange only fires on real
+            // transitions.
+            showingInspector = shouldShow
+            lastAutoInspectorShown = shouldShow
         }
         .onChange(of: showSidebarInline) { _, newValue in
             if newValue {
                 showingSidebarSheet = false
-                // Restore the sidebar column when widening back out.
                 columnVisibility = .all
             } else {
-                // Narrow layout — collapse the sidebar; sheet button takes over.
-                // (K-1 follow-up 🟡 4: with width < mediumBreakpoint we force
-                //  `.detailOnly` so the user cannot drag the sidebar edge open.
-                //  NavigationSplitView still owns the binding, but width-based
-                //  onChange will keep snapping it back if dragged.)
                 columnVisibility = .detailOnly
             }
         }
         .onAppear {
-            // Establish the initial column visibility for the current width
-            // (onChange does not fire on first render). Skip when width is
-            // not yet measured — the first real onChange will set it.
+            // Establish initial column + inspector visibility for the current
+            // width (onChange does not fire on first render).
             if width > 0 {
                 columnVisibility = showSidebarInline ? .all : .detailOnly
+                showingInspector = autoShowInspector
+                lastAutoInspectorShown = autoShowInspector
             }
         }
-        // Sheet dismiss is safe because all in-sheet editing (chapter list
-        // selection, right-panel character/timeline/summary edits) is
-        // auto-saved by the underlying stores. There is no draft buffer that
-        // would be lost when the sheet closes. (K-1 follow-up 🟡 2.)
         .sheet(isPresented: $showingSidebarSheet) {
             sidebarSheet
-                // K-1 follow-up (🟡 3): dismiss the sidebar sheet when the
-                // user picks a chapter from inside it. Scoping the onChange
-                // to the sheet body keeps the dismiss semantics local rather
-                // than entangled with the global selection listener below.
                 .onChange(of: chaptersStore.selectedChapterId) { _, _ in
                     showingSidebarSheet = false
                 }
-        }
-        .sheet(isPresented: $showingRightPanelSheetMac) {
-            rightPanelSheet
         }
         .onChange(of: chaptersStore.selectedChapterId) { _, newId in
             if let id = newId { Task { await chapterEditorStore.load(chapterId: id) } }
@@ -113,44 +127,8 @@ public struct WorkspaceView: View {
         }
     }
 
-    /// Width ≥ 1100. Sidebar + editor + right panel.
-    private var threeColumnLayout: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
-            sidebar
-                .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 360)
-        } content: {
-            editor
-        } detail: {
-            RightPanelView(tab: $rightPanelTab)
-                .navigationSplitViewColumnWidth(min: 300, ideal: 340, max: 460)
-        }
-        .navigationSplitViewStyle(.balanced)
-        .navigationTitle(book.title)
-        .toolbar { commonToolbar(showSidebarInline: true, showRightPanelInline: true) }
-        .toolbarRole(.editor)
-        .toolbarBackground(.automatic, for: .windowToolbar)
-    }
-
-    /// Width < 1100. Right panel is drawer-only. When `showSidebarInline` is
-    /// false (width < 800), the sidebar is also drawer-only.
-    private func twoColumnLayout(showSidebarInline: Bool) -> some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
-            sidebar
-                .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 360)
-        } detail: {
-            editor
-        }
-        .navigationSplitViewStyle(.balanced)
-        .navigationTitle(book.title)
-        .toolbar {
-            commonToolbar(showSidebarInline: showSidebarInline, showRightPanelInline: false)
-        }
-        .toolbarRole(.editor)
-        .toolbarBackground(.automatic, for: .windowToolbar)
-    }
-
     @ToolbarContentBuilder
-    private func commonToolbar(showSidebarInline: Bool, showRightPanelInline: Bool) -> some ToolbarContent {
+    private func commonToolbar(showSidebarInline: Bool) -> some ToolbarContent {
         ToolbarItem(placement: .navigation) {
             Button {
                 leaveWorkspace()
@@ -167,14 +145,22 @@ public struct WorkspaceView: View {
                 }
             }
         }
-        if !showRightPanelInline {
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    showingRightPanelSheetMac = true
-                } label: {
-                    Label("辅助面板", systemImage: "sidebar.right")
-                }
+        // v0.7.1 — single inspector toggle at the trailing edge of the
+        // toolbar. The icon (``rectangle.righthalf.inset.filled``) is the
+        // macOS-standard "right inspector" symbol used by Pages/Numbers, and
+        // visually distinct from the leading-side ``sidebar.left`` for the
+        // chapter list — fixing the v0.7 confusion where both edges used
+        // near-identical ``sidebar.*`` glyphs.
+        ToolbarItem(placement: .primaryAction) {
+            Button {
+                showingInspector.toggle()
+            } label: {
+                Label(
+                    showingInspector ? "隐藏辅助面板" : "显示辅助面板",
+                    systemImage: "rectangle.righthalf.inset.filled"
+                )
             }
+            .help(showingInspector ? "隐藏辅助面板" : "显示辅助面板")
         }
     }
 
@@ -194,24 +180,6 @@ public struct WorkspaceView: View {
             ChapterListView()
         }
         .frame(minWidth: 320, minHeight: 420)
-    }
-
-    private var rightPanelSheet: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("辅助面板")
-                    .font(.headline)
-                Spacer()
-                Button("完成") { showingRightPanelSheetMac = false }
-                    .keyboardShortcut(.cancelAction)
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 14)
-            .padding(.bottom, 8)
-            Divider()
-            RightPanelView(tab: $rightPanelTab)
-        }
-        .frame(minWidth: 360, minHeight: 480)
     }
     #endif
 
@@ -233,7 +201,9 @@ public struct WorkspaceView: View {
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { showingRightPanel = true } label: { Image(systemName: "sidebar.right") }
+                    Button { showingRightPanel = true } label: {
+                        Image(systemName: "rectangle.righthalf.inset.filled")
+                    }
                 }
             }
             .sheet(isPresented: $showingRightPanel) {

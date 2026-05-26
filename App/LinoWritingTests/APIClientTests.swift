@@ -89,7 +89,7 @@ final class APIClientTests: XCTestCase {
           "role": "主角",
           "frozen_fields": {
             "core_traits": "聪明谨慎",
-            "voice": "口头禅「啧」"
+            "background": "退役的猎人"
           },
           "live_fields": {
             "current_status": "在山洞中养伤",
