@@ -9,6 +9,11 @@ description = "Backend API for Lino Writing v2"
 requires-python = ">=3.11"
 dependencies = [
   "alembic>=1.13",
+  # v0.8 T-1: ProviderKey Fernet encryption (AES-128-CBC + HMAC-SHA256). Used
+  # by app/services/encryption.py + the 202605260003 data migration. Pinned
+  # to >=42 so we get the modern cryptography backend (legacy <3.4 paths
+  # are removed) — Fernet API itself has been stable since 0.5.
+  "cryptography>=42",
   "fastapi>=0.115",
   "httpx>=0.27",
   "pydantic-settings>=2.4",

@@ -17,6 +17,12 @@ class ProviderKey(Base):
     key_label: Mapped[str] = mapped_column(Text, nullable=False)
     provider_hint: Mapped[str | None] = mapped_column(Text)
     base_url: Mapped[str] = mapped_column(Text, nullable=False)
+    # v0.8 T-1 (§5.T): on-disk value is Fernet ciphertext, NOT the plaintext
+    # API token. Encrypt via ``app.services.encryption.encrypt_api_key`` on
+    # write and ``decrypt_api_key`` on read. The column type stays Text
+    # because Fernet output is url-safe base64 ASCII (``gAAAAA...``). The
+    # Alembic data migration ``202605260003`` walks any pre-v0.8 plaintext
+    # rows and rewrites them encrypted.
     api_key: Mapped[str] = mapped_column(Text, nullable=False)
     model_name: Mapped[str] = mapped_column(Text, nullable=False)
     # v0.7 M-1: optional Agent affinity. NULL = generic (eligible as the

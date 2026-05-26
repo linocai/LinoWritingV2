@@ -20,6 +20,7 @@ import httpx
 
 from app.llm.errors import LLMError
 from app.models.provider_key import ProviderKey
+from app.services.encryption import decrypt_api_key
 
 # Maximum characters of an upstream 4xx response body to surface in error
 # messages / agent_log rows. Anything longer is truncated. See §5.P.1 A.
@@ -63,7 +64,14 @@ def _sanitize_error_body(body: str) -> str:
 
 class OpenAICompatibleClient:
     def __init__(self, provider_key: ProviderKey) -> None:
-        self.api_key = provider_key.api_key
+        # v0.8 T-1 (§5.T): on-disk ``provider_key.api_key`` is Fernet
+        # ciphertext. Decrypt once here so every outbound LLM call uses the
+        # plaintext token in the ``Authorization: Bearer ...`` header.
+        # ``decrypt_api_key`` falls back to returning the input unchanged for
+        # pre-migration plaintext rows; this is the read-side dual that lets
+        # an in-flight upgrade keep working until the Alembic data migration
+        # rewrites those rows.
+        self.api_key = decrypt_api_key(provider_key.api_key)
         self.base_url = (provider_key.base_url or "").rstrip("/")
         self.model_name = provider_key.model_name
 

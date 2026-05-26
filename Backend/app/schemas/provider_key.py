@@ -17,6 +17,12 @@ AGENT_ROLES: tuple[AgentRole, ...] = ("writer", "extractor", "expander")
 def mask_api_key(api_key: str) -> str:
     """Return the api_key masked as `****xxxx` (last 4 chars).
 
+    v0.8 T-1: the argument is the *plaintext* API token, never the Fernet
+    ciphertext stored in the database. Callers in ``app.routers.provider_keys``
+    decrypt via ``decrypt_api_key`` before invoking this helper. Masking the
+    ciphertext tail would expose nothing useful and break the "last 4 of my
+    key" UX contract the frontend relies on.
+
     If the key is shorter than 4 chars, the full available tail is exposed
     after the `****` prefix. Empty values produce a bare `****`.
     """

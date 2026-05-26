@@ -3,16 +3,20 @@ from __future__ import annotations
 from app.config import Settings
 from app.models.provider_key import ProviderKey
 from app.models.system_settings import SystemSettings
+from app.services.encryption import decrypt_api_key, is_fernet_ciphertext
 from app.services.env_provider_migration import (
     LEGACY_ENV_KEY_LABEL,
     migrate_env_provider_key,
 )
+from tests.conftest import TEST_KEK_SECRET
 
 
 def _settings_with_grok(api_key: str | None) -> Settings:
     return Settings(
         api_token="test-token-value",
         database_url="sqlite+pysqlite://",
+        # v0.8 T-1: Settings requires a valid Fernet KEK; reuse the test one.
+        kek_secret=TEST_KEK_SECRET,
         grok_api_key=api_key,
         grok_base_url="https://api.x.ai/v1",
         model_name="grok-4",
@@ -28,7 +32,11 @@ def test_migration_seeds_provider_key_when_table_empty(db_session):
     assert created.key_label == LEGACY_ENV_KEY_LABEL
     assert created.provider_hint == "xai"
     assert created.base_url == "https://api.x.ai/v1"
-    assert created.api_key == "sk-legacy-secret-1234"
+    # v0.8 T-1: on-disk api_key is now Fernet ciphertext. Verify both the
+    # encrypted shape (storage contract) and that it decrypts to the original
+    # plaintext (round-trip contract).
+    assert is_fernet_ciphertext(created.api_key)
+    assert decrypt_api_key(created.api_key) == "sk-legacy-secret-1234"
     assert created.model_name == "grok-4"
 
     # Exactly one row, and it is active in system_settings

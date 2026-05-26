@@ -15,6 +15,7 @@ from app.config import Settings
 from app.models.common import utc_now
 from app.models.provider_key import ProviderKey
 from app.models.system_settings import SystemSettings
+from app.services.encryption import encrypt_api_key
 
 
 LEGACY_ENV_KEY_LABEL = "主 Grok (from .env)"
@@ -38,7 +39,10 @@ def migrate_env_provider_key(db: Session, settings: Settings) -> ProviderKey | N
         key_label=LEGACY_ENV_KEY_LABEL,
         provider_hint="xai",
         base_url=settings.grok_base_url,
-        api_key=api_key,
+        # v0.8 T-1: this seeding path runs on first boot under v0.6→v0.8
+        # upgrade and on fresh installs. Either way the on-disk value must
+        # be ciphertext from the very first row.
+        api_key=encrypt_api_key(api_key),
         model_name=settings.model_name,
     )
     db.add(key)

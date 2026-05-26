@@ -17,6 +17,18 @@ os.environ.setdefault("API_TOKEN", TEST_TOKEN)
 os.environ.setdefault("DATABASE_URL", "sqlite+pysqlite://")
 TEST_DATABASE_URL = os.environ["DATABASE_URL"]
 
+# v0.8 T-1: provide a deterministic Fernet KEK so every test (Settings
+# construction, encryption helpers, provider_key router roundtrips) sees a
+# valid key without needing the host's real ``KEK_SECRET``. ``setdefault``
+# means an operator can still override it from the shell when they want to
+# verify a specific key value end-to-end. The literal below is a freshly
+# generated test-only key — DO NOT use it in production.
+os.environ.setdefault(
+    "KEK_SECRET",
+    "udGFLEj2W2PMtAu_q4xKmDNljLX_mxTXuPLo2qhzKWE=",
+)
+TEST_KEK_SECRET = os.environ["KEK_SECRET"]
+
 from app.config import Settings, get_settings
 from app.db import Base, get_db, make_engine
 from app.llm.base import (
@@ -141,6 +153,10 @@ def client(session_factory: sessionmaker[Session]) -> Iterator[TestClient]:
     app.dependency_overrides[get_settings] = lambda: Settings(
         api_token=TEST_TOKEN,
         database_url=TEST_DATABASE_URL,
+        # v0.8 T-1: Settings requires a valid Fernet ``kek_secret`` now.
+        # Without this the dependency override would raise ValidationError
+        # the first time a router resolves ``Depends(get_settings)``.
+        kek_secret=TEST_KEK_SECRET,
     )
     # v0.6+: get_llm_client is a DB-driven dependency; tests stub it directly
     # so we never need a real ProviderKey row for the happy path.

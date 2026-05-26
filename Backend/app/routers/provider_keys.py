@@ -9,6 +9,7 @@ from app.errors import AGENT_ROLE_CN, i18n_conflict, i18n_not_found
 from app.models.common import utc_now
 from app.models.provider_key import ProviderKey
 from app.models.system_settings import SystemSettings
+from app.services.encryption import decrypt_api_key, encrypt_api_key
 from app.schemas.provider_key import (
     AGENT_ROLES,
     ActiveAgentKeyRead,
@@ -47,7 +48,10 @@ def create_provider_key(payload: ProviderKeyCreate, db: Session = Depends(get_db
         key_label=payload.key_label,
         provider_hint=payload.provider_hint,
         base_url=payload.base_url,
-        api_key=payload.api_key,
+        # v0.8 T-1: never persist the plaintext API token. Encrypt at the
+        # router edge so any future code path that constructs a ProviderKey
+        # via the public API gets ciphertext storage for free.
+        api_key=encrypt_api_key(payload.api_key),
         model_name=payload.model_name,
         agent_role=payload.agent_role,
     )
@@ -66,6 +70,10 @@ def patch_provider_key(
     key = _get_provider_key(db, provider_key_id)
     updates = payload.model_dump(exclude_unset=True)
     # api_key is only overwritten if explicitly provided in the request.
+    # v0.8 T-1: when present, the incoming plaintext is encrypted before
+    # being assigned so the rotation path stays consistent with create.
+    if "api_key" in updates and updates["api_key"] is not None:
+        updates["api_key"] = encrypt_api_key(updates["api_key"])
     for field, value in updates.items():
         setattr(key, field, value)
     key.updated_at = utc_now()
@@ -199,7 +207,9 @@ def _agent_summary_for(agent_role: AgentRole, key: ProviderKey) -> ActiveAgentKe
         key_label=key.key_label,
         provider_hint=key.provider_hint,
         model_name=key.model_name,
-        api_key_mask=mask_api_key(key.api_key),
+        # v0.8 T-1: mask wants the plaintext tail (last 4 chars of the real
+        # token), not the Fernet ciphertext tail. Decrypt before masking.
+        api_key_mask=mask_api_key(decrypt_api_key(key.api_key)),
     )
 
 
@@ -225,7 +235,11 @@ def _to_read(key: ProviderKey) -> ProviderKeyRead:
         key_label=key.key_label,
         provider_hint=key.provider_hint,
         base_url=key.base_url,
-        api_key=mask_api_key(key.api_key),
+        # v0.8 T-1: decrypt first so the mask shows the last 4 chars of the
+        # *plaintext* API token. Without this, the wire would carry
+        # ``****ciphertext-tail`` which leaks nothing useful and breaks the
+        # frontend's "last 4 of my key" UX contract.
+        api_key=mask_api_key(decrypt_api_key(key.api_key)),
         model_name=key.model_name,
         agent_role=key.agent_role,  # M-1
         created_at=key.created_at,
@@ -244,5 +258,6 @@ def _summary_for(key: ProviderKey) -> SystemSettingsRead:
         key_label=key.key_label,
         provider_hint=key.provider_hint,
         model_name=key.model_name,
-        api_key_mask=mask_api_key(key.api_key),
+        # v0.8 T-1: decrypt → mask (see ``_to_read``).
+        api_key_mask=mask_api_key(decrypt_api_key(key.api_key)),
     )
