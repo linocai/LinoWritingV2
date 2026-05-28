@@ -62,6 +62,33 @@ public final class AppStore: ObservableObject {
         pendingTokenSetupBanner = Self.shouldShowBanner(keychain: keychain)
     }
 
+    /// v0.9 §5.W.5 (W-3): iOS-only launch gate. `true` when the resolved
+    /// `baseURL`'s host has no device token in Keychain yet, so the root
+    /// view shows the full-screen `DevicePairView` instead of the main UI.
+    ///
+    /// This is the iOS replacement for the macOS `pendingTokenSetupBanner`
+    /// path: macOS is the *pairing source* (author hand-fills a token /
+    /// generates codes in SettingsView), so on macOS we keep showing the
+    /// first-run SettingsView + banner; on iOS the device must be paired by
+    /// scanning / entering a code before the main UI is reachable.
+    ///
+    /// Predicate is identical to `shouldShowBanner` (URL set, host token
+    /// row empty) — kept as a distinct, intent-named accessor so the iOS
+    /// root view reads clearly and so a future divergence (e.g. iOS wanting
+    /// to gate on something the macOS banner doesn't) is a one-line change.
+    public var needsDevicePairing: Bool {
+        Self.shouldShowBanner(keychain: keychain)
+    }
+
+    /// Called by `DevicePairView` after a successful `pair_confirm` writes
+    /// the device token to Keychain. Re-reads Keychain so `isConfigured`
+    /// flips → the iOS root view re-routes from the pairing screen to the
+    /// bookshelf, and clears the (iOS-irrelevant but harmless) banner flag.
+    public func refreshAuthState() {
+        isConfigured = keychain.isConfigured
+        pendingTokenSetupBanner = Self.shouldShowBanner(keychain: keychain)
+    }
+
     public func openBook(_ book: Book) {
         currentBook = book
         settings.lastOpenedBookId = book.id
