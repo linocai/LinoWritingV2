@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- TestFlight / App Store distribution. Xcode 15+ renamed the old
+         "app-store" value to "app-store-connect" (the old one still works but
+         emits a deprecation warning). Verified on Xcode 26.5 (X-3). -->
+    <key>method</key>
+    <string>app-store-connect</string>
+
+    <!-- LinoWriting Apple Developer Team ID. -->
+    <key>teamID</key>
+    <string>HX73DFL88G</string>
+
+    <!-- Let Xcode manage the distribution provisioning profile automatically
+         (matches project.yml CODE_SIGN_STYLE: Automatic from X-1). -->
+    <key>signingStyle</key>
+    <string>automatic</string>
+
+    <!-- Upload dSYMs so App Store Connect can symbolicate crash reports. -->
+    <key>uploadSymbols</key>
+    <true/>
+
+    <!-- Produce the .ipa locally; release-ios.sh uploads it via altool. -->
+    <key>destination</key>
+    <string>export</string>
+</dict>
+</plist>
