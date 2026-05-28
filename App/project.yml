@@ -12,16 +12,26 @@ settings:
   base:
     SWIFT_VERSION: "5.10"
     SWIFT_STRICT_CONCURRENCY: minimal
-    # Build phase doesn't sign(Manual + 无 team 在 Xcode 14+ 上会被阻拦)。
-    # Ad-hoc 签名在 build 完成之后用 codesign 命令补:
-    #   codesign --force --deep --sign - /path/to/LinoI.app
-    # 这样 macOS Keychain 能把 LinoI 识别为受信任 app,避免每次启动
-    # 都弹"是否允许 LinoI 访问钥匙串项"的授权窗。
-    CODE_SIGN_STYLE: Manual
-    CODE_SIGNING_REQUIRED: NO
-    CODE_SIGNING_ALLOWED: NO
-    CODE_SIGN_IDENTITY: ""
-    ENABLE_HARDENED_RUNTIME: NO
+    # v0.9 X-1: ad-hoc 签名(`CODE_SIGNING_ALLOWED: NO` + post-build
+    # `codesign --sign -`)正式 supersede,切换到 Xcode Automatic
+    # signing。Apple Developer Program 已注册(Team ID HX73DFL88G),
+    # 本机 Xcode → Settings → Accounts 登录 linocai@hotmail.com,
+    # "Apple Development" cert 自动下发,iOS + macOS Debug/Release
+    # 全部走同一条 Automatic 路径。
+    #
+    # macOS Release 走 Automatic 时签的是 "Apple Development" cert;
+    # 真正分发用的 "Developer ID Application" cert + notarize
+    # 由 X-2 phase 的 ./scripts/release-macos.sh 在 build 之后
+    # `codesign --force --options runtime --timestamp --sign
+    # "Developer ID Application: ..."` 覆盖签。`--force` 会替换掉
+    # build 阶段的 Apple Development cert,notarize 校验最终签名。
+    #
+    # ENABLE_HARDENED_RUNTIME: YES 是 notarize 的硬性要求,这里全局开,
+    # 即使 Debug build 也带 hardened runtime —— 避免 Debug 跑通但
+    # Release notarize 时才暴露 entitlement / private-API 冲突。
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: HX73DFL88G
+    ENABLE_HARDENED_RUNTIME: YES
     MARKETING_VERSION: "0.8"
     CURRENT_PROJECT_VERSION: "1"
 
