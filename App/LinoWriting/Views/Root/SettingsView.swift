@@ -227,6 +227,16 @@ private struct ConnectionSettingsView: View {
                 // section is hidden on iOS.
                 NetworkSelfTestSection(currentURLString: baseURLString)
                     .padding(.top, 8)
+
+                // v0.9 §5.W.5 macOS-only 设备管理: list paired devices +
+                // "添加新设备" QR/short-code dialog. Hidden on iOS because
+                // an iPhone isn't a pairing *source* (§5.W.5 simplifies the
+                // iOS UX to "this device only"); iOS device management lands
+                // in a later phase.
+                if !isFirstRun {
+                    DeviceManagementSection(currentURLString: baseURLString)
+                        .padding(.top, 8)
+                }
                 #endif
             }
             .padding(28)
@@ -1341,6 +1351,307 @@ private struct NetworkSelfTestSection: View {
     /// `#if os(macOS)` so we only need NSPasteboard here, but the
     /// helper stays small enough that an iOS port (if ever needed) is
     /// a one-line `#else` away.
+    private func copyToClipboard(_ string: String) {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(string, forType: .string)
+        withAnimation(.easeInOut(duration: 0.15)) {
+            copyConfirmation = "已复制"
+        }
+        Task {
+            try? await Task.sleep(nanoseconds: 1_800_000_000)
+            await MainActor.run {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    copyConfirmation = nil
+                }
+            }
+        }
+    }
+}
+
+// MARK: - v0.9 §5.W.5 设备管理 (macOS only)
+
+/// `.sheet(item:)` needs `Identifiable`. The 6-digit code is unique per
+/// active pairing window, so it's a fine stable id for the dialog's
+/// presentation lifetime. Scoped to the view layer (the model itself stays
+/// a plain response DTO).
+extension PairInitiateResponse: Identifiable {
+    public var id: String { code }
+}
+
+/// "设备管理" sub-section in the Connection tab. Lists the device tokens
+/// (`GET /auth/devices`), lets the author revoke any one (trash + confirm
+/// alert), and opens the "添加新设备" dialog which calls `pair_initiate`
+/// and shows a QR code + 6-digit code + 10-minute countdown for a new
+/// device to scan / type (§5.W.5).
+private struct DeviceManagementSection: View {
+
+    @EnvironmentObject private var store: DeviceStore
+
+    /// Current backend URL string from the Connection form — embedded in the
+    /// QR payload + the "复制配对信息" text.
+    let currentURLString: String
+
+    @State private var pendingRevoke: DeviceInfo?
+    @State private var addDialogInfo: PairInitiateResponse?
+
+    private static let dateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HH:mm"
+        return f
+    }()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "laptopcomputer.and.iphone")
+                Text("设备管理")
+                    .font(.callout.weight(.semibold))
+                Spacer()
+                Button {
+                    Task {
+                        if let info = await store.initiatePairing() {
+                            addDialogInfo = info
+                        }
+                    }
+                } label: {
+                    if store.isMutating && addDialogInfo == nil {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Label("添加新设备", systemImage: "plus")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .disabled(store.isMutating)
+            }
+            Text("每台已配对设备持有独立 token，可单独撤销。在新设备上扫码或手输短码即可配对。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            content
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.gray.opacity(0.06))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+        )
+        .task { await store.load() }
+        .sheet(item: $addDialogInfo) { info in
+            AddDeviceDialog(info: info, currentURLString: currentURLString)
+        }
+        .alert("撤销设备", isPresented: Binding(
+            get: { pendingRevoke != nil },
+            set: { if !$0 { pendingRevoke = nil } }
+        )) {
+            Button("取消", role: .cancel) { pendingRevoke = nil }
+            Button("撤销", role: .destructive) {
+                if let device = pendingRevoke {
+                    Task { await store.revoke(id: device.deviceId) }
+                }
+                pendingRevoke = nil
+            }
+        } message: {
+            if let device = pendingRevoke {
+                Text("将撤销「\(device.deviceName)」的访问权限。如果这是你当前正在使用的设备，撤销后本机会立即被拒，需要重新配对。")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if store.isLoading && store.devices.isEmpty {
+            ProgressView("加载中…")
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.vertical, 8)
+        } else if store.devices.isEmpty {
+            Text("还没有已配对的设备。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 4)
+        } else {
+            VStack(spacing: 6) {
+                ForEach(store.sortedDevices) { device in
+                    deviceRow(device)
+                }
+            }
+        }
+    }
+
+    private func deviceRow(_ device: DeviceInfo) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            Image(systemName: "desktopcomputer")
+                .foregroundStyle(.secondary)
+                .frame(width: 20)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(device.deviceName)
+                    .font(.callout.weight(.medium))
+                Text("创建 \(Self.dateFormatter.string(from: device.createdAt))  ·  上次使用 \(lastUsedLabel(device))")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            Button(role: .destructive) {
+                pendingRevoke = device
+            } label: {
+                Image(systemName: "trash")
+            }
+            .buttonStyle(.bordered)
+            .help("撤销该设备")
+            .disabled(store.isMutating)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.gray.opacity(0.05))
+        )
+    }
+
+    private func lastUsedLabel(_ device: DeviceInfo) -> String {
+        guard let last = device.lastUsedAt else { return "从未" }
+        return Self.dateFormatter.string(from: last)
+    }
+}
+
+/// "添加新设备" dialog: shows the 6-digit short code (large monospaced), the
+/// QR code (JSON-base64 of `PairingPayload`), a 10-minute countdown derived
+/// from `expires_at`, a "复制配对信息" button, and "完成" to dismiss.
+private struct AddDeviceDialog: View {
+
+    @Environment(\.dismiss) private var dismiss
+
+    let info: PairInitiateResponse
+    let currentURLString: String
+
+    /// Drives the countdown. Recomputed every second by the timer below.
+    @State private var now = Date()
+    @State private var copyConfirmation: String?
+
+    /// Tick every second to refresh the countdown label.
+    private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+
+    /// Resolved backend URL (trimmed). Falls back to the production default
+    /// if the field somehow holds garbage so the QR still carries *a* URL.
+    private var resolvedURL: String {
+        let trimmed = currentURLString.trimmingCharacters(in: .whitespaces)
+        return trimmed.isEmpty ? Settings.defaultBackendURLString : trimmed
+    }
+
+    /// Optional trusted-IP override embedded in the QR (§5.W.2). When the
+    /// author has a known HZ origin IP we ship it so the new device can skip
+    /// a DNS round-trip / dodge a hijacked resolver. Omitted when unknown.
+    private var ipOverride: String? {
+        Settings.trustedBackendIPs.first
+    }
+
+    private var pairingPayload: PairingPayload {
+        PairingPayload(url: resolvedURL, code: info.code, ipOverride: ipOverride)
+    }
+
+    /// The plain-text the "复制配对信息" button puts on the pasteboard so the
+    /// author can AirDrop / iMessage it to a phone that can't scan.
+    private var clipboardText: String {
+        "LinoI 配对: \(resolvedURL) 码 \(info.code)"
+    }
+
+    /// Seconds remaining until `expires_at`, clamped at 0.
+    private var remaining: TimeInterval {
+        max(0, info.expiresAt.timeIntervalSince(now))
+    }
+
+    private var countdownLabel: String {
+        let total = Int(remaining)
+        let m = total / 60
+        let s = total % 60
+        return String(format: "%d:%02d", m, s)
+    }
+
+    private var isExpired: Bool { remaining <= 0 }
+
+    var body: some View {
+        VStack(spacing: 16) {
+            VStack(spacing: 4) {
+                Text("添加新设备")
+                    .font(.title2.weight(.semibold))
+                Text("在新设备上扫描二维码，或手动输入下方短码完成配对。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+
+            // 6-digit code, large monospaced.
+            Text(info.code)
+                .font(.system(size: 36, weight: .semibold, design: .monospaced))
+                .tracking(6)
+                .foregroundStyle(isExpired ? Color.secondary : Color.primary)
+
+            // QR code occupies the main body.
+            qrView
+                .frame(width: 220, height: 220)
+                .opacity(isExpired ? 0.25 : 1.0)
+
+            // Countdown.
+            HStack(spacing: 6) {
+                Image(systemName: isExpired ? "clock.badge.xmark" : "clock")
+                    .foregroundStyle(isExpired ? Color.red : Color.secondary)
+                Text(isExpired ? "短码已过期，请关闭后重新生成" : "剩余 \(countdownLabel)")
+                    .font(.callout.monospacedDigit())
+                    .foregroundStyle(isExpired ? Color.red : Color.secondary)
+            }
+
+            HStack(spacing: 10) {
+                Button {
+                    copyToClipboard(clipboardText)
+                } label: {
+                    Label("复制配对信息", systemImage: "doc.on.doc")
+                }
+                .buttonStyle(.bordered)
+                if let confirmation = copyConfirmation {
+                    Text(confirmation)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .transition(.opacity)
+                }
+            }
+
+            Button("完成") { dismiss() }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+        }
+        .padding(28)
+        .frame(width: 340)
+        .onReceive(ticker) { now = $0 }
+    }
+
+    @ViewBuilder
+    private var qrView: some View {
+        if let base64 = pairingPayload.base64Encoded(),
+           let nsImage = QRCodeGenerator.makeNSImage(from: base64) {
+            Image(nsImage: nsImage)
+                .interpolation(.none)   // keep QR modules crisp when scaled
+                .resizable()
+                .scaledToFit()
+        } else {
+            // QR generation should never fail for this tiny payload, but if
+            // it does the short code is still usable for manual entry.
+            VStack(spacing: 8) {
+                Image(systemName: "qrcode")
+                    .font(.system(size: 48, weight: .light))
+                    .foregroundStyle(.secondary)
+                Text("二维码生成失败，请使用上方短码手动配对。")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+        }
+    }
+
     private func copyToClipboard(_ string: String) {
         let pb = NSPasteboard.general
         pb.clearContents()

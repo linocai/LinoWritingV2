@@ -20,6 +20,13 @@ public final class MockAPIClient: APIClientProtocol, @unchecked Sendable {
         .expander: nil
     ]
 
+    /// §5.W / W-2: in-memory device-token list backing `listDevices` /
+    /// `revokeDevice`. `pairConfirm` appends; `revokeDevice` removes (mirrors
+    /// the backend's "row disappears from the list once revoked" behaviour
+    /// for the UI's purposes — the audit-trail `revoked_at` retention is a
+    /// server-side detail the client never sees).
+    public var devices: [DeviceInfo] = []
+
     public var calls: [String] = []
 
     // Pluggable behaviour for flow tests.
@@ -29,6 +36,14 @@ public final class MockAPIClient: APIClientProtocol, @unchecked Sendable {
     public var onReopen: ((String) -> Chapter)?
     public var onImport: ((String, ChapterImportRequest) throws -> ChapterImportResponse)?
     public var onAdminReset: ((String, ChapterStatus) -> Chapter)?
+
+    // §5.W / W-2 pairing hooks. When set, they fully override the default
+    // in-memory behaviour so tests can assert specific responses / errors
+    // (e.g. 429 rate-limit, 401 bad code). Mirror the backend contract.
+    public var onPairInitiate: (() throws -> PairInitiateResponse)?
+    public var onPairConfirm: ((String, String) throws -> PairConfirmResponse)?
+    public var onListDevices: (() throws -> [DeviceInfo])?
+    public var onRevokeDevice: ((String) throws -> Void)?
 
     /// Captures the last `importChapter` payload so tests can assert that the
     /// Swift-side encoding (e.g. `runExtractor` → `run_extractor`) survived.
@@ -567,6 +582,65 @@ public final class MockAPIClient: APIClientProtocol, @unchecked Sendable {
                 modelName: key.modelName,
                 apiKeyMask: key.apiKey
             )
+        }
+    }
+
+    // MARK: - Device pairing (§5.W / W-2 mock)
+
+    /// Last `(code, deviceName)` passed to `pairConfirm`, for tests asserting
+    /// the Swift-side encoding survived (mirrors `lastImportPayload`).
+    public var lastPairConfirmPayload: (code: String, deviceName: String)?
+
+    public func pairInitiate() async throws -> PairInitiateResponse {
+        recordCall("pairInitiate")
+        return try locked {
+            try maybeThrow()
+            if let onPairInitiate { return try onPairInitiate() }
+            // Default: a fixed, valid-shaped code + 10-minute TTL.
+            return PairInitiateResponse(
+                code: "123456",
+                expiresAt: Date().addingTimeInterval(600)
+            )
+        }
+    }
+
+    public func pairConfirm(code: String, deviceName: String) async throws -> PairConfirmResponse {
+        recordCall("pairConfirm")
+        return try locked {
+            lastPairConfirmPayload = (code, deviceName)
+            try maybeThrow()
+            if let onPairConfirm { return try onPairConfirm(code, deviceName) }
+            // Default: mint a new device + token and add it to the list so a
+            // subsequent `listDevices` reflects it.
+            let device = DeviceInfo(
+                deviceId: UUID().uuidString,
+                deviceName: deviceName,
+                createdAt: Date(),
+                lastUsedAt: nil
+            )
+            devices.append(device)
+            return PairConfirmResponse(
+                deviceId: device.deviceId,
+                token: "mocktoken-\(device.deviceId)"
+            )
+        }
+    }
+
+    public func listDevices() async throws -> [DeviceInfo] {
+        recordCall("listDevices")
+        return try locked {
+            try maybeThrow()
+            if let onListDevices { return try onListDevices() }
+            return devices
+        }
+    }
+
+    public func revokeDevice(id: String) async throws {
+        recordCall("revokeDevice")
+        try locked {
+            try maybeThrow()
+            if let onRevokeDevice { try onRevokeDevice(id); return }
+            devices.removeAll { $0.deviceId == id }
         }
     }
 
