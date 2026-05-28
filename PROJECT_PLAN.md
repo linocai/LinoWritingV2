@@ -3,7 +3,7 @@
 > 本文档是 v0.6 起的**单一项目行动依据**。前端、后端、契约层全部合并在此。
 > v0.1–v0.5 期间使用 `PLAN_FRONTEND.md` / `PLAN_BACKEND.md` 双契约工作流，作为 v0.5 契约存档保留，不再更新。
 >
-> 文档版本：v0.9-draft（基于 v0.8 已发布）
+> 文档版本：v0.9（已发布）
 > 关联存档：`PLAN_FRONTEND.md`（v0.5 前端契约存档）、`PLAN_BACKEND.md`（v0.5 后端契约存档）
 
 ---
@@ -48,9 +48,28 @@
 
 ---
 
-## 1. 当前版本状态 (v0.8 — 已发布)
+## 1. 当前版本状态 (v0.9 — 已发布)
 
-### 1.0 v0.8 新增能力(在 v0.7.1 之上)
+### 1.0 v0.9 新增能力(在 v0.8 之上)
+
+**主菜:设备配对认证(W) -- 把双端登录体验做好**
+- 后端 `device_tokens` 表(Fernet 加密 token_ciphertext)+ `pair_codes` 短码表(6 位数字 10 分钟 TTL)[§5.W.3]
+- `/api/v1/auth/*` 4 端点:`pair_initiate`(要 Bearer)/ `pair_confirm`(白名单无 Bearer,5/min per IP 防爆破)/ `devices`(列)/ `devices/{id}`(revoke,不删行留审计)[§5.W.4]
+- `require_bearer_token` 双路径:device-token 优先(`hmac.compare_digest` 防时序 + 命中 update last_used_at),失败 fallback static `api_token`(v0.8 兼容,留到 v1.0.x 删)[§5.W.4]
+- macOS Settings 设备管理:列设备 + "添加新设备"生成 QR(CoreImage,JSON-base64 编 url/code/ip)+ 6 位短码 + 10 分钟倒计时 + 撤销 [§5.W.5]
+- iOS 启动配对屏 `DevicePairView`:AVCaptureSession 扫码 → pairConfirm → 写 per-host Keychain → 进主界面;手输 6 位备选(Simulator 无相机路径)[§5.W.5]
+
+**必修:TestFlight + Developer ID 分发(X,原 §5.V 重启)**
+- 作者注册付费 Apple Developer Program(Team `HX73DFL88G`):iOS 7 天证书 → 1 年 + TestFlight OTA + macOS Developer ID notarize [§5.X.1]
+- `project.yml` ad-hoc → Xcode Automatic signing + `DEVELOPMENT_TEAM` + `ENABLE_HARDENED_RUNTIME: YES` [§5.X.4]
+- `scripts/release-macos.sh`:Release build → Developer ID 真签 → notarytool submit → stapler staple → spctl 验证 → Desktop。**X-4 实跑:notarytool Accepted,任何 Mac 双击直开** [§5.X.3]
+- `scripts/release-ios.sh` + `ios-export.plist`:archive(`-allowProvisioningUpdates`)→ export → altool 上 TestFlight。**X-4 实战修正:altool keychain 在 Xcode 26.5 坏了(svce=NULL 查不到),改 App Store Connect API key 认证(`--apiKey`/`--apiIssuer` + ~/.appstoreconnect/private_keys/*.p8)** [§5.X.3 / X-4]
+- `Info.plist` 加 `ITSAppUsesNonExemptEncryption=NO`(仅 HTTPS 豁免加密,免每次 build 的出口合规/法国声明)
+
+**砍掉的候选(作者拍板不做)**
+- ⚫ Y iOS DNS/TLS SNI override / ⚫ AA Siri Shortcuts / ⚫ BB Foundation Models -- 详 §5.Y/AA/BB 各节顶部戳记
+
+### 1.0.1 v0.8 新增能力(在 v0.7.1 之上)
 
 **必修包(云上线物理前置)**
 - **PostgreSQL 切换**:`config.py` `set_sqlite_pragma` 加 dialect 网关(只 SQLite 跑 PRAGMA;PG 会 SyntaxError 触发 InFailedSqlTransaction)+ 9 条 Alembic 在 PG 16 上一次性 clean [§5.S / S-1]
@@ -122,25 +141,27 @@
 
 ### 1.3 测试基线
 
-- **后端 pytest** SQLite:**200 个**(v0.7 末 175 → v0.8 末 +25,含 T-1 Fernet round-trip / Alembic data migration / T-2 rate limit / HSTS / access log redaction)`-W error` 干净
-- **后端 pytest PG 16**:**199 + 1 skipped**(切 `DATABASE_URL=postgresql+psycopg://`,SQLite-only PRAGMA fixture skip)
-- **macOS XCTest**:**124 个**(v0.7 末 120 → v0.8 末 +4 AppStoreBannerTests)
-- **iOS Simulator XCTest**(新):**38 个**(LinoWritingTestsIOS bundle,iPhone 17 Pro / iPad Pro 13" M5 双 destination)
-- HZ prod smoke:`{"status":"ok","version":"0.8.0"}` ✅
+- **后端 pytest** SQLite:**222 个**(v0.8 末 200 → v0.9 末 +22 W-1 配对认证:pair_initiate / pair_confirm 三态失败 / device-token 双路径 / revoke / rate limit)`-W error` 干净
+- **后端 pytest PG 16**:v0.8 末 199+1 skipped(W-1 新表 PG path 未单独跑,HZ deploy 时 `alembic upgrade head` 一条龙加 device_tokens + pair_codes)
+- **macOS XCTest**:**132 个**(v0.8 末 124 → v0.9 末 +8 DevicePairingTests:PairingPayload round-trip / QR / DTO Codable)
+- **iOS Simulator XCTest**:**50 个**(v0.8 末 38 → v0.9 末 +12 DevicePairViewModelIOSTests:sanitize / gating / happy / 401 / scan-decode)
+- HZ prod smoke:`{"status":"ok","version":"0.9.0"}` ✅
+- **X-4 双端分发实跑**:macOS notarytool Accepted + spctl accepted(Notarized Developer ID);iOS altool UPLOAD SUCCEEDED → TestFlight
 
-### 1.4 v0.8 已知残留(留 v0.8.x / v0.9+)
+### 1.4 v0.9 已知残留(留 v0.9.x / v1.0+)
 
-各 phase reviewer / builder 留下的 🔵 非阻塞建议:
-- **U-1**:iOS 真机若遇本机 DNS 拦截无 `/etc/hosts` 等价手段,fallback 是 Settings 直接填 IP + 实现 TLS SNI / cert verify override -- v0.8.x 看真机网络情况再说
-- **U-2**:§5.U.5 第一条 "iOS Simulator localhost ATS 偶发严格化" 仅作者人工 simulator 抽查 verify
-- **R-4**:KeychainStore write 路径 entitlement -34018,XCTest 跳过 round-trip;FileSaver UIDocumentPicker `present()` continuation 在 logic test 无 UIWindowScene hang,留 simulator 人工抽查;SwiftUI view tree 真实渲染未用 ViewInspector(§5.R.6 禁新 SPM)
-- **R-2**:旋转 / Split View 跨阈值会 overwrite 用户手动 toggle,与 R-1 行为一致;v0.9 可加"手动 toggle 后冻结自动响应"状态机
-- **T-1**:v0.9 移除 Fernet read-side dual-fallback 时同步把 test_llm_factory fixture 直接插 plaintext 的部分改成 `encrypt_api_key`
-- **T-2**:rate limit `Retry-After` 返回整窗口 60s,不是精确 bucket 重置时间(§5.T 未要求精度)
-- **S-3**:`hz_info.md` 是云端真相文件,任何 HZ 改动必须同步;`/opt/linowriting/staging/` 历史目录已不用但残留在文件系统(无害,可在下次 cutover 时 sudo rm)
-- v0.7 未做项继续推:M-2 灰显视觉 / N 老英文 helper / D-log MockAPIClient 排序 / O batch cancel 按钮(留 v0.9+)
+- **TestFlight 新账号 warm-up**:作者 2026-05-28 当天注册付费 Developer + 首个 App/build,TestFlight 后端传播延迟(几小时~24-48h),首个 build "App 不可用"是预期;本地 build 验过 100% 可装(arm64 iphoneos / bundle id 正确 / min iOS 17)。自用可直接 Xcode → Run 装真机(1 年证书)绕开 TestFlight
+- **iOS ipOverride inert**(W-3):QR 的 `ip` 字段捕获但不持久化(codebase 无运行时 IP override 机制);真正消费要等 Y(已砍)。作者真机若不撞 DNS 劫持则无需
+- **static api_token fallback**:W-1 双路径保留到 v1.0.x;删除时同步删 `Settings.api_token` + conftest `auth_headers` fixture
+- **pair_codes 无自动清理**:HZ cron 加 `DELETE FROM pair_codes WHERE expires_at < now()`(backlog)
+- v0.8 残留继续推:U-2 ATS simulator 抽验 / R-4 Keychain 真机抽验 / T-1 v1.0 删 Fernet dual-fallback 同步改 fixture / R-2 手动 toggle 冻结状态机
+- v0.7 未做项:M-2 灰显视觉 / N 老英文 helper / D-log MockAPIClient 排序 / O batch cancel(留 v1.0+)
 
-### 1.5 v0.5 / v0.6 历史能力(继承)
+### 1.5 v0.7 / v0.8 历史能力(继承)
+
+**v0.8**:PostgreSQL 切换 + HZ 阿里云 ECS 上线(systemd + Nginx + certbot + 现有 PG 16,无 Docker)+ ProviderKey Fernet 加密 + rate limit/HSTS/CORS/access log 脱敏 + iOS 三档响应式(NavSplit iPad / NavStack iPhone + 触控 affordance)+ 客户端连云 + macOS DNS 自检引导 + SSE 长连接调优。详 §1.0.1 / §5.R-U。
+
+### 1.6 v0.5 / v0.6 历史能力(继承)
 
 **v0.5**:书架、3 栏 Workspace、5 步章节编辑器、SSE 流式写作、角色卡 inline 编辑、右栏 4 tab、Keychain;5 张业务表 + 1 张调试表 + 23 个端点、3 个 Agent、Context Pack 装配、Extractor 事务性写入。
 
@@ -220,12 +241,12 @@ LinoWritingV2/
 | **S** | 后端 PostgreSQL 切换 + HZ 阿里云 ECS 部署（systemd + Nginx + 现有 PG 16） | ✅ v0.8 **必修** | §5.S |
 | **T** | 安全硬化（ProviderKey 加密 / rate limit / HTTPS / secret manager） | ✅ v0.8 **必修** | §5.T |
 | **U** | 客户端 → 云后端切换（BACKEND_URL / ATS / SSE 长连接调优 / DNS 自检引导） | ✅ v0.8 | §5.U |
-| **V** | iOS Provisioning + TestFlight 上架（**v0.9 重新启用**，作者付费 Developer 后） | 🎯 v0.9（并入 X） | §5.X |
-| **W** | 设备配对认证（device_tokens 表 + QR + 6 位短码，双端首次启动免手填 token） | 🎯 v0.9 **主菜** | §5.W |
-| **X** | TestFlight + macOS Developer ID + notarize 自动化 | 🎯 v0.9 **必修**（解 V） | §5.X |
-| **Y** | iOS DNS override / TLS SNI override（iOS 真机版的 macOS hosts override） | 🎯 v0.9 候选（仅真机撞墙才入） | §5.Y |
-| **AA** | App Intents / Siri Shortcuts（"Hey Siri 开始写下一章"等） | 🎯 v0.9 候选 | §5.AA |
-| **BB** | Foundation Models 端侧 LLM 接管 Extractor（iOS 18.1+ 降云 LLM 账单） | 🎯 v0.9 候选 | §5.BB |
+| **V** | iOS Provisioning + TestFlight 上架（v0.9 并入 X 重启） | ✅ v0.9（并入 X） | §5.X |
+| **W** | 设备配对认证（device_tokens 表 + QR + 6 位短码，双端首次启动免手填 token） | ✅ v0.9 **主菜** | §5.W |
+| **X** | TestFlight + macOS Developer ID + notarize 自动化 | ✅ v0.9 **必修** | §5.X |
+| **Y** | iOS DNS override / TLS SNI override | ⚫ 不做（作者拍板，真机未撞 DNS 劫持） | §5.Y |
+| **AA** | App Intents / Siri Shortcuts | ⚫ 不做（作者拍板） | §5.AA |
+| **BB** | Foundation Models 端侧 LLM 接管 Extractor | ⚫ 不做（作者拍板） | §5.BB |
 
 剔除项（不进路线图）：
 - ⚫ G. 卷/章节分组
@@ -498,7 +519,26 @@ v0.6 / v0.7 都是 macOS 单机 + 本地 backend,iOS 在 Simulator 能编过但 
 
 ---
 
-### 4.5 v0.9 — 🚧 进行中(v1 之前最后一个大版本)
+### 4.5 v0.9 — ✅ 已发布(v1 之前最后一个大版本)
+
+**实际 commit 时间线**(2026-05-28 发版):
+- `9d9be32` PROJECT_PLAN v0.9 plan 锁定
+- `9efb2e6` Phase X-1 project.yml 切 Automatic signing + Team ID
+- `f15159e` Phase W-1 后端 device_tokens 配对认证
+- `ba35963` Phase W-2 macOS 设备管理 UI + QR 生成 + APIClient auth 方法
+- `5617942` Phase X-2 scripts/release-macos.sh (Developer ID 真签 + notarize)
+- `bddc485` Phase X-3 scripts/release-ios.sh + ios-export.plist (TestFlight)
+- `1d5fe80` Phase W-3 iOS 启动配对屏 + 扫码(W 系列收口)
+- `80a8cdb` X-4 实战修正:release-ios.sh altool → App Store Connect API key
+- `<this commit>` Phase Z v0.9 发版同步 + Info.plist 免合规 + HZ deploy + 双端重打包
+
+**目标达成**:双端登录体验从"SSH grep .env 手填 token"升级为"老设备出二维码 / 新设备扫码即用"(device_tokens + pair_codes + 4 端点 + macOS QR 生成 + iOS 扫码屏)。付费 Apple Developer 后 iOS 7 天证书 → 1 年 + TestFlight OTA + macOS Developer ID notarize 全套自动化脚本就位并 X-4 实跑验证。Y/AA/BB 候选作者拍板不做。
+
+**X-4 实战教训(已固化进脚本 + §5.X)**:Xcode 26.5 的 altool 在两处偏离文档 ——(1) `--store-password-in-keychain-item` 要显式 `--item` flag;(2) 即便存进 keychain,`@keychain:` 查找因 svce=NULL 失败。最终弃用 app-specific-password keychain 路径,改 App Store Connect API key(`--apiKey`/`--apiIssuer` + `.p8`),Apple 现代推荐且 notarytool 可复用。macOS notarytool 路径(`LinoI-deploy` profile)本身没问题,轨道 A 一次过。
+
+---
+
+### 4.5-archived v0.9 — 原 🚧 进行中段(发版后归档)
 
 **目标**:把双端登录体验做好。作者原话:**"v1 上线前的最后一个大版本,目标:把双端的登录体验都做好,现在其实不太舒服,而我整好 developer 之后,应该舒服多了"**。
 
@@ -2862,3 +2902,21 @@ W-1 后端 device_tokens / X-1 signing 切 Automatic(作者拿到 Team ID 才动
 - ❌ APNs Push 通知
 
 锁后 v0.9 = **8-10 个 Phase**(W-1/X-1/W-2/W-3/X-2/X-3/X-4 必修 + Y/AA/BB 候选 + Z 收尾),W 与 X 系列大部分可并行,X 系列等 Apple Developer 注册审核通过。
+
+### [2026-05-28] **v0.9 发布(Phase Z 收尾)**
+
+v0.9 = **8 个实施 Phase**(W-1/W-2/W-3 设备配对 + X-1/X-2/X-3/X-4 签名分发)+ Z 收尾全部完成。Y/AA/BB 候选作者拍板不做。5 处版本号同步 `0.8` → `0.9.0`(`App/project.yml MARKETING_VERSION="0.9"` + `Backend/pyproject.toml="0.9.0"` + `app/main.py` + `routers/health.py` + `tests/test_auth.py`)。
+
+**主菜达成(W)**:双端登录从"SSH HZ `sudo grep .env` 手填 32 字节 token"升级为"macOS 设备管理生成 QR + 6 位短码 → iOS 扫码/手输 → pairConfirm 拿 device-specific token 写 Keychain → 进主界面"。后端 `device_tokens`(Fernet 加密) + `pair_codes`(6 位数字 10 分钟 TTL,5/min per IP 防爆破) + 4 个 `/auth/*` 端点 + `require_bearer_token` 双路径(device-token 优先 hmac.compare_digest + static fallback v1.0.x 删)。
+
+**必修达成(X)**:作者注册付费 Apple Developer(Team `HX73DFL88G`)。project.yml ad-hoc → Automatic signing + `ENABLE_HARDENED_RUNTIME`。`release-macos.sh`(Developer ID 真签 + notarytool + stapler)+ `release-ios.sh`(archive + export + altool API-key 上传)+ `ios-export.plist`。Info.plist 加 `ITSAppUsesNonExemptEncryption=NO` 免出口合规/法国声明。**X-4 实跑:macOS notarytool Accepted(任何 Mac 双击直开);iOS altool UPLOAD SUCCEEDED → TestFlight**。
+
+**X-4 实战修正**:Xcode 26.5 altool 两处坑 ——`--store-password-in-keychain-item` 要 `--item` flag + `@keychain:` 查找 svce=NULL 失败,弃 app-specific-password keychain 改 App Store Connect API key(`.p8` in `~/.appstoreconnect/private_keys/`)。
+
+**测试基线**(v0.8 末 → v0.9 末):pytest SQLite 200 → **222**(+22 W-1);macOS XCTest 124 → **132**(+8 DevicePairing);iOS XCTest 38 → **50**(+12 DevicePairViewModel)。全 `-W error` 干净,xcodebuild macOS + iOS Simulator 0/0。
+
+**HZ 部署**:`./Backend/deploy/deploy-hz.sh` 推 0.9.0,`alembic upgrade head` 一条龙加 `device_tokens` + `pair_codes`(10 → 11 条迁移)。`https://lw.linotsai.top/api/v1/health` → `{"status":"ok","version":"0.9.0"}`。`hz_info.md` §9 同步新表 + §13 增补。
+
+**LinoI 打包**:macOS 走 `release-macos.sh` Developer ID notarized 0.9 部署 `~/Desktop`;iOS 走 `release-ios.sh` 上 TestFlight 0.9。**TestFlight 新账号 warm-up**:作者当天注册首个 build,Apple 后端传播延迟,首装可走 Xcode → Run 真机(1 年证书)绕开。
+
+**v0.9.x / v1.0 待办**(详 §1.4):TestFlight warm-up 完成后确认 OTA / iOS ipOverride(Y 已砍,真机不撞 DNS 即无需) / static api_token fallback v1.0.x 删 / pair_codes cron 清理。**v1.0 是下一个大版本**(打磨期)。
