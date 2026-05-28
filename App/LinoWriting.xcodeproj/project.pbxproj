@@ -94,6 +94,7 @@
 		EF32D377C8F452C9EAB84558 /* BookCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD5F19942EF7BFC503F7F727 /* BookCardView.swift */; };
 		F235C2F080FC1BFB8C1F5694 /* ErrorBus.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6B7C55DE09B49123FDF68F2 /* ErrorBus.swift */; };
 		F3D276DC5FAE548BFAAEE9A8 /* Book.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E1A95792F4074A542705A2A /* Book.swift */; };
+		F3EB7C91E199B1316B5F62EF /* KeychainStoreMigrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C8A8B09C886517BC58657FC /* KeychainStoreMigrationTests.swift */; };
 		F77402661BB5E16C1E00EB09 /* CharacterFieldHighlightsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8AA7F06D6946A2E4DB10CCC2 /* CharacterFieldHighlightsTests.swift */; };
 		F987288D60AEDF8F5072BE2B /* ChaptersStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFFFA46EC62CC96A055989EF /* ChaptersStore.swift */; };
 		FD9BCF48D0942C14F68533AB /* ChapterEditorStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79FE421971D21F740D9135D5 /* ChapterEditorStore.swift */; };
@@ -173,6 +174,7 @@
 		90E18210A772CB644A33786D /* NewBookSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewBookSheet.swift; sourceTree = "<group>"; };
 		9270C694BC872945963D987E /* ProviderKey.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderKey.swift; sourceTree = "<group>"; };
 		995F5BDA6A5D1274715E1DC4 /* AppStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStore.swift; sourceTree = "<group>"; };
+		9C8A8B09C886517BC58657FC /* KeychainStoreMigrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStoreMigrationTests.swift; sourceTree = "<group>"; };
 		A1C1E4DA441F543FD625F726 /* AppStoreBannerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStoreBannerTests.swift; sourceTree = "<group>"; };
 		A6B7C55DE09B49123FDF68F2 /* ErrorBus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ErrorBus.swift; sourceTree = "<group>"; };
 		A7399AB340E04D17D1317F54 /* BookshelfStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookshelfStore.swift; sourceTree = "<group>"; };
@@ -264,6 +266,7 @@
 				C55E72267C8254CFB9D9CF97 /* DevicePairingTests.swift */,
 				C951EA31F571E35670BF4D2F /* ErrorBusHistoryTests.swift */,
 				16237DD8AEB48AAFBF77622A /* ExportTests.swift */,
+				9C8A8B09C886517BC58657FC /* KeychainStoreMigrationTests.swift */,
 				57FEEF176E8A04434A70B8F4 /* MockAPIClient.swift */,
 				E71AED5CE653255C13D001BB /* ProviderKeysStoreTests.swift */,
 				AF097B90043258DA067B33D7 /* SSEClientTests.swift */,
@@ -681,6 +684,7 @@
 				EED800669AEA9C31FD4C33EE /* DevicePairingTests.swift in Sources */,
 				A71D9DE94C4FFFF1D859704E /* ErrorBusHistoryTests.swift in Sources */,
 				235047FFF66A56D1E8CC3A61 /* ExportTests.swift in Sources */,
+				F3EB7C91E199B1316B5F62EF /* KeychainStoreMigrationTests.swift in Sources */,
 				B24A9CEE22266DD7B0E57E5C /* MockAPIClient.swift in Sources */,
 				309AF07E5B1B1DDA63E0AB68 /* ProviderKeysStoreTests.swift in Sources */,
 				722CC4BBD3EB02C07F74556F /* SSEClientTests.swift in Sources */,
@@ -710,6 +714,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = LinoWriting/Resources/LinoWriting.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -784,7 +789,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.8;
+				MARKETING_VERSION = 0.9.1;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -847,7 +852,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.8;
+				MARKETING_VERSION = 0.9.1;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -935,6 +940,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = LinoWriting/Resources/LinoWriting.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;

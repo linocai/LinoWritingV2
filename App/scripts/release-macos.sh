@@ -114,15 +114,54 @@ if [ -z "$DEV_ID" ]; then
 fi
 echo "    identity: $DEV_ID"
 
+# ---- v0.9.1 §5.CC: preserve entitlements across the Developer ID re-sign ----
+# `codesign --force --sign X` WITHOUT --entitlements DROPS the entitlements
+# Xcode's Automatic signing baked in (CODE_SIGN_ENTITLEMENTS). The app needs
+# `keychain-access-groups` to reach the data-protection keychain without a
+# password prompt — losing it would silently break the v0.9.1 zero-prompt fix.
+# So extract the resolved entitlements from the Xcode-signed app (the
+# $(AppIdentifierPrefix) variable is already resolved to the real Team prefix
+# in the built product) and re-apply them on the Developer ID re-sign.
+step "extract entitlements from Xcode-signed app"
+ENT_PLIST="$(mktemp -t linoi-ent).plist"
+codesign -d --entitlements - --xml "$APP" > "$ENT_PLIST" 2>/dev/null || true
+# CRITICAL: the Xcode Release build is signed with the "Apple Development"
+# cert (X-1 Automatic signing), which injects `com.apple.security.get-task-allow`
+# (= true) — a *debug* entitlement that lets a debugger attach. The notary
+# service REJECTS any app carrying it ("The executable requests the
+# com.apple.security.get-task-allow entitlement", statusCode 4000). Before
+# v0.9.1 release-macos.sh re-signed WITHOUT --entitlements so codesign stripped
+# everything including get-task-allow → notarize passed. Now that we preserve
+# entitlements (for keychain-access-groups), we must explicitly DROP
+# get-task-allow, keeping only the distribution-safe keys
+# (keychain-access-groups / application-identifier / team-identifier).
+/usr/libexec/PlistBuddy -c "Delete :com.apple.security.get-task-allow" "$ENT_PLIST" 2>/dev/null || true
+if grep -q "keychain-access-groups" "$ENT_PLIST" 2>/dev/null; then
+    echo "    entitlements captured (keychain-access-groups present, get-task-allow stripped)"
+    ENT_ARG=(--entitlements "$ENT_PLIST")
+else
+    echo "    WARN: no keychain-access-groups in extracted entitlements — re-signing WITHOUT entitlements" >&2
+    echo "          (data-protection keychain would break; check CODE_SIGN_ENTITLEMENTS in project.yml)" >&2
+    ENT_ARG=()
+fi
+
 # ---- re-sign with Developer ID (overrides X-1 Apple Development sig) -------
-step "codesign with Developer ID (hardened runtime + timestamp)"
+step "codesign with Developer ID (hardened runtime + timestamp + entitlements)"
 codesign --force --deep --options runtime --timestamp \
+    "${ENT_ARG[@]}" \
     --sign "$DEV_ID" "$APP"
 echo "    signed."
 
 # verify the signature locally before any upload
 step "verify codesign"
 codesign --verify --deep --strict --verbose=2 "$APP"
+# confirm entitlements survived the re-sign
+step "verify entitlements survived re-sign"
+if codesign -d --entitlements - --xml "$APP" 2>/dev/null | grep -q "keychain-access-groups"; then
+    echo "    keychain-access-groups present in final signature ✓"
+else
+    die "keychain-access-groups LOST after Developer ID re-sign — data-protection keychain would break"
+fi
 
 if [ "$SKIP_NOTARIZE" -eq 1 ]; then
     echo "==> --skip-notarize set: skipping notarytool submit + stapler staple"

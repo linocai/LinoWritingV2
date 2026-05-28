@@ -47,6 +47,28 @@ final class AppEnvironment: ObservableObject {
     ) {
         self.keychain = keychain
         self.settings = settings
-        self.errorBus = errorBus ?? ErrorBus()
+        let bus = errorBus ?? ErrorBus()
+        self.errorBus = bus
+
+        // v0.9.1 §5.CC (CC-1): run the one-time legacy → data-protection
+        // keychain migration here, at the composition root, *before* the
+        // lazy `appStore` is first touched (its init reads `keychain.baseURL`
+        // to decide whether to seed the production default). Doing it here
+        // means the migrated baseURL / token rows are already in the
+        // data-protection keychain by the time anything reads them, so the
+        // seed logic sees the author's existing URL and won't overwrite it.
+        //
+        // The migration is idempotent (skips accounts already present in the
+        // data-protection keychain), so later launches do nothing. On the
+        // first 0.9.1 launch on macOS the single legacy read may trigger one
+        // last ACL prompt; after that every read hits the entitlement-gated
+        // data-protection keychain → zero prompts.
+        let failedAccounts = keychain.migrateFromLegacyKeychainIfNeeded()
+        if !failedAccounts.isEmpty {
+            bus.publish(
+                "Keychain 迁移：\(failedAccounts.count) 个凭据未能迁移到数据保护 keychain，已保留旧条目。如登录异常请在「设置 → 连接」重新填写 token。",
+                critical: false
+            )
+        }
     }
 }
