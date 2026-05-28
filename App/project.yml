@@ -32,7 +32,7 @@ settings:
     CODE_SIGN_STYLE: Automatic
     DEVELOPMENT_TEAM: HX73DFL88G
     ENABLE_HARDENED_RUNTIME: YES
-    MARKETING_VERSION: "0.9.1"
+    MARKETING_VERSION: "0.9.2"
     CURRENT_PROJECT_VERSION: "1"
 
 targets:
@@ -47,12 +47,19 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.lino.linowriting.LinoWriting
         PRODUCT_NAME: LinoI
-        # v0.9.1 §5.CC (CC-1): keychain-access-groups entitlement gates the
-        # data-protection keychain so macOS reads the token without an ACL
-        # password prompt. Only the app target carries this — the test
-        # bundles are hosted inside LinoI.app and must NOT declare their own
-        # keychain entitlement (would conflict at signing time).
-        CODE_SIGN_ENTITLEMENTS: LinoWriting/Resources/LinoWriting.entitlements
+        # v0.9.2 (Plan A revert): v0.9.1 wired CODE_SIGN_ENTITLEMENTS to add a
+        # `keychain-access-groups` entitlement (data-protection keychain). On a
+        # Developer ID app that forced Xcode to embed a *device-locked
+        # development* provisioning profile; release-macos.sh then re-signed
+        # with the Developer ID cert → cert/profile type mismatch → AMFI
+        # rejected launchd spawn (POSIX 163) → app would not open. Reverted to
+        # the v0.9 model: NO CODE_SIGN_ENTITLEMENTS, file-based login keychain,
+        # and rely on the now-stable Developer ID signature so the macOS
+        # keychain "Always Allow" choice persists across launches (it never
+        # stuck under ad-hoc signing because every rebuild changed the
+        # designated requirement). The entitlements file stays on disk but is
+        # intentionally NOT referenced — keeping it dormant avoids re-embedding
+        # a profile. See PROJECT_PLAN §5.CC + reviewer audit.
         # Keep the Swift module name as LinoWriting so internal imports
         # (`@testable import LinoWriting` etc.) and 52 source files don't
         # need a sweeping rename just because the app bundle is now LinoI.
