@@ -3175,3 +3175,13 @@ v0.9.1 上线即翻车:macOS app **直接打不开**(Finder「应用程序"LinoI
 - **iOS 打包**:`scripts/release-ios.sh`。`ARCHIVE/EXPORT SUCCEEDED` + **altool `UPLOAD SUCCEEDED`**(Delivery UUID `99f1d45a-...`)→ TestFlight 处理中(5–30 分钟)。
 - **收尾**:两次 `xcodegen generate` 把 3 个 xcscheme 退回 `LinoWriting.app`,`git checkout App/LinoWriting.xcodeproj/` 还原(LinoI.app 命名 = commit `24f93ea` 状态)。工作树干净。
 - **⏳ 仍待作者**:① 真机走一遍完整 SOP(导入→正文落地→手动提取→写作)确认两个 bug 主观体验已修;② TestFlight 处理完成后真机 OTA 验 iOS。**发版 ≠ 验收**,主观验收以作者真机为准。
+
+### [2026-05-31] iOS 白屏急修 —— `.frame(minWidth:880)` 漏套到 iOS(潜伏自 K-1)
+
+作者进 iOS app「直接白屏」。接管者在 **iOS 模拟器真 launch + 截图**(非只 build)定位根因:`LinoWritingApp` 给 `RootView` 加的 `.frame(minWidth: 880, minHeight: 580)`(K-1 v0.6 为 macOS 窗口最小尺寸加)写在 `#if os(macOS)` **外面**,iOS 也套 → 强制 RootView ≥880pt 宽(宽于任何 iPhone ~393pt)→ 内容撑到 880 居中:**居中内容可见(空状态 / DevicePairView 居中标题),但贴边的导航栏 + 工具栏按钮 + Bookshelf「书架」标题 + Toast 全被挤出屏幕 → 顶栏一条白、边缘文字被裁**。DevicePairView 因内容全居中「看着没事」,掩盖了问题。
+
+- **没被发现的根因**:iOS app 一路只 `xcodebuild build` / `archive` / TestFlight 上传,**从没真正 launch 跑过 UI**(macOS 才有人工真机跑)。build/archive 成功 ≠ 渲染正确。**不是 DI / v0.9.3 引入**(`LinoWritingApp` 本次 DI 没动)。
+- **修**:`.frame(minWidth:880,minHeight:580)` 用 `#if os(macOS)` 包起来(macOS 行为不变;iOS 不再套)。
+- **验证**:iOS 模拟器三屏截图确认 —— DevicePairView 边缘文字回正 / Bookshelf 标题栏回来 / Workspace 导航栏+工具栏+Toast 全回来;macOS Debug build 仍 SUCCEEDED(frame 仍在 `#if os(macOS)` 内,行为不变)。
+- **教训(待补 CLAUDE.md)**:① 改 iOS View 后必须 `simctl launch` 真跑 + 截图看,不能只 build/archive;② 给 macOS 窗口用的 `.frame(minWidth:)` 必须 `#if os(macOS)`,否则在 iOS 撑爆布局把边缘元素顶出屏幕。
+- **待发版**:本 fix 需作者真机(Xcode → Run 或新 TestFlight build)确认白屏消失后,作为 **0.9.4** 走 5 处版本号 + 重打包(iOS 必出新 build;macOS 不受影响但 lockstep)。
