@@ -3212,3 +3212,7 @@ v0.9.1 上线即翻车:macOS app **直接打不开**(Finder「应用程序"LinoI
 - **✗ 又抓到 2 个 sheet 溢出**:`NewChapterSheet`(`.frame(minWidth: 520…)`)+ `ImportChapterSheet`(`.frame(minWidth: 560…)`)。这俩是 macOS sheet 固定尺寸,`minWidth` > iPhone 屏宽(~393pt)→ 内容撑宽溢出两边(标题/分段控件/提交按钮被切),与白屏(RootView frame)同一类「macOS 尺寸漏套 iOS」。`NewChapterSheet` 的批量失败子 sheet(`minWidth:460`)同病。
 - **修**:三处 `.frame(minWidth:…)` 全部 `#if os(macOS)` 包起来;iOS 不设显式尺寸,sheet 由系统全宽呈现,内部 ScrollView + 钉死 footer 自适应。**验证**:iOS 模拟器重截两 sheet,标题/分段/输入框/footer 全在屏内无溢出;macOS + iOS build 均 SUCCEEDED(macOS sheet 尺寸不变)。
 - **sweep 结论**:白屏(RootView 880 frame)+ 工具栏(macOS 宽屏 HStack)+ 两 sheet(minWidth)是 iOS 仅有的几处「macOS 尺寸漏套」布局 bug,现已全部根治。所有 iOS-only fix 一次性发 **0.9.5**。
+
+### [2026-05-31] v0.9.5 iOS-only 发版(白屏+工具栏+两 sheet 修复合并出 TestFlight)
+
+前端 `MARKETING_VERSION` 0.9.4 → **0.9.5**(project.yml + pbxproj),含本日 iOS 三类布局修复(白屏 RootView frame / ChapterToolbar 图标化 / 两 sheet minWidth)。`CURRENT_PROJECT_VERSION` 仍 `1`。**后端保持 0.9.3 不 redeploy、macOS 不重打包**(均为纯 iOS 布局 fix,不影响)。`release-ios.sh` **`UPLOAD SUCCEEDED`**(Delivery UUID `9b1e8692-...`)→ TestFlight 处理中。版本现状:前端 0.9.5 / 后端 0.9.3。**⏳ 待作者**:TestFlight 处理完真机 OTA 装 0.9.5,完整走一遍(进 app → 编辑器工具栏 → 新建/导入 sheet → 辅助面板)确认 iOS UI 全正常。
