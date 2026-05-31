@@ -3184,4 +3184,14 @@ v0.9.1 上线即翻车:macOS app **直接打不开**(Finder「应用程序"LinoI
 - **修**:`.frame(minWidth:880,minHeight:580)` 用 `#if os(macOS)` 包起来(macOS 行为不变;iOS 不再套)。
 - **验证**:iOS 模拟器三屏截图确认 —— DevicePairView 边缘文字回正 / Bookshelf 标题栏回来 / Workspace 导航栏+工具栏+Toast 全回来;macOS Debug build 仍 SUCCEEDED(frame 仍在 `#if os(macOS)` 内,行为不变)。
 - **教训(待补 CLAUDE.md)**:① 改 iOS View 后必须 `simctl launch` 真跑 + 截图看,不能只 build/archive;② 给 macOS 窗口用的 `.frame(minWidth:)` 必须 `#if os(macOS)`,否则在 iOS 撑爆布局把边缘元素顶出屏幕。
-- **待发版**:本 fix 需作者真机(Xcode → Run 或新 TestFlight build)确认白屏消失后,作为 **0.9.4** 走 5 处版本号 + 重打包(iOS 必出新 build;macOS 不受影响但 lockstep)。
+- **待发版**:本 fix 需作者真机(Xcode → Run 或新 TestFlight build)确认白屏消失后,作为 **0.9.4** 出新 iOS build。
+
+### [2026-05-31] v0.9.4 iOS-only 发版(白屏修复上 TestFlight)
+
+作者拍板「**只发 iOS,macOS/后端不动**」。单 app target 的 `MARKETING_VERSION` 是 macOS+iOS 共享(无法干净拆版本),故:
+
+- 前端 `MARKETING_VERSION` 0.9.3 → **0.9.4**(`App/project.yml` + `pbxproj`)。`CURRENT_PROJECT_VERSION` 仍 `1`(新 MARKETING_VERSION 下 build 1 是全新 (version,build) 对,TestFlight 接受,无需 bump build 号)。
+- **后端 4 处版本号保持 0.9.3、不 redeploy**;**macOS 不重打包**(桌面 0.9.3 notarized 不动 —— 白屏 fix 是纯 iOS 布局,不影响 macOS)。
+- `release-ios.sh` archive 0.9.4(含 `.frame(minWidth:)` macOS-only 修复)+ export + altool **`UPLOAD SUCCEEDED`**(Delivery UUID `a50dbdda-...`)→ TestFlight 处理中。
+- **版本现状(刻意的 split)**:前端 0.9.4 / 后端 0.9.3。fix 不碰契约,前后端兼容。下个需要动后端的版本再把两者拉齐。
+- **⏳ 待作者**:TestFlight 处理完真机 OTA 装 0.9.4,确认「进 app 不再白屏 + 顶部导航/工具栏正常」。
