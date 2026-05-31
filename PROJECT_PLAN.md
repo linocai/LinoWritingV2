@@ -3203,3 +3203,12 @@ v0.9.1 上线即翻车:macOS app **直接打不开**(Finder「应用程序"LinoI
 - **修**:compact 宽度(iPhone,`horizontalSizeClass == .compact`)下整个按钮簇套 `.labelStyle(.iconOnly)`(纯图标不换行);regular(macOS / iPad)保持原文字标签**完全不变**。`horizontalSizeClass` 在 macOS 不可用(镜像 WorkspaceView 的 `#if !os(macOS)` 守卫),用 `#if os(iOS)` 包,macOS 恒 non-compact。固定元素(第N章 / StatusBadge)加 `.fixedSize()` 防压扁,`Spacer` 改 `minLength:8`。
 - **验证**:iOS 模拟器真 launch 截图,finalized(3 钮:提取/重新打开/⋯)+ draftReady(4 钮:导入/重新生成/完成/⋯)两态均为干净单行图标,药丸消失;macOS + iOS Debug build 均 SUCCEEDED(macOS 行为不变)。
 - **待发版**:同白屏 fix,iOS-only 新 build。**强烈建议给 iOS UI 做一次系统性 QA sweep**(RightPanel 辅助面板 / 各 sheet / 带数据的 Bookshelf 书架)止住「单点修一个发一个」的 whack-a-mole —— 根因是 v0.8/v0.9 iOS UI 从没人工真机/模拟器跑过。
+
+### [2026-05-31] iOS 全面 sweep —— DEBUG 截图画廊逐屏验,补修两个 sheet 溢出
+
+作者拍板「先 sweep 再一次发 0.9.5」止住 whack-a-mole。接管者在 `RootView` 临时加 DEBUG 截图画廊(`--args uiscreen=<name>` 渲染单屏,build 一次逐屏 `simctl launch`+截图,**用完 `git checkout` 还原,未提交**),iOS 模拟器系统性扫 8 个界面:
+
+- **✓ 已 OK(6)**:DevicePairView、BookshelfView、WorkspaceView(导航栏+编辑器空态)、ChapterToolbar(finalized/draftReady)、RightPanelView(角色卡/时间线 tab)、SettingsView —— 标准 List/Form/居中内容,iOS 适配良好。
+- **✗ 又抓到 2 个 sheet 溢出**:`NewChapterSheet`(`.frame(minWidth: 520…)`)+ `ImportChapterSheet`(`.frame(minWidth: 560…)`)。这俩是 macOS sheet 固定尺寸,`minWidth` > iPhone 屏宽(~393pt)→ 内容撑宽溢出两边(标题/分段控件/提交按钮被切),与白屏(RootView frame)同一类「macOS 尺寸漏套 iOS」。`NewChapterSheet` 的批量失败子 sheet(`minWidth:460`)同病。
+- **修**:三处 `.frame(minWidth:…)` 全部 `#if os(macOS)` 包起来;iOS 不设显式尺寸,sheet 由系统全宽呈现,内部 ScrollView + 钉死 footer 自适应。**验证**:iOS 模拟器重截两 sheet,标题/分段/输入框/footer 全在屏内无溢出;macOS + iOS build 均 SUCCEEDED(macOS sheet 尺寸不变)。
+- **sweep 结论**:白屏(RootView 880 frame)+ 工具栏(macOS 宽屏 HStack)+ 两 sheet(minWidth)是 iOS 仅有的几处「macOS 尺寸漏套」布局 bug,现已全部根治。所有 iOS-only fix 一次性发 **0.9.5**。

@@ -104,6 +104,12 @@ public struct NewChapterSheet: View {
 
             footer
         }
+        // v0.9.x iOS fix: this fixed sheet sizing is macOS-only. On iOS the
+        // sheet is presented full-width by the system; a minWidth of 520pt
+        // (> iPhone width ~393pt) forced the content to overflow off both
+        // edges (title / segmented picker / submit button clipped). On iOS we
+        // set no explicit size — the ScrollView + pinned footer fill the sheet.
+        #if os(macOS)
         .frame(
             minWidth: 520,
             idealWidth: 580,
@@ -111,6 +117,7 @@ public struct NewChapterSheet: View {
             idealHeight: idealHeight,
             maxHeight: 560
         )
+        #endif
         .sheet(isPresented: $showFailureSheet) {
             batchFailureSheet
         }
@@ -408,7 +415,9 @@ public struct NewChapterSheet: View {
             }
         }
         .padding(24)
+        #if os(macOS)
         .frame(minWidth: 460, minHeight: 320)
+        #endif
     }
 
     // MARK: Submit gating

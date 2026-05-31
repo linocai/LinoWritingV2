@@ -129,7 +129,13 @@ public struct ImportChapterSheet: View {
         // inside the K-1 minimum window (880×580). idealHeight stays larger
         // so on roomy displays the sheet still feels generous; maxHeight caps
         // it to the K-1 window so the footer can't clip below the bottom edge.
+        //
+        // v0.9.x iOS fix: macOS-only. minWidth 560 (> iPhone ~393pt) forced the
+        // sheet content to overflow off both edges on iOS. The system presents
+        // iOS sheets full-width; no explicit size needed there.
+        #if os(macOS)
         .frame(minWidth: 560, idealWidth: 620, minHeight: 440, idealHeight: 560, maxHeight: 560)
+        #endif
     }
 
     private var header: some View {
