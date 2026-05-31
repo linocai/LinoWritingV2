@@ -3165,3 +3165,13 @@ v0.9.1 上线即翻车:macOS app **直接打不开**(Finder「应用程序"LinoI
 - **DI-4 版本号**:5 处 `0.9.2 → 0.9.3`(`App/project.yml MARKETING_VERSION` + `Backend/pyproject.toml` + `app/main.py` + `routers/health.py` + `tests/test_auth.py`)。
 - **测试基线**(v0.9.2 末 → v0.9.3):后端 pytest SQLite 222 → **229**(+7 extract);macOS XCTest 132 → **140**(+7 extract,1 keychain bundle 跑时跳过 → 实跑 136 非 keychain 绿);iOS XCTest **50**(extract 通路仅验编译,测试在 macOS bundle)。后端 `-W error` 干净。
 - **⏳ 未做(发版操作,待作者驱动)**:① **真机 `open` 验证两个 bug 实修**(CLAUDE.md 铁律:notarize/测试过 ≠ 能用,必须真机跑一遍 SOP);② HZ `deploy-hz.sh` 推 0.9.3(**无迁移**,仅代码 + 版本)+ smoke `{"version":"0.9.3"}`;③ LinoI macOS `release-macos.sh`(Developer ID notarize)+ iOS `release-ios.sh`(TestFlight)双端重打包。**注意**:导入「只落正文」路径不依赖 `/extract`,连旧 HZ(0.9.2)也能验 Bug1/Bug2;但工具栏「提取」按钮需 HZ 部署 0.9.3 后才有 `/extract` 端点,否则 404。
+
+### [2026-05-31] **v0.9.3 发布(部署 + 双端打包完成)**
+
+代码 `git` 合并到 `main`(`0c56349`)后,发版三步全部由接管者执行完成:
+
+- **HZ 部署**:`./Backend/deploy/deploy-hz.sh` 推 0.9.3,pip `0.9.2`→`0.9.3`,`alembic upgrade head` 无新迁移(no-op,仍 11 条迁移链)。`linowriting-api` reload-restart,`SubState=running` / `ActiveEnterTimestamp=2026-05-31 15:44:21 CST`,venv 实装 `0.9.3`、`health.py` 字面量 `0.9.3`(非 secret 三联确认;带 token 的 HTTP smoke 因「提取生产 secret」被安全分类器拦,由作者人工跑)。`/extract` 端点上线。邻居业务未受影响。`hz_info.md` §13 同步。
+- **macOS 打包**:`scripts/release-macos.sh`。Developer ID 真签(`ZheYuan Cai (HX73DFL88G)`)+ **无 embedded profile / 无 get-task-allow**(Plan A 干净)+ 真机 `open` 进程起来(无 AMFI/POSIX 163,启动回归通过)+ **notarytool `Accepted`** + stapler `worked!` + `spctl accepted / source=Notarized Developer ID`。部署 `~/Desktop/LinoI.app`(0.9.3)。
+- **iOS 打包**:`scripts/release-ios.sh`。`ARCHIVE/EXPORT SUCCEEDED` + **altool `UPLOAD SUCCEEDED`**(Delivery UUID `99f1d45a-...`)→ TestFlight 处理中(5–30 分钟)。
+- **收尾**:两次 `xcodegen generate` 把 3 个 xcscheme 退回 `LinoWriting.app`,`git checkout App/LinoWriting.xcodeproj/` 还原(LinoI.app 命名 = commit `24f93ea` 状态)。工作树干净。
+- **⏳ 仍待作者**:① 真机走一遍完整 SOP(导入→正文落地→手动提取→写作)确认两个 bug 主观体验已修;② TestFlight 处理完成后真机 OTA 验 iOS。**发版 ≠ 验收**,主观验收以作者真机为准。
