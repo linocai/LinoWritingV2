@@ -3195,3 +3195,11 @@ v0.9.1 上线即翻车:macOS app **直接打不开**(Finder「应用程序"LinoI
 - `release-ios.sh` archive 0.9.4(含 `.frame(minWidth:)` macOS-only 修复)+ export + altool **`UPLOAD SUCCEEDED`**(Delivery UUID `a50dbdda-...`)→ TestFlight 处理中。
 - **版本现状(刻意的 split)**:前端 0.9.4 / 后端 0.9.3。fix 不碰契约,前后端兼容。下个需要动后端的版本再把两者拉齐。
 - **⏳ 待作者**:TestFlight 处理完真机 OTA 装 0.9.4,确认「进 app 不再白屏 + 顶部导航/工具栏正常」。
+
+### [2026-05-31] iOS 急修 ② —— ChapterToolbar 按钮在 iPhone 撑成巨型药丸
+
+白屏修复后,作者反馈编辑器顶部工具栏「按钮完全一塌糊涂」。根因:`ChapterToolbar` 是 macOS 宽屏 `HStack`(标题输入框 `maxWidth 360` + 多个**带中文文字标签的按钮** + Spacer),iPhone 窄屏(~357pt 可用)塞不下 → 带文字的 `.bordered`/`.borderedProminent` 按钮被横向压扁 → Label 文字竖排逐字换行 → 按钮撑成巨型竖向药丸挤乱整行。又是同一类「iOS 只 build/archive、从没真 launch 跑」漏网的布局 bug。
+
+- **修**:compact 宽度(iPhone,`horizontalSizeClass == .compact`)下整个按钮簇套 `.labelStyle(.iconOnly)`(纯图标不换行);regular(macOS / iPad)保持原文字标签**完全不变**。`horizontalSizeClass` 在 macOS 不可用(镜像 WorkspaceView 的 `#if !os(macOS)` 守卫),用 `#if os(iOS)` 包,macOS 恒 non-compact。固定元素(第N章 / StatusBadge)加 `.fixedSize()` 防压扁,`Spacer` 改 `minLength:8`。
+- **验证**:iOS 模拟器真 launch 截图,finalized(3 钮:提取/重新打开/⋯)+ draftReady(4 钮:导入/重新生成/完成/⋯)两态均为干净单行图标,药丸消失;macOS + iOS Debug build 均 SUCCEEDED(macOS 行为不变)。
+- **待发版**:同白屏 fix,iOS-only 新 build。**强烈建议给 iOS UI 做一次系统性 QA sweep**(RightPanel 辅助面板 / 各 sheet / 带数据的 Bookshelf 书架)止住「单点修一个发一个」的 whack-a-mole —— 根因是 v0.8/v0.9 iOS UI 从没人工真机/模拟器跑过。

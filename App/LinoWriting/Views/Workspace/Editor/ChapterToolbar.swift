@@ -27,6 +27,23 @@ public struct ChapterToolbar: View {
     /// firing two downloads.
     @State private var isExportingChapter: Bool = false
 
+    // v0.9.x iOS fix: on a narrow iPhone toolbar the macOS-era text button
+    // labels ("提取角色/时间线" etc.) don't fit; SwiftUI wrapped them vertically
+    // into giant pills. On compact width we render the action buttons icon-only.
+    // `horizontalSizeClass` is iOS-only (unavailable on macOS — mirrors the
+    // `#if !os(macOS)` guard in WorkspaceView), so macOS always reports
+    // non-compact and keeps the full text labels.
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var hSizeClass
+    #endif
+    private var isCompact: Bool {
+        #if os(iOS)
+        return hSizeClass == .compact
+        #else
+        return false
+        #endif
+    }
+
     public init(chapter: Chapter, onImportTap: @escaping () -> Void = {}) {
         self.chapter = chapter
         self.onImportTap = onImportTap
@@ -37,27 +54,16 @@ public struct ChapterToolbar: View {
         HStack(spacing: 12) {
             Text("第 \(chapter.index) 章")
                 .font(.headline)
+                .fixedSize()
             TextField("章节标题（可选）", text: $titleDraft, onCommit: commitTitle)
                 .textFieldStyle(.plain)
                 .font(.title3)
                 .frame(maxWidth: 360)
                 .onChange(of: chapter.title ?? "") { _, new in titleDraft = new }
             StatusBadge(chapter.status)
-            Spacer()
-            // PROJECT_PLAN §5.A.6 / §5.A.7: "导入文本" sits parallel to
-            // "展开提纲" / "写作" etc. Hidden in `writing` (SSE race per A-1
-            // reviewer) and `finalized` (chapter immutable). Visible in
-            // draft / prompt_ready / draft_ready — the backend white-list.
-            if canImport {
-                Button(action: onImportTap) {
-                    Label("导入文本", systemImage: "square.and.arrow.down")
-                }
-                .buttonStyle(.bordered)
-                .disabled(chapterEditorStore.isImporting)
-                .help("把已写好的章节正文导入并落地为已完成章节；之后可点「提取角色/时间线」更新角色卡 / 时间线")
-            }
-            primaryActionButtons
-            moreMenu
+                .fixedSize()
+            Spacer(minLength: 8)
+            actionButtons
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 10)
@@ -73,6 +79,39 @@ public struct ChapterToolbar: View {
             }
         } message: {
             Text("把当前章节强制改回「正文完成」状态。\n正文（draft_text）和结构化提示（structured_prompt）会保留，仅清掉写作中状态。\n\n用于章节状态卡死时自救，正常流程不要用。")
+        }
+    }
+
+    /// Trailing action cluster. On compact width (iPhone) renders the buttons
+    /// icon-only so their Chinese text labels ("提取角色/时间线" 等) don't get
+    /// horizontally crushed and wrap vertically into giant pills (v0.9.x iOS
+    /// bug). On regular width (macOS / iPad) the cluster is unmodified — labels
+    /// keep their default style exactly as before.
+    @ViewBuilder
+    private var actionButtons: some View {
+        if isCompact {
+            actionClusterRaw.labelStyle(.iconOnly)
+        } else {
+            actionClusterRaw
+        }
+    }
+
+    private var actionClusterRaw: some View {
+        HStack(spacing: isCompact ? 8 : 12) {
+            // PROJECT_PLAN §5.A.6 / §5.A.7: "导入文本" sits parallel to "展开提纲"
+            // / "写作". Hidden in `writing` (SSE race per A-1 reviewer) and
+            // `finalized` (chapter immutable); visible in draft / prompt_ready /
+            // draft_ready — the backend white-list.
+            if canImport {
+                Button(action: onImportTap) {
+                    Label("导入文本", systemImage: "square.and.arrow.down")
+                }
+                .buttonStyle(.bordered)
+                .disabled(chapterEditorStore.isImporting)
+                .help("把已写好的章节正文导入并落地为已完成章节；之后可点「提取角色/时间线」更新角色卡 / 时间线")
+            }
+            primaryActionButtons
+            moreMenu
         }
     }
 
