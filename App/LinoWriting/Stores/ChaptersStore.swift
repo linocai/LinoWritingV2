@@ -53,7 +53,14 @@ public final class ChaptersStore: ObservableObject {
             )
             chapters.append(new.summaryShape)
             selectedChapterId = new.id
-            showNewChapterSheet = false
+            // PROJECT_PLAN v0.9.3 §5.DI (reviewer 🟡#2): do NOT flip
+            // `showNewChapterSheet` here. Closing the new-chapter sheet is the
+            // caller's responsibility (`NewChapterSheet.submit()` calls
+            // `dismiss()` on its success paths). `submitImport` creates a
+            // skeleton chapter via this method as step 1 of a two-step import;
+            // if the subsequent import fails it must keep the sheet OPEN so the
+            // already-pasted body in `@State draftText` survives for retry.
+            // Auto-closing the sheet here would tear that down prematurely.
             return new
         } catch let error as AppError {
             errorBus.publish(error); return nil

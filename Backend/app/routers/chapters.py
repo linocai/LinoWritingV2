@@ -16,7 +16,7 @@ from app.agents.extractor import ExtractorAgent
 from app.agents.prompt_expander import PromptExpanderAgent
 from app.agents.writer import WriterAgent
 from app.db import get_db
-from app.errors import AppError, i18n_not_found, i18n_upstream
+from app.errors import AppError, i18n_conflict, i18n_not_found, i18n_upstream
 from app.llm.base import (
     LLMClient,
     get_expander_llm_client,
@@ -196,6 +196,90 @@ def finalize_chapter(
     chapter = _get_chapter(db, chapter_id)
     ensure_chapter_status(chapter, {"draft_ready"}, "finalize")
     book = _get_book(db, chapter.book_id)
+    context = build_extractor_context(db, book, chapter)
+    started = now_ms()
+    try:
+        extractor_output = ExtractorAgent(llm).extract(context)
+        updated_character_ids, added_event_ids = apply_extractor_output(db, chapter, extractor_output)
+        log_agent_call(
+            db,
+            chapter_id=chapter.id,
+            agent_name="extractor",
+            input_data=context,
+            output_data=extractor_output,
+            started_at=started,
+        )
+        db.commit()
+    except (LLMError, AppError, ValueError) as exc:
+        db.rollback()
+        log_agent_call(
+            db,
+            chapter_id=chapter.id,
+            agent_name="extractor",
+            input_data=context,
+            started_at=started,
+            error=str(exc),
+        )
+        db.commit()
+        if isinstance(exc, AppError):
+            raise
+        raise i18n_upstream(
+            "llm_generic",
+            retryable=getattr(exc, "retryable", False),
+            detail=str(exc),
+        ) from exc
+    db.refresh(chapter)
+    return {
+        "chapter": ChapterRead.model_validate(chapter),
+        "updated_character_ids": updated_character_ids,
+        "added_event_ids": added_event_ids,
+    }
+
+
+@router.post("/chapters/{chapter_id}/extract")
+def extract_chapter(
+    chapter_id: str,
+    db: Session = Depends(get_db),
+    # v0.9.3 §5.DI — manual extract reuses the extractor key, same as
+    # /finalize and /import (run_extractor=True).
+    llm: LLMClient = Depends(get_extractor_llm_client),
+) -> dict[str, object]:
+    """Manually run the Extractor on an already-finalized chapter.
+
+    v0.9.3 §5.DI — import/extract decoupling. Import now only lands the
+    draft (→ finalized, no LLM). Extracting characters / timeline is a
+    separate, manually-triggered action. Pre-conditions: chapter must be
+    ``finalized`` (409 otherwise) and have non-empty ``draft_text``
+    (``no_draft_to_extract`` 409 otherwise).
+
+    Repeatable: the chapter's old timeline events are deleted first
+    (mirroring ``/reopen``) so re-running never piles up duplicate events;
+    live_fields are simply overwritten by the new Extractor output. The
+    chapter stays ``finalized`` throughout — only character cards + timeline
+    are rewritten. On failure ``db.rollback()`` leaves draft_text / status
+    untouched (they were never modified). Response envelope matches
+    ``/finalize`` and ``/import``.
+    """
+    chapter = _get_chapter(db, chapter_id)
+    ensure_chapter_status(chapter, {"finalized"}, "extract")
+    if (chapter.draft_text or "").strip() == "":
+        raise i18n_conflict("no_draft_to_extract")
+    book = _get_book(db, chapter.book_id)
+
+    # Clear this chapter's old timeline first so repeated extraction is
+    # idempotent (no duplicate events). Mirrors reopen_chapter's cleanup.
+    #
+    # NOTE (reviewer 🔵#1): the *real* dedup point shared with /finalize and
+    # /import is the identical `delete(TimelineEvent)` inside
+    # `apply_extractor_output` (extractor_apply.py). On the success path this
+    # pre-delete is therefore covered by that later delete; on the failure path
+    # it is undone by `db.rollback()`. Net effect of this block alone is zero —
+    # we keep it because PROJECT_PLAN §5.DI.2 step 1 explicitly requires it as a
+    # mirror of /reopen's cleanup (defensive: if apply ever stops deleting, this
+    # still guarantees no duplicate events on repeated extraction). Do not remove.
+    db.execute(delete(TimelineEvent).where(TimelineEvent.chapter_id == chapter.id))
+    db.flush()
+
     context = build_extractor_context(db, book, chapter)
     started = now_ms()
     try:

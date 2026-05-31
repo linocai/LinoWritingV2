@@ -29,6 +29,8 @@ _TEMPLATES: dict[tuple[str, str], str] = {
     ("conflict", "chapter_status_invalid_action"): (
         "章节当前正在「{status_cn}」中，无法{action_cn}"
     ),
+    # --- Chapter extract (v0.9.3 §5.DI) ---
+    ("conflict", "no_draft_to_extract"): "本章没有正文可提取",
     # --- Chapter / Book lookups ---
     ("not_found", "book"): "书籍不存在，可能已被删除",
     ("not_found", "chapter"): "章节不存在，可能已被删除",
@@ -72,6 +74,7 @@ CHAPTER_ACTION_CN: dict[str, str] = {
     "finalize": "定稿",
     "import": "导入正文",
     "reopen": "重新打开",
+    "extract": "提取角色/时间线",
 }
 
 # §5.N — Agent role English code → Chinese label. Mirrors the

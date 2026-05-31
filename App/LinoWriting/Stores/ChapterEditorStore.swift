@@ -28,6 +28,11 @@ public final class ChapterEditorStore: ObservableObject {
     @Published public private(set) var isExpanding: Bool = false
     @Published public private(set) var isFinalizing: Bool = false
     @Published public private(set) var isImporting: Bool = false
+    /// In-flight flag for the v0.9.3 §5.DI.3 manual "提取角色/时间线" path.
+    /// Toolbar uses it to disable the button + show a spinner while the
+    /// Extractor round-trip is running so the user can't fire a second
+    /// extract before the first returns.
+    @Published public private(set) var isExtracting: Bool = false
     /// In-flight flag for the §5.P.1 E "强制重置" path. Toolbar uses
     /// it to disable the menu item while the network round-trip is in
     /// flight so the user can't double-click and fire two redundant
@@ -98,6 +103,7 @@ public final class ChapterEditorStore: ObservableObject {
         isExpanding = false
         isFinalizing = false
         isImporting = false
+        isExtracting = false
         lastUpdatedCharacterIds = []
     }
 
@@ -236,6 +242,32 @@ public final class ChapterEditorStore: ObservableObject {
         defer { isFinalizing = false }
         do {
             let result = try await api.finalize(chapterId: chapter.id)
+            self.chapter = result.chapter
+            self.lastUpdatedCharacterIds = result.updatedCharacterIds
+            return result
+        } catch let error as AppError {
+            errorBus.publish(error)
+        } catch {
+            errorBus.publish(.transport(error.localizedDescription))
+        }
+        return nil
+    }
+
+    /// Manually re-runs the Extractor against the current (`finalized`)
+    /// chapter via `POST /chapters/{id}/extract` (PROJECT_PLAN v0.9.3
+    /// §5.DI.3). Mirrors `finalize()`: flips `isExtracting`, writes the
+    /// returned chapter + `lastUpdatedCharacterIds` (so the right-panel
+    /// highlight reuses the same pipe finalize/import already drive), and
+    /// returns the full envelope so the toolbar can refresh dependent
+    /// stores. Returns `nil` on failure; the error is already published to
+    /// `ErrorBus` and the chapter row is left untouched (the backend
+    /// doesn't mutate draft_text / status on extract).
+    public func extract() async -> ChapterImportResponse? {
+        guard let chapter else { return nil }
+        isExtracting = true
+        defer { isExtracting = false }
+        do {
+            let result = try await api.extractChapter(id: chapter.id)
             self.chapter = result.chapter
             self.lastUpdatedCharacterIds = result.updatedCharacterIds
             return result

@@ -3,7 +3,6 @@ import SwiftUI
 public struct NewChapterSheet: View {
     @EnvironmentObject var chaptersStore: ChaptersStore
     @EnvironmentObject var chapterEditorStore: ChapterEditorStore
-    @EnvironmentObject var charactersStore: CharactersStore
     @Environment(\.dismiss) private var dismiss
 
     /// Mode tab — v0.6.1 follow-up after A-2 user feedback: the
@@ -33,7 +32,6 @@ public struct NewChapterSheet: View {
     // import-mode fields
     @State private var draftText: String = ""
     @State private var summary: String = ""
-    @State private var runExtractor: Bool = true
 
     // v0.7 §5.O batch-mode state
     @State private var batchMode: Bool = false
@@ -72,54 +70,46 @@ public struct NewChapterSheet: View {
     public init() {}
 
     public var body: some View {
-        VStack(spacing: 16) {
-            Text("新建章节")
-                .font(.title2.weight(.semibold))
-                .frame(maxWidth: .infinity, alignment: .leading)
+        // PROJECT_PLAN v0.9.3 §5.DI.3: header + footer are pinned OUTSIDE the
+        // ScrollView so the "取消 / 提交" row is always visible regardless of
+        // window height. The greedy TextEditor lives inside the scroll area;
+        // a macOS sheet can't exceed its parent window (K-1 min 880×580), so
+        // the old un-capped VStack pushed the footer off-screen.
+        VStack(spacing: 0) {
+            header
 
-            Picker("", selection: $mode) {
-                ForEach(Mode.allCases) { m in Text(m.label).tag(m) }
-            }
-            .pickerStyle(.segmented)
-            .disabled(isSubmitting)
+            ScrollView {
+                VStack(spacing: 16) {
+                    // Title input is shared between create and single-chapter
+                    // import, but hidden in batch mode — each chapter gets its
+                    // title from the splitter (boundary line) instead.
+                    if !(mode == .importing && batchMode) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("标题（可选）").font(.callout.weight(.medium))
+                            TextField("例如：山洞夜话", text: $title)
+                                .textFieldStyle(.roundedBorder)
+                                .disabled(isSubmitting)
+                        }
+                    }
 
-            // Title input is shared between create and single-chapter import,
-            // but hidden in batch mode — each chapter gets its title from
-            // the splitter (boundary line) instead.
-            if !(mode == .importing && batchMode) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("标题（可选）").font(.callout.weight(.medium))
-                    TextField("例如：山洞夜话", text: $title)
-                        .textFieldStyle(.roundedBorder)
-                        .disabled(isSubmitting)
+                    if mode == .create {
+                        createFields
+                    } else {
+                        importFields
+                    }
                 }
+                .padding(.horizontal, 28)
+                .padding(.vertical, 16)
             }
 
-            if mode == .create {
-                createFields
-            } else {
-                importFields
-            }
-
-            HStack {
-                Button("取消") { dismiss() }
-                    .keyboardShortcut(.cancelAction)
-                    .disabled(isSubmitting)
-                Spacer()
-                Button(action: submit) {
-                    submitButtonLabel
-                }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
-                .disabled(isSubmitting || !canSubmit)
-            }
+            footer
         }
-        .padding(28)
         .frame(
             minWidth: 520,
             idealWidth: 580,
             minHeight: 440,
-            idealHeight: idealHeight
+            idealHeight: idealHeight,
+            maxHeight: 560
         )
         .sheet(isPresented: $showFailureSheet) {
             batchFailureSheet
@@ -145,8 +135,47 @@ public struct NewChapterSheet: View {
     private var idealHeight: CGFloat {
         switch mode {
         case .create: return 460
-        case .importing: return batchMode ? 640 : 560
+        case .importing: return batchMode ? 560 : 540
         }
+    }
+
+    // MARK: Pinned header / footer (stay visible while the form scrolls)
+
+    @ViewBuilder
+    private var header: some View {
+        VStack(spacing: 16) {
+            Text("新建章节")
+                .font(.title2.weight(.semibold))
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Picker("", selection: $mode) {
+                ForEach(Mode.allCases) { m in Text(m.label).tag(m) }
+            }
+            .pickerStyle(.segmented)
+            .disabled(isSubmitting)
+        }
+        .padding(.horizontal, 28)
+        .padding(.top, 28)
+        .padding(.bottom, 4)
+    }
+
+    @ViewBuilder
+    private var footer: some View {
+        Divider()
+        HStack {
+            Button("取消") { dismiss() }
+                .keyboardShortcut(.cancelAction)
+                .disabled(isSubmitting)
+            Spacer()
+            Button(action: submit) {
+                submitButtonLabel
+            }
+            .buttonStyle(.borderedProminent)
+            .keyboardShortcut(.defaultAction)
+            .disabled(isSubmitting || !canSubmit)
+        }
+        .padding(.horizontal, 28)
+        .padding(.vertical, 16)
     }
 
     // MARK: Submit button label
@@ -260,19 +289,17 @@ public struct NewChapterSheet: View {
             }
         }
 
-        Toggle(isOn: $runExtractor) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("导入后让 Agent 提取角色更新和时间线")
-                    .font(.callout)
-                Text(batchMode
-                     ? "对每一章都执行；关闭则只落正文"
-                     : "关闭则只落正文，不更新角色卡 / 时间线 / 摘要")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+        // PROJECT_PLAN v0.9.3 §5.DI: import only saves the body (→ finalized,
+        // never touches the LLM, so it always succeeds barring transport
+        // errors). Extraction is now a separate manual step.
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: "info.circle")
+                .foregroundStyle(.secondary)
+            Text("导入只保存正文；之后可在工具栏点「提取角色/时间线」更新角色卡 / 时间线。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .toggleStyle(.switch)
-        .disabled(isSubmitting)
     }
 
     // MARK: Batch preview
@@ -430,6 +457,12 @@ public struct NewChapterSheet: View {
     /// store's error-bus plumbing, so any failure surfaces as a Toast
     /// without dismissing this sheet — the user can fix and retry.
     private func submitImport(title: String?) async {
+        // PROJECT_PLAN v0.9.3 §5.DI: trim the body so leading/trailing
+        // clipboard whitespace doesn't land in storage, and guard against an
+        // all-whitespace paste sneaking past the trimmed `canSubmit` gate.
+        let trimmedDraft = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedDraft.isEmpty else { return }
+
         // Step 1: create skeleton chapter. user_prompt is sent as "" since
         // the backend ChapterCreate schema requires a string but a
         // chapter sourced from import won't be running the Agent against
@@ -437,25 +470,30 @@ public struct NewChapterSheet: View {
         guard let new = await chaptersStore.create(userPrompt: "", title: title) else { return }
 
         // Step 2: set it as the active editor target so importChapter's
-        // self.chapter check passes, then drive the import.
+        // self.chapter check passes, then drive the import. Import is now
+        // decoupled from extraction (§5.DI) — always run_extractor=false, so
+        // this only ever fails at the transport layer (never an LLM error).
         await chapterEditorStore.load(chapterId: new.id)
         let payload = ChapterImportRequest(
-            draftText: draftText,
+            draftText: trimmedDraft,
             title: title,
             summary: summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : summary,
-            runExtractor: runExtractor
+            runExtractor: false
         )
         if let result = await chapterEditorStore.importChapter(payload) {
             // Step 3: sync the sidebar list (the row we just appended is
             // still in draft state; the import response has it as
             // finalized / source=imported).
             chaptersStore.upsert(result.chapter)
-            // Refresh characters so any live_fields the Extractor wrote
-            // show up in the right panel immediately.
-            if runExtractor, !result.updatedCharacterIds.isEmpty {
-                await charactersStore.load(bookId: new.bookId)
-            }
             dismiss()
+        } else {
+            // §5.DI robustness: the import failed (transport only now), so the
+            // step-1 skeleton is a stranded empty chapter. Delete it + clear
+            // the editor so the author isn't dumped into a blank new-chapter
+            // SOP with their pasted body lost. Keep the sheet open for retry
+            // (their `draftText` is still in the textarea).
+            await chaptersStore.delete(id: new.id)
+            chapterEditorStore.reset()
         }
         // On failure ErrorBus already published; keep sheet open for retry.
     }
@@ -477,9 +515,12 @@ public struct NewChapterSheet: View {
         batchProgress = (current: 0, total: chapters.count)
         batchFailures = []
 
+        // PROJECT_PLAN v0.9.3 §5.DI: batch import only lands the body
+        // (run_extractor=false). Extraction is a separate manual step, so
+        // there's no end-of-batch character-store refresh here anymore.
         let results = await chaptersStore.batchCreateAndImport(
             parsedChapters: chapters,
-            runExtractor: runExtractor,
+            runExtractor: false,
             progress: { current, total in
                 batchProgress = (current: current, total: total)
             }
@@ -488,27 +529,17 @@ public struct NewChapterSheet: View {
         // Aggregate failures with their source titles so the failure
         // sheet can show "第 N 章 · 标题 — message".
         var failures: [BatchFailure] = []
-        var successBookId: String?
-        var anyExtractorSuccess = false
         for (idx, outcome) in results.enumerated() {
             let title = chapters[safe: idx]?.title ?? "（无标题）"
             switch outcome {
-            case .success(let chapter):
-                successBookId = chapter.bookId
-                anyExtractorSuccess = anyExtractorSuccess || runExtractor
+            case .success:
+                break
             case .failure(let error):
                 failures.append(BatchFailure(
                     title: "第 \(idx + 1) 章 · \(title)",
                     message: error.message
                 ))
             }
-        }
-
-        // Refresh character store once at the end if anything was
-        // extracted — cheaper than N individual loads while still
-        // catching every live_fields update.
-        if anyExtractorSuccess, let bookId = successBookId {
-            await charactersStore.load(bookId: bookId)
         }
 
         batchFailures = failures

@@ -33,6 +33,7 @@ public protocol APIClientProtocol: Sendable {
     func finalize(chapterId: String) async throws -> FinalizeResult
     func reopen(chapterId: String) async throws -> Chapter
     func importChapter(id: String, payload: ChapterImportRequest) async throws -> ChapterImportResponse
+    func extractChapter(id: String) async throws -> ChapterImportResponse
     func adminResetChapter(id: String, targetStatus: ChapterStatus) async throws -> Chapter
 
     // Admin
@@ -423,6 +424,31 @@ public final class APIClient: APIClientProtocol, @unchecked Sendable {
             method: "POST",
             path: "/api/v1/chapters/\(id)/import",
             body: body(payload)
+        )
+        return try await send(req, as: ChapterImportResponse.self)
+    }
+
+    /// `POST /api/v1/chapters/{id}/extract` — see PROJECT_PLAN v0.9.3 §5.DI.2.
+    ///
+    /// Manually re-runs the Extractor against an already-`finalized` chapter
+    /// that has `draft_text`. The backend clears this chapter's old timeline
+    /// events first (so repeated extracts don't pile up duplicate events),
+    /// then writes character live_fields + new timeline events. The chapter's
+    /// status / draft_text are left untouched.
+    ///
+    /// No request body (mirrors `finalize` / `reopen`). The response reuses
+    /// the import/finalize envelope `{ chapter, updated_character_ids,
+    /// added_event_ids }`, so callers fan out the dependent-store refreshes
+    /// identically to `importChapter` / `finalize`.
+    ///
+    /// 409 is expected when the chapter isn't `finalized`, or when it's
+    /// `finalized` but has empty `draft_text` (backend `no_draft_to_extract`).
+    /// The message is preserved by `ErrorMapping` for the toolbar to surface.
+    public func extractChapter(id: String) async throws -> ChapterImportResponse {
+        let req = try makeRequest(
+            method: "POST",
+            path: "/api/v1/chapters/\(id)/extract",
+            body: "{}".data(using: .utf8)
         )
         return try await send(req, as: ChapterImportResponse.self)
     }

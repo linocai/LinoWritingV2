@@ -54,7 +54,7 @@ public struct ChapterToolbar: View {
                 }
                 .buttonStyle(.bordered)
                 .disabled(chapterEditorStore.isImporting)
-                .help("把已写好的章节正文导入，并可选择让 Agent 提取角色更新和时间线")
+                .help("把已写好的章节正文导入并落地为已完成章节；之后可点「提取角色/时间线」更新角色卡 / 时间线")
             }
             primaryActionButtons
             moreMenu
@@ -206,12 +206,31 @@ public struct ChapterToolbar: View {
                 .disabled(chapterEditorStore.isFinalizing)
             }
         case .finalized:
-            Button {
-                Task { _ = await chapterEditorStore.reopen(); refreshList() }
-            } label: {
-                Label("重新打开", systemImage: "arrow.uturn.backward")
+            HStack(spacing: 6) {
+                // PROJECT_PLAN v0.9.3 §5.DI.3: manual "提取角色/时间线" sits
+                // parallel to "重新打开". Visible on ANY finalized chapter so
+                // the author can re-extract on demand (backend clears this
+                // chapter's old timeline first → repeatable, idempotent).
+                Button(action: extract) {
+                    if chapterEditorStore.isExtracting {
+                        HStack(spacing: 6) {
+                            ProgressView().controlSize(.small)
+                            Text("提取中…")
+                        }
+                    } else {
+                        Label("提取角色/时间线", systemImage: "sparkles")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .disabled(chapterEditorStore.isExtracting)
+                .help("重新跑一次提取：更新角色卡 / 时间线（不改动正文与章节状态）")
+                Button {
+                    Task { _ = await chapterEditorStore.reopen(); refreshList() }
+                } label: {
+                    Label("重新打开", systemImage: "arrow.uturn.backward")
+                }
+                .buttonStyle(.bordered)
             }
-            .buttonStyle(.bordered)
         }
     }
 
@@ -242,6 +261,23 @@ public struct ChapterToolbar: View {
                 chaptersStore.upsert(result.chapter)
                 // Refresh characters so live_fields are current.
                 if let bookId = chapterEditorStore.chapter?.bookId {
+                    await charactersStore.load(bookId: bookId)
+                }
+            }
+        }
+    }
+
+    /// PROJECT_PLAN v0.9.3 §5.DI.3 — manual re-extract. Mirrors `finalize`'s
+    /// fan-out so the right panel highlights touched cards and the character
+    /// store reloads live_fields. The chapter row itself doesn't change
+    /// status, but we still `upsert` so the summary list stays consistent.
+    private func extract() {
+        Task {
+            if let result = await chapterEditorStore.extract() {
+                chaptersStore.upsert(result.chapter)
+                charactersStore.markUpdated(result.updatedCharacterIds)
+                if !result.updatedCharacterIds.isEmpty,
+                   let bookId = chapterEditorStore.chapter?.bookId {
                     await charactersStore.load(bookId: bookId)
                 }
             }

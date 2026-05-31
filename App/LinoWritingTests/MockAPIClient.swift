@@ -35,6 +35,7 @@ public final class MockAPIClient: APIClientProtocol, @unchecked Sendable {
     public var onFinalize: ((String) -> FinalizeResult)?
     public var onReopen: ((String) -> Chapter)?
     public var onImport: ((String, ChapterImportRequest) throws -> ChapterImportResponse)?
+    public var onExtract: ((String) throws -> ChapterImportResponse)?
     public var onAdminReset: ((String, ChapterStatus) -> Chapter)?
 
     // §5.W / W-2 pairing hooks. When set, they fully override the default
@@ -367,6 +368,24 @@ public final class MockAPIClient: APIClientProtocol, @unchecked Sendable {
         c.status = .finalized
         c.updatedAt = Date()
         chapters[idx] = c
+        return ChapterImportResponse(
+            chapter: c,
+            updatedCharacterIds: [],
+            addedEventIds: []
+        )
+    }
+
+    public func extractChapter(id: String) async throws -> ChapterImportResponse {
+        recordCall("extractChapter")
+        try maybeThrow()
+        if let onExtract { return try onExtract(id) }
+        // Default: chapter must already be finalized with draft_text; leave
+        // status / draft_text untouched and return an empty-ids envelope
+        // (mirrors the backend's "extract doesn't change the chapter row").
+        guard let idx = chapters.firstIndex(where: { $0.id == id }) else {
+            throw AppError.notFound("chapter")
+        }
+        let c = chapters[idx]
         return ChapterImportResponse(
             chapter: c,
             updatedCharacterIds: [],
