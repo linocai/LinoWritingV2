@@ -6,3 +6,7 @@ xcuserdata/
 *.xcuserstate
 DerivedData/
 build/
+
+# 本地规划/归档文档（不入版本控制）
+PROJECT_PLAN.md
+archive/
