@@ -3,7 +3,8 @@
 Coverage:
 - pair_initiate happy path + auth required
 - pair_confirm valid / wrong / consumed / expired / malformed
-- require_bearer_token dual path (device token + static fallback)
+- require_bearer_token accepts a paired device token (sole path; v1.0.0
+  EE Phase 6 removed the static api_token fallback)
 - revoke flow (revoked rejected, 404 on missing, 204 on success)
 - list devices excludes ciphertext, ordered newest-first
 - pair_confirm rate limit (5/min/IP via middleware)
@@ -18,7 +19,6 @@ from sqlalchemy import select
 
 from app.models.device_token import DeviceToken
 from app.models.pair_code import PairCode
-from tests.conftest import TEST_TOKEN
 
 
 # --- helpers ----------------------------------------------------------------
@@ -154,12 +154,12 @@ def test_pair_confirm_invalid_format_rejected_by_schema(
     assert resp.json()["error"]["kind"] == "validation"
 
 
-# --- require_bearer_token dual path -----------------------------------------
+# --- require_bearer_token (device token is the sole credential path) --------
 
 
 def test_require_bearer_token_accepts_device_token(client, auth_headers):
     _, token = _pair_new_device(client, auth_headers)
-    # Use the freshly-issued device token, NOT the static TEST_TOKEN.
+    # Use a freshly-paired device token (distinct from the fixture's token).
     resp = client.get(
         "/api/v1/health",
         headers={"Authorization": f"Bearer {token}"},
@@ -167,12 +167,17 @@ def test_require_bearer_token_accepts_device_token(client, auth_headers):
     assert resp.status_code == 200, resp.text
 
 
-def test_require_bearer_token_falls_back_to_static_api_token(client, auth_headers):
-    # Even with one paired device on file (forcing the device-token loop
-    # to run and not match), the static TEST_TOKEN must still authenticate.
+def test_require_bearer_token_rejects_unpaired_token(client, auth_headers):
+    # v1.0.0 EE Phase 6 (D6): the static api_token fallback is gone. A token
+    # that matches no unrevoked device_tokens row must be rejected even with
+    # other devices paired on file (forcing the decrypt walk to run and miss).
     _pair_new_device(client, auth_headers)
-    resp = client.get("/api/v1/health", headers=auth_headers)
-    assert resp.status_code == 200
+    resp = client.get(
+        "/api/v1/health",
+        headers={"Authorization": "Bearer not-a-paired-device-token"},
+    )
+    assert resp.status_code == 401
+    assert resp.json()["error"]["kind"] == "unauthorized"
 
 
 def test_device_token_updates_last_used_at(client, auth_headers, db_session):
@@ -335,11 +340,15 @@ def test_pair_confirm_persists_encrypted_token(client, auth_headers, db_session)
     """
     _, plaintext = _pair_new_device(client, auth_headers)
     rows = db_session.execute(select(DeviceToken)).scalars().all()
-    assert len(rows) == 1
-    stored = rows[0].token_ciphertext
-    # Fernet output is url-safe base64 starting with ``gAAAAA``. Anything
-    # that contains the plaintext token directly is a smoking gun.
-    assert plaintext not in stored
-    assert stored.startswith("gAAAAA"), (
-        f"token_ciphertext does not look like a Fernet token: {stored[:16]}..."
-    )
+    # v1.0.0 EE Phase 6: ``auth_headers`` itself mints a device_tokens row,
+    # so the table holds that fixture row plus the one paired above. Locate
+    # the paired device's row by its ciphertext (no row stores plaintext) and
+    # assert the on-disk invariant on it specifically.
+    stored_values = [row.token_ciphertext for row in rows]
+    # The plaintext token must not appear verbatim in ANY stored ciphertext.
+    for stored in stored_values:
+        assert plaintext not in stored
+        # Fernet output is url-safe base64 starting with ``gAAAAA``.
+        assert stored.startswith("gAAAAA"), (
+            f"token_ciphertext does not look like a Fernet token: {stored[:16]}..."
+        )

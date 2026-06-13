@@ -1,5 +1,7 @@
 from app.models.agent_log import AgentLog
+from app.models.agent_persona import AgentPersona
 from app.models.book import Book
+from app.models.book_outline import BookOutline
 from app.models.chapter import Chapter
 from app.models.character import Character
 from app.models.device_token import DeviceToken
@@ -10,7 +12,9 @@ from app.models.timeline_event import TimelineEvent
 
 __all__ = [
     "AgentLog",
+    "AgentPersona",
     "Book",
+    "BookOutline",
     "Chapter",
     "Character",
     "DeviceToken",

@@ -40,6 +40,39 @@ public struct Step2_StructuredPromptView: View {
                 collapsed: collapsedByDefault
             ) {
                 VStack(alignment: .leading, spacing: 14) {
+                    // v1.0.0 EE §5.3 / §5.5 — 优化师产出的 200–300 字「本章创作
+                    // 指令」(chapter_directive)。这是人工卡点：审它给的方向
+                    // (不是知识)，改到满意再放行 Writer。它并在 structured_prompt
+                    // 里，保存走同一个「保存提示」按钮。
+                    field("本章创作指令 (优化师 directive · 方向盘,不塞知识)") {
+                        VStack(alignment: .leading, spacing: 4) {
+                            TextEditor(text: Binding(
+                                get: { draft.chapterDirective ?? "" },
+                                set: { draft.chapterDirective = $0.isEmpty ? nil : $0; dirty = true }
+                            ))
+                            .frame(minHeight: 90)
+                            .scrollContentBackground(.hidden)
+                            .padding(6)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(Color.accentColor.opacity(0.05))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .strokeBorder(Color.accentColor.opacity(0.25))
+                            )
+                            .disabled(readOnly)
+                            if (draft.chapterDirective ?? "").isEmpty {
+                                Text("还没有指令。点上方「展开提纲」让优化师生成 200–300 字本章方向，或手写。")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                Text("\(draft.chapterDirective?.count ?? 0) 字 · 这是「方向」线；人物卡/时间线是另一条「知识」线直达 Writer。")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
                     field("章节目标") {
                         TextEditor(text: $draft.chapterGoal)
                             .frame(minHeight: 60)

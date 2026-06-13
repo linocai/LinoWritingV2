@@ -6,11 +6,33 @@ from threading import Event
 from typing import Any
 
 from app.llm.base import LLMClient
+from app.services.personas import DEFAULT_PERSONAS, compose_system
+
+# v1.0.0 EE Phase 2 (archive/v1.0.0_plan.md §4.2 / §4.4) — the runtime system
+# prompt is composed from two layers:
+#   1. the *persona* (voice + boundary), DB-stored & App-editable, resolved by
+#      ``get_persona(db, 'writer')`` at the router and passed into the
+#      constructor — when absent it falls back to ``DEFAULT_PERSONAS['writer']``;
+#   2. ``OPERATIONAL_RULES`` below — the fixed §5.L mechanics (card-usage rules,
+#      focus_traits handling, author_notes guardrail, plot/style/output format).
+#      These are agent *behaviour*, not persona, so they stay in code.
+# The two are joined as ``persona + "\n\n" + OPERATIONAL_RULES`` (see
+# ``compose_system``). The class attribute ``system_prompt`` keeps exposing the
+# default-composed prompt for keyword-regression tests.
 
 
 class WriterAgent:
-    system_prompt = """
+    OPERATIONAL_RULES = """
 你是一个中文小说的写作执行者。
+
+# 本章方向（chapter_directive）
+chapter_directive 是优化师给你的「本章创作指令」(200–300 字)——本章的**方向盘**：
+本章要达成什么、张力在哪、承接什么落点、注意哪条还开着的伏笔。
+**严格按它执行**，不越权推进 directive 之外的剧情。
+它只给方向，**不给知识**——角色是谁、知道什么、当前状态，全在 characters / timelines 里
+（另一条线，见下）；directive 与角色卡是**分开的两条线**，不要把 directive 当角色资料。
+若本章没有 chapter_directive（字段缺失或为 null），就退回按 structured_prompt 蓝图写，
+不要因为缺少 directive 而停笔或编一个方向出来。
 
 # 角色卡使用规则（读懂这条比读对人设更重要）
 
@@ -47,8 +69,18 @@ structured_prompt.must_not_happen 中的事件、元素和信息一字不提。
 只输出正文纯文本，不要标题、解释、Markdown 或 JSON。
 """.strip()
 
-    def __init__(self, llm: LLMClient) -> None:
+    # Backward-compat / regression surface: the default-composed system prompt.
+    system_prompt = compose_system(DEFAULT_PERSONAS["writer"], OPERATIONAL_RULES)
+
+    def __init__(self, llm: LLMClient, persona: str | None = None) -> None:
         self.llm = llm
+        # Persona resolved from DB at the router (``get_persona``); fall back to
+        # the code-level default so bare ``WriterAgent(llm)`` callers (tests,
+        # internal use) never run with an empty persona.
+        self.system_prompt = compose_system(
+            persona if persona is not None else DEFAULT_PERSONAS["writer"],
+            self.OPERATIONAL_RULES,
+        )
 
     def stream(
         self,

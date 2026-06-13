@@ -9,8 +9,12 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session, sessionmaker
 
+# v1.0.0 EE Phase 6 (D6): the static ``api_token`` env-var auth path is gone.
+# ``TEST_TOKEN`` is now the *plaintext device token* minted into a
+# ``device_tokens`` row by the ``auth_headers`` fixture (see bottom of file),
+# which is the sole credential path. No ``API_TOKEN`` env var is set — its
+# absence is the proof that auth no longer depends on it.
 TEST_TOKEN = "test-token-value"
-os.environ.setdefault("API_TOKEN", TEST_TOKEN)
 # v0.8 S-1: tests honour an externally-set DATABASE_URL (e.g. when running
 # against a local Postgres container to catch dialect-only bugs before HZ
 # cutover). Default stays SQLite in-memory for the fast dev cycle.
@@ -159,7 +163,6 @@ def client(session_factory: sessionmaker[Session]) -> Iterator[TestClient]:
 
     app.dependency_overrides[get_db] = override_db
     app.dependency_overrides[get_settings] = lambda: Settings(
-        api_token=TEST_TOKEN,
         database_url=TEST_DATABASE_URL,
         # v0.8 T-1: Settings requires a valid Fernet ``kek_secret`` now.
         # Without this the dependency override would raise ValidationError
@@ -186,5 +189,30 @@ def client(session_factory: sessionmaker[Session]) -> Iterator[TestClient]:
 
 
 @pytest.fixture()
-def auth_headers() -> dict[str, str]:
+def auth_headers(session_factory: sessionmaker[Session]) -> dict[str, str]:
+    """Mint a real, unrevoked ``device_tokens`` row and return its Bearer header.
+
+    v1.0.0 EE Phase 6 (D6): with the static ``api_token`` fallback removed,
+    the only way a request authenticates is by matching an unrevoked
+    ``device_tokens`` row in ``require_bearer_token``. So instead of handing
+    back a static env-var token, this fixture persists a row whose Fernet
+    ciphertext decrypts to ``TEST_TOKEN`` (using the same ``encrypt_api_key``
+    helper and same ``TEST_KEK_SECRET`` the auth walk will decrypt with).
+
+    It shares the per-test ``session_factory`` engine with the ``client``
+    fixture (both depend on it, so pytest resolves it once per test), which is
+    why the row this fixture commits is visible to the request's auth walk —
+    the in-memory SQLite engine is a single ``StaticPool`` connection.
+    """
+    from app.models.device_token import DeviceToken
+    from app.services.encryption import encrypt_api_key
+
+    with session_factory() as session:
+        session.add(
+            DeviceToken(
+                device_name="test-fixture-device",
+                token_ciphertext=encrypt_api_key(TEST_TOKEN),
+            )
+        )
+        session.commit()
     return {"Authorization": f"Bearer {TEST_TOKEN}"}

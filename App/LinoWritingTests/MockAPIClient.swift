@@ -27,6 +27,20 @@ public final class MockAPIClient: APIClientProtocol, @unchecked Sendable {
     /// server-side detail the client never sees).
     public var devices: [DeviceInfo] = []
 
+    /// v1.0.0 EE §5.1: in-memory book outlines keyed by `book_id` (singleton
+    /// per book). `nil` for a book means "never ingested" → `getOutline`
+    /// returns nil. `ingest` / `patch` upsert here.
+    public var outlines: [String: BookOutline] = [:]
+
+    /// v1.0.0 EE §5.4: in-memory persona rows keyed by role. Seeded lazily on
+    /// first access so a test that doesn't touch personas pays nothing, and so
+    /// the three rows always come back in a stable role order (mirrors the
+    /// backend's `GET /agent-personas` envelope).
+    public var personas: [AgentRole: AgentPersona] = [:]
+    /// Last `(role, systemPrompt)` passed to `patchAgentPersona`, for tests
+    /// asserting the Swift-side encoding survived (mirrors other `last*` hooks).
+    public var lastPersonaPatch: (role: AgentRole, systemPrompt: String)?
+
     public var calls: [String] = []
 
     // Pluggable behaviour for flow tests.
@@ -265,6 +279,129 @@ public final class MockAPIClient: APIClientProtocol, @unchecked Sendable {
         recordCall("deleteChapter")
         try maybeThrow()
         chapters.removeAll { $0.id == id }
+    }
+
+    // MARK: - Book outline (v1.0.0 EE §5.1 mock)
+
+    public func getOutline(bookId: String) async throws -> BookOutline? {
+        recordCall("getOutline")
+        return try locked {
+            try maybeThrow()
+            return outlines[bookId]
+        }
+    }
+
+    public func ingestOutline(bookId: String, rawText: String?) async throws -> BookOutline {
+        recordCall("ingestOutline")
+        return try locked {
+            try maybeThrow()
+            let now = Date()
+            if var existing = outlines[bookId] {
+                existing.rawText = rawText
+                existing.updatedAt = now
+                outlines[bookId] = existing
+                return existing
+            }
+            let outline = BookOutline(
+                id: UUID().uuidString,
+                bookId: bookId,
+                rawText: rawText,
+                createdAt: now,
+                updatedAt: now
+            )
+            outlines[bookId] = outline
+            return outline
+        }
+    }
+
+    public func patchOutline(bookId: String, rawText: String?) async throws -> BookOutline {
+        recordCall("patchOutline")
+        return try locked {
+            try maybeThrow()
+            let now = Date()
+            if var existing = outlines[bookId] {
+                existing.rawText = rawText
+                existing.updatedAt = now
+                outlines[bookId] = existing
+                return existing
+            }
+            // Mirror the backend: PATCH on a never-ingested book upserts one.
+            let outline = BookOutline(
+                id: UUID().uuidString,
+                bookId: bookId,
+                rawText: rawText,
+                createdAt: now,
+                updatedAt: now
+            )
+            outlines[bookId] = outline
+            return outline
+        }
+    }
+
+    // MARK: - Agent personas (v1.0.0 EE §5.4 mock)
+
+    /// Seed text used by the mock so a reset can flip `system_prompt` back to a
+    /// known string and tests can assert "restored to default". Not the real
+    /// backend `DEFAULT_PERSONAS` (those live server-side); just a stable stub.
+    private func defaultPersonaText(_ role: AgentRole) -> String {
+        "[默认人格] \(role.rawValue)"
+    }
+
+    /// Lazily seed the three rows (is_default=true) on first access.
+    private func ensurePersonasSeeded() {
+        guard personas.isEmpty else { return }
+        let now = Date()
+        for role in [AgentRole.expander, .writer, .extractor] {
+            personas[role] = AgentPersona(
+                agentRole: role,
+                systemPrompt: defaultPersonaText(role),
+                isDefault: true,
+                updatedAt: now
+            )
+        }
+    }
+
+    public func listAgentPersonas() async throws -> [AgentPersona] {
+        recordCall("listAgentPersonas")
+        return try locked {
+            try maybeThrow()
+            ensurePersonasSeeded()
+            // Stable role order: expander, writer, extractor.
+            return [AgentRole.expander, .writer, .extractor].compactMap { personas[$0] }
+        }
+    }
+
+    public func patchAgentPersona(agentRole: AgentRole, systemPrompt: String) async throws -> AgentPersona {
+        recordCall("patchAgentPersona")
+        return try locked {
+            lastPersonaPatch = (agentRole, systemPrompt)
+            try maybeThrow()
+            ensurePersonasSeeded()
+            let updated = AgentPersona(
+                agentRole: agentRole,
+                systemPrompt: systemPrompt,
+                isDefault: false,
+                updatedAt: Date()
+            )
+            personas[agentRole] = updated
+            return updated
+        }
+    }
+
+    public func resetAgentPersona(agentRole: AgentRole) async throws -> AgentPersona {
+        recordCall("resetAgentPersona")
+        return try locked {
+            try maybeThrow()
+            ensurePersonasSeeded()
+            let restored = AgentPersona(
+                agentRole: agentRole,
+                systemPrompt: defaultPersonaText(agentRole),
+                isDefault: true,
+                updatedAt: Date()
+            )
+            personas[agentRole] = restored
+            return restored
+        }
     }
 
     public func expand(chapterId: String, force: Bool) async throws -> Chapter {

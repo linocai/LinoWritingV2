@@ -24,6 +24,8 @@ from app.routers import (
     chapters,
     characters,
     health,
+    outlines,
+    personas,
     provider_keys,
     timeline_events,
 )
@@ -50,7 +52,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app() -> FastAPI:
     settings = get_settings()
-    app = FastAPI(title="Lino Writing v2 Backend", version="0.9.3", lifespan=_lifespan)
+    app = FastAPI(title="Lino Writing v2 Backend", version="1.0.0", lifespan=_lifespan)
     # NB: LLM client is no longer instantiated at startup. Each request that
     # needs LLM access now calls ``build_llm_client(db)`` via the
     # ``get_llm_client`` dependency, which reads the active ``ProviderKey``
@@ -80,6 +82,8 @@ def create_app() -> FastAPI:
     dependencies = [Depends(require_bearer_token)]
     app.include_router(health.router, prefix="/api/v1", dependencies=dependencies)
     app.include_router(books.router, prefix="/api/v1", dependencies=dependencies)
+    app.include_router(outlines.router, prefix="/api/v1", dependencies=dependencies)
+    app.include_router(personas.router, prefix="/api/v1", dependencies=dependencies)
     app.include_router(characters.router, prefix="/api/v1", dependencies=dependencies)
     app.include_router(chapters.router, prefix="/api/v1", dependencies=dependencies)
     app.include_router(timeline_events.router, prefix="/api/v1", dependencies=dependencies)

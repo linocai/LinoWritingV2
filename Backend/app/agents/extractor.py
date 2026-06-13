@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from app.llm.base import LLMClient
+from app.services.personas import DEFAULT_PERSONAS, compose_system
 
 
 EXTRACTOR_SCHEMA: dict[str, Any] = {
@@ -58,7 +59,12 @@ EXTRACTOR_SCHEMA: dict[str, Any] = {
 
 
 class ExtractorAgent:
-    system_prompt = """
+    # v1.0.0 EE Phase 2 (§4.3 / §4.4) — fixed extraction mechanics. The persona
+    # ([人格]/[边界], DB-stored & App-editable) is resolved by
+    # ``get_persona(db, 'extractor')`` at the router and composed in front of
+    # these rules at runtime (see ``compose_system``). Operational rules stay in
+    # code; the schema is unchanged this Phase.
+    OPERATIONAL_RULES = """
 你是中文小说章节信息抽取助手。
 从正文中抽取本章关键事件，按出场角色归属。
 每条 timeline_events.event_text 只能一句话，建议不超过 60 字。
@@ -71,8 +77,15 @@ summary 需要 200 字内，第三人称客观叙述本章发生了什么。
 只返回合法 JSON object。
 """.strip()
 
-    def __init__(self, llm: LLMClient) -> None:
+    # Backward-compat / regression surface: the default-composed system prompt.
+    system_prompt = compose_system(DEFAULT_PERSONAS["extractor"], OPERATIONAL_RULES)
+
+    def __init__(self, llm: LLMClient, persona: str | None = None) -> None:
         self.llm = llm
+        self.system_prompt = compose_system(
+            persona if persona is not None else DEFAULT_PERSONAS["extractor"],
+            self.OPERATIONAL_RULES,
+        )
 
     def extract(self, context: dict[str, Any]) -> dict[str, Any]:
         # v0.6+: model selection follows the active ProviderKey's ``model_name``;

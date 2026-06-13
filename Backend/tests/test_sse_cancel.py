@@ -209,6 +209,7 @@ def test_write_stream_generator_finally_signals_cancel(db_session):
         previous_status="prompt_ready",
         context={},
         llm=slow_llm,
+        writer_persona="测试 Writer 人格",
     )
 
     # Pull a few SSE chunks. We need at least the "started" event and
@@ -282,6 +283,7 @@ def test_producer_thread_exits_after_cancel(db_session):
         previous_status="prompt_ready",
         context={},
         llm=slow_llm,
+        writer_persona="测试 Writer 人格",
     )
 
     chunks = []

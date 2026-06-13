@@ -26,6 +26,14 @@ class StructuredPrompt(BaseModel):
     # not validated against any registry — the Writer prompt treats them as
     # narrative hints, not strict tags.
     focus_traits: list[str] = Field(default_factory=list)
+    # v1.0.0 EE Phase 2 (§5.3) — the Expander's 200-300 字「本章创作指令」.
+    # Plain prose, optional (decodeIfPresent on the App side for old chapters).
+    # P1 红线: this is STEERING (direction / tension), never character-card or
+    # timeline KNOWLEDGE — that reaches the Writer via Context Pack. The
+    # Expander system prompt + the JSON-schema description enforce the boundary;
+    # this field just carries the result and is editable via the chapter PATCH
+    # whitelist (structured_prompt is already patchable).
+    chapter_directive: str | None = None
 
     @model_validator(mode="after")
     def require_chapter_goal(self) -> "StructuredPrompt":

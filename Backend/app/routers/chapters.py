@@ -47,6 +47,7 @@ from app.services.exporter import (
     export_chapter_txt,
 )
 from app.services.extractor_apply import apply_extractor_output
+from app.services.personas import get_persona
 
 # v0.7 §5.F — same Literal trick as in books.py.
 ExportFormat = Literal["markdown", "txt"]
@@ -131,7 +132,7 @@ def expand_chapter(
     context = build_expander_context(db, book, chapter)
     started = now_ms()
     try:
-        structured_prompt = PromptExpanderAgent(llm).expand(context)
+        structured_prompt = PromptExpanderAgent(llm, persona=get_persona(db, "expander")).expand(context)
         chapter.structured_prompt = structured_prompt
         chapter.status = "prompt_ready"
         chapter.updated_at = utc_now()
@@ -175,13 +176,16 @@ def write_chapter(
     ensure_chapter_status(chapter, {"prompt_ready", "draft_ready"}, "write")
     book = _get_book(db, chapter.book_id)
     context = build_writer_context(db, book, chapter)
+    # Resolve the Writer persona (DB, App-editable) up front — the streaming
+    # producer runs on a daemon thread and must not touch the request session.
+    writer_persona = get_persona(db, "writer")
     previous_status = chapter.status
     chapter.status = "writing"
     chapter.updated_at = utc_now()
     db.commit()
 
     return StreamingResponse(
-        _write_stream(db, chapter.id, previous_status, context, llm),
+        _write_stream(db, chapter.id, previous_status, context, llm, writer_persona),
         media_type="text/event-stream",
     )
 
@@ -199,7 +203,7 @@ def finalize_chapter(
     context = build_extractor_context(db, book, chapter)
     started = now_ms()
     try:
-        extractor_output = ExtractorAgent(llm).extract(context)
+        extractor_output = ExtractorAgent(llm, persona=get_persona(db, "extractor")).extract(context)
         updated_character_ids, added_event_ids = apply_extractor_output(db, chapter, extractor_output)
         log_agent_call(
             db,
@@ -283,7 +287,7 @@ def extract_chapter(
     context = build_extractor_context(db, book, chapter)
     started = now_ms()
     try:
-        extractor_output = ExtractorAgent(llm).extract(context)
+        extractor_output = ExtractorAgent(llm, persona=get_persona(db, "extractor")).extract(context)
         updated_character_ids, added_event_ids = apply_extractor_output(db, chapter, extractor_output)
         log_agent_call(
             db,
@@ -377,7 +381,7 @@ def import_chapter(
     context = build_extractor_context(db, book, chapter)
     started = now_ms()
     try:
-        extractor_output = ExtractorAgent(llm).extract(context)
+        extractor_output = ExtractorAgent(llm, persona=get_persona(db, "extractor")).extract(context)
         updated_character_ids, added_event_ids = apply_extractor_output(db, chapter, extractor_output)
         log_agent_call(
             db,
@@ -513,6 +517,7 @@ def _write_stream(
     previous_status: str,
     context: dict[str, object],
     llm: LLMClient,
+    writer_persona: str,
 ) -> Iterator[str]:
     started = now_ms()
     parts: list[str] = []
@@ -533,7 +538,7 @@ def _write_stream(
 
         def produce_tokens() -> None:
             try:
-                for token in WriterAgent(llm).stream(context, cancel_event=cancel_event):
+                for token in WriterAgent(llm, persona=writer_persona).stream(context, cancel_event=cancel_event):
                     if cancel_event.is_set():
                         # Defensive: even if the LLM client somehow yielded
                         # one more token after we signalled cancel, don't

@@ -10,7 +10,6 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", populate_by_name=True)
 
     database_url: str = "sqlite+pysqlite:///./lino_writing.db"
-    api_token: str = Field(min_length=8)
 
     # v0.8 T-1 (§5.T): Key Encryption Key for ProviderKey api_key Fernet
     # encryption. A Fernet key is 32 random bytes encoded url-safe base64 →
@@ -35,13 +34,6 @@ class Settings(BaseSettings):
         if raw == "*":
             return ["*"]
         return [item.strip() for item in raw.split(",") if item.strip()]
-
-    @field_validator("api_token")
-    @classmethod
-    def reject_placeholder_token(cls, value: str) -> str:
-        if value == "change-me-to-a-long-random-string":
-            raise ValueError("API_TOKEN must be changed from the example placeholder")
-        return value
 
     @field_validator("kek_secret")
     @classmethod

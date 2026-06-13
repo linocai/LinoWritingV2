@@ -32,7 +32,7 @@ from app.services.encryption import (
     is_fernet_ciphertext,
 )
 from app.schemas.provider_key import mask_api_key
-from tests.conftest import TEST_KEK_SECRET, TEST_TOKEN
+from tests.conftest import TEST_KEK_SECRET
 
 
 def test_fernet_round_trip() -> None:
@@ -96,7 +96,6 @@ def test_kek_invalid_fails_fast() -> None:
     # is what must reject this.
     with pytest.raises(ValidationError):
         Settings(
-            api_token=TEST_TOKEN,
             database_url="sqlite+pysqlite://",
             kek_secret="A" * 44,
         )
@@ -104,7 +103,6 @@ def test_kek_invalid_fails_fast() -> None:
     # Case 2: too short — Field(min_length=44) catches before the validator.
     with pytest.raises(ValidationError):
         Settings(
-            api_token=TEST_TOKEN,
             database_url="sqlite+pysqlite://",
             kek_secret="short",
         )
@@ -112,7 +110,6 @@ def test_kek_invalid_fails_fast() -> None:
     # Case 3: non-base64 characters but right length — Fernet decoder fails.
     with pytest.raises(ValidationError):
         Settings(
-            api_token=TEST_TOKEN,
             database_url="sqlite+pysqlite://",
             kek_secret="!" * 44,
         )

@@ -5,6 +5,7 @@ from typing import Any
 
 from app.llm.base import LLMClient
 from app.schemas.structured_prompt import StructuredPrompt
+from app.services.personas import DEFAULT_PERSONAS, compose_system
 
 # v0.7 §5.L.4 — Expander now infers 0-2 ``focus_traits`` per chapter so the
 # Writer prompt has a concrete steering signal instead of treating every trait
@@ -13,11 +14,31 @@ from app.schemas.structured_prompt import StructuredPrompt
 # exact failure we're trying to fix in §5.L.
 MAX_FOCUS_TRAITS = 2
 
+# v1.0.0 EE Phase 2 (§4.1 / §5.3) — the Expander also emits a 200-300 字
+# ``chapter_directive``, the just-in-time "本章创作指令" the author审 before the
+# Writer runs. P1 红线: the directive is STEERING (direction / tension / what
+# this chapter must achieve), never KNOWLEDGE — character-card / timeline
+# content reaches the Writer on a separate Context-Pack line. The boundary is
+# enforced twice: once in the (DB) persona's [边界] 段 and once in the schema /
+# operational-rules wording below.
+CHAPTER_DIRECTIVE_MIN_CHARS = 200
+CHAPTER_DIRECTIVE_MAX_CHARS = 300
+
 
 class PromptExpanderAgent:
-    system_prompt = """
+    # Fixed expansion mechanics. The persona ([人格]/[原则]/[边界], DB-stored &
+    # App-editable) is resolved by ``get_persona(db, 'expander')`` at the router
+    # and composed in front of these rules at runtime (see ``compose_system``).
+    OPERATIONAL_RULES = """
 你是一个中文小说的剧情扩写助手。
-根据用户的简短章节意图，扩写为结构化章节蓝图。
+just-in-time 读「四个输入」现切本章：① 你的人格（system 前段）；
+② outline —— 全书大纲整份纯散文（往前看的静态计划，作者手改才变）；
+③ 相关记忆切片 —— involved_characters（在场角色卡 + 近期时间线）与 recent_summaries
+   （动态，由档案员每章回写）；④ chapter.user_prompt —— 作者本章一句意图。
+先读整份 outline + 记忆，定位「故事走到哪了」（已发生哪些节拍），再出本章指令。
+不脑补 outline 之外的新剧情；不预存、不臆造任何 per-chapter 预切章纲。
+
+根据上面四个输入，扩写为结构化章节蓝图。
 必须从 all_characters 里选择 characters_involved，且只使用角色 id。
 must_happen / must_not_happen 必须具体、可验证。
 风格参考 style_directive；如果为空，不要自行发明额外风格约束。
@@ -31,11 +52,27 @@ must_happen / must_not_happen 必须具体、可验证。
 - 如果本章场景不需要任何 trait 重点（纯过场 / 纯动作场），返回空数组。
 - 选择标准：哪些特质在本章的抉择/冲突里会真正驱动角色行为。
 
+# chapter_directive（本章创作指令，200–300 字纯文本）
+给 Writer 的「方向盘」：写本章要达成什么、张力在哪、承接什么落点、
+注意哪条还开着的伏笔。这是 steering，不是知识搬运：
+- **绝不**把人物卡（frozen_fields / live_fields / author_notes）或时间线的内容
+  抄进 directive —— 角色知识由 Context Pack 另一条线直达 Writer。
+- 不写字段名（如 core_traits / author_notes / live_fields），不转述 author_notes 片段。
+- 贴着 outline 与已发生的进度走，不发明 outline 之外的情节。
+- 长度控制在 200–300 字。
+
 最低要求：chapter_goal 必须非空。
 """.strip()
 
-    def __init__(self, llm: LLMClient) -> None:
+    # Backward-compat / regression surface: the default-composed system prompt.
+    system_prompt = compose_system(DEFAULT_PERSONAS["expander"], OPERATIONAL_RULES)
+
+    def __init__(self, llm: LLMClient, persona: str | None = None) -> None:
         self.llm = llm
+        self.system_prompt = compose_system(
+            persona if persona is not None else DEFAULT_PERSONAS["expander"],
+            self.OPERATIONAL_RULES,
+        )
 
     def expand(self, context: dict[str, Any]) -> dict[str, Any]:
         # v0.6+: model selection follows the active ProviderKey's ``model_name``;
@@ -78,6 +115,19 @@ def _expander_json_schema() -> dict[str, Any]:
         "description": (
             "0-2 trait names this chapter may 重点 emerge. Plain strings "
             "(e.g. '谨慎'), not field paths."
+        ),
+    }
+    # v1.0.0 EE Phase 2 (§5.3) — the 200-300 字 steering directive. The
+    # description doubles as a model-facing P1 guardrail: it is direction,
+    # never copied character-card / timeline content.
+    properties["chapter_directive"] = {
+        "type": ["string", "null"],
+        "description": (
+            "本章创作指令 (200-300 Chinese chars). STEERING only — what this "
+            "chapter must achieve, where the tension is, which落点 it picks up, "
+            "which open伏笔 to mind. NEVER copy character-card (frozen_fields / "
+            "live_fields / author_notes) or timeline content into it; that "
+            "knowledge reaches the Writer on a separate line. No field names."
         ),
     }
     return schema

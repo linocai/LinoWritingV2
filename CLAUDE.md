@@ -29,6 +29,12 @@
 * 宽屏 `HStack` + 带中文文字标签的按钮在 compact 宽度会竖排逐字换行撑成巨型药丸：compact 下整簇 `.labelStyle(.iconOnly)`，固定元素 `.fixedSize()`。
 * 系统性扫屏法：`RootView` 临时加 DEBUG 截图画廊（`--args uiscreen=<name>` 渲染单屏），build 一次逐屏 `simctl launch` + 截图，用完 `git checkout` 还原。
 
+## xcodegen regenerate 冲掉 scheme 的 app 名（v1.0.0 审查抓出）
+
+* app target 叫 `LinoWriting`，但 `project.yml` 里 `PRODUCT_NAME: LinoI`（真实产物 `LinoI.app`，`TEST_HOST`/`release-macos.sh` 也都按 `LinoI.app`）。`xcodegen generate` 生成 scheme 时 `BuildableName` 取 **target 名**而非 PRODUCT_NAME → 把 3 个 scheme 的 12 处 `BuildableName` 冲回 `LinoWriting.app`，与真实产物名不一致。
+* **极隐蔽**：CLI 构建产物名由 PRODUCT_NAME 决定，所以即便 scheme 名错，`xcodebuild build/test` 照样 BUILD SUCCEEDED、XCTest 照样绿，不报任何错——只能靠 diff/审查发现。
+* 每次 `xcodegen generate` 后必须把 3 个 scheme（`LinoWriting{,-iOS,-macOS}.xcscheme`）的 12 处 `BuildableName = "LinoWriting.app"` 改回 `"LinoI.app"`（只动这个字符串，别碰 `BlueprintIdentifier`）。`.xctest` 测试 bundle 名（`LinoWritingTests{,IOS}.xctest`）不动。
+
 ## 长文档 HTML 收口 PDF（从全局 CLAUDE.md 移回，2026-05-30 经验）
 
 * 长/复杂文档优先用 Chromium 原生 `page.pdf()`，别迷信 Paged.js：后者在整文档累积到一定规模时会同步死循环（页计数冻结、页面内 setTimeout 被节流），单区块却正常——排查极费时。看门狗必须放 Node 侧。

@@ -44,6 +44,16 @@ public protocol APIClientProtocol: Sendable {
         before: Date?
     ) async throws -> [AgentLog]
 
+    // Book outline (v1.0.0 EE §5.1) — plain-prose, no digest.
+    func getOutline(bookId: String) async throws -> BookOutline?
+    func ingestOutline(bookId: String, rawText: String?) async throws -> BookOutline
+    func patchOutline(bookId: String, rawText: String?) async throws -> BookOutline
+
+    // Agent personas (v1.0.0 EE §5.4) — DB-stored, App-editable persona layer.
+    func listAgentPersonas() async throws -> [AgentPersona]
+    func patchAgentPersona(agentRole: AgentRole, systemPrompt: String) async throws -> AgentPersona
+    func resetAgentPersona(agentRole: AgentRole) async throws -> AgentPersona
+
     // Provider keys (§5.E.4)
     func listProviderKeys() async throws -> [ProviderKey]
     func createProviderKey(_ payload: ProviderKeyCreate) async throws -> ProviderKey
@@ -492,6 +502,84 @@ public final class APIClient: APIClientProtocol, @unchecked Sendable {
         let req = try makeRequest(method: "GET", path: "/api/v1/admin/logs", query: q)
         let resp: ListResponse<AgentLog> = try await send(req, as: ListResponse<AgentLog>.self)
         return resp.items
+    }
+
+    // MARK: - Book outline (v1.0.0 EE §5.1)
+
+    /// `GET /api/v1/books/{id}/outline` — returns the singleton outline or
+    /// `nil` when the book never ingested one (`{ "outline": null }`).
+    public func getOutline(bookId: String) async throws -> BookOutline? {
+        let req = try makeRequest(method: "GET", path: "/api/v1/books/\(bookId)/outline")
+        let env: OutlineEnvelope = try await send(req, as: OutlineEnvelope.self)
+        return env.outline
+    }
+
+    /// `POST /api/v1/books/{id}/outline/ingest` — upsert `raw_text`. No LLM,
+    /// always succeeds (mirrors the chapter-import philosophy). Returns the
+    /// stored outline (never null on this path).
+    public func ingestOutline(bookId: String, rawText: String?) async throws -> BookOutline {
+        let req = try makeRequest(
+            method: "POST",
+            path: "/api/v1/books/\(bookId)/outline/ingest",
+            body: body(OutlineWriteRequest(rawText: rawText))
+        )
+        let env: OutlineEnvelope = try await send(req, as: OutlineEnvelope.self)
+        guard let outline = env.outline else {
+            throw AppError.decoding("摄入大纲后未返回 outline")
+        }
+        return outline
+    }
+
+    /// `PATCH /api/v1/books/{id}/outline` — author hand-edit of the living
+    /// outline (whitelist: `raw_text` only). PATCHing a book that never
+    /// ingested upserts one on the backend.
+    public func patchOutline(bookId: String, rawText: String?) async throws -> BookOutline {
+        let req = try makeRequest(
+            method: "PATCH",
+            path: "/api/v1/books/\(bookId)/outline",
+            body: body(OutlineWriteRequest(rawText: rawText))
+        )
+        let env: OutlineEnvelope = try await send(req, as: OutlineEnvelope.self)
+        guard let outline = env.outline else {
+            throw AppError.decoding("保存大纲后未返回 outline")
+        }
+        return outline
+    }
+
+    // MARK: - Agent personas (v1.0.0 EE §5.4)
+
+    /// `GET /api/v1/agent-personas` — three rows (expander/writer/extractor),
+    /// each `{ agent_role, system_prompt, is_default, updated_at }`.
+    public func listAgentPersonas() async throws -> [AgentPersona] {
+        let req = try makeRequest(method: "GET", path: "/api/v1/agent-personas")
+        let env: AgentPersonaListEnvelope = try await send(req, as: AgentPersonaListEnvelope.self)
+        return env.personas
+    }
+
+    /// `PATCH /api/v1/agent-personas/{role}` — overwrite `system_prompt`,
+    /// flips `is_default` → false. An empty / whitespace-only prompt is a 422
+    /// (backend validator); the editor guards against that before calling.
+    public func patchAgentPersona(agentRole: AgentRole, systemPrompt: String) async throws -> AgentPersona {
+        let req = try makeRequest(
+            method: "PATCH",
+            path: "/api/v1/agent-personas/\(agentRole.rawValue)",
+            body: body(AgentPersonaUpdateRequest(systemPrompt: systemPrompt))
+        )
+        let env: AgentPersonaEnvelope = try await send(req, as: AgentPersonaEnvelope.self)
+        return env.persona
+    }
+
+    /// `POST /api/v1/agent-personas/{role}/reset` — restore the seed default
+    /// (`DEFAULT_PERSONAS[role]`) and flip `is_default` → true. No body
+    /// (mirrors other action endpoints).
+    public func resetAgentPersona(agentRole: AgentRole) async throws -> AgentPersona {
+        let req = try makeRequest(
+            method: "POST",
+            path: "/api/v1/agent-personas/\(agentRole.rawValue)/reset",
+            body: "{}".data(using: .utf8)
+        )
+        let env: AgentPersonaEnvelope = try await send(req, as: AgentPersonaEnvelope.self)
+        return env.persona
     }
 
     // MARK: - Provider Keys (§5.E.4)

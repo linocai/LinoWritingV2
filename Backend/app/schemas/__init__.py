@@ -1,6 +1,8 @@
 from app.schemas.book import BookCreate, BookPatch, BookRead
 from app.schemas.chapter import ChapterCreate, ChapterPatch, ChapterRead, ChapterSummary
 from app.schemas.character import CharacterCreate, CharacterPatch, CharacterRead
+from app.schemas.outline import BookOutlineRead, OutlineIngest, OutlinePatch
+from app.schemas.persona import AgentPersonaRead, AgentPersonaUpdate
 from app.schemas.provider_key import (
     ActiveAgentKeyRead,
     ActiveAgentKeyUpdate,
@@ -20,8 +22,11 @@ __all__ = [
     "ActiveProviderKeyUpdate",
     "AGENT_ROLES",
     "AgentLogRead",
+    "AgentPersonaRead",
+    "AgentPersonaUpdate",
     "AgentRole",
     "BookCreate",
+    "BookOutlineRead",
     "BookPatch",
     "BookRead",
     "ChapterCreate",
@@ -31,6 +36,8 @@ __all__ = [
     "CharacterCreate",
     "CharacterPatch",
     "CharacterRead",
+    "OutlineIngest",
+    "OutlinePatch",
     "ProviderKeyCreate",
     "ProviderKeyRead",
     "ProviderKeyUpdate",

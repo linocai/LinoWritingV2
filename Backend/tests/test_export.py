@@ -254,20 +254,17 @@ def test_export_chapter_invalid_format_returns_422(client, auth_headers):
     assert response.status_code == 422
 
 
-def test_export_book_unauthorized_without_bearer(client):
-    # Seed a book under the auth'd path, then call export without the
-    # Authorization header to confirm the global bearer middleware kicks in.
-    book, _, _ = _seed_book_with_chapters(
-        client, {"Authorization": f"Bearer test-token-value"}
-    )
+def test_export_book_unauthorized_without_bearer(client, auth_headers):
+    # Seed a book under the auth'd path (auth_headers mints a real device
+    # token), then call export without the Authorization header to confirm
+    # the global bearer dependency kicks in.
+    book, _, _ = _seed_book_with_chapters(client, auth_headers)
     response = client.get(f"/api/v1/books/{book['id']}/export")
     assert response.status_code == 401
 
 
-def test_export_chapter_unauthorized_without_bearer(client):
-    book, chapter1, _ = _seed_book_with_chapters(
-        client, {"Authorization": f"Bearer test-token-value"}
-    )
+def test_export_chapter_unauthorized_without_bearer(client, auth_headers):
+    book, chapter1, _ = _seed_book_with_chapters(client, auth_headers)
     response = client.get(f"/api/v1/chapters/{chapter1['id']}/export")
     assert response.status_code == 401
 

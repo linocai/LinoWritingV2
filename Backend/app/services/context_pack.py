@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.book import Book
+from app.models.book_outline import BookOutline
 from app.models.chapter import Chapter
 from app.models.character import Character
 from app.models.timeline_event import TimelineEvent
@@ -22,9 +23,20 @@ RECENT_SUMMARIES_COUNT = 2
 
 
 def build_expander_context(db: Session, book: Book, chapter: Chapter) -> dict[str, Any]:
-    # Expander needs author_notes so it can infer focus_traits intelligently
-    # (§5.L.4) — those notes capture the motivations / wounds / secrets that
-    # most often drive which trait should "emerge" in a given chapter.
+    # v1.0.0 EE Phase 2 (§4.1) — the Expander's "four inputs", assembled
+    # just-in-time so it can locate where the story is and emit this chapter's
+    # directive:
+    #   ① persona — injected as the system prompt (not here), DB-stored.
+    #   ② outline — the WHOLE ~5000 字 plain-prose ``book_outlines.raw_text``,
+    #      injected verbatim (the static forward-looking plan; never per-chapter
+    #      pre-sliced — P4 红线). ``None`` when the author hasn't ingested one.
+    #   ③ relevant memory slice — involved cards + their recent timeline (via
+    #      the existing ``characters_involved`` selection, NOT dump-all — P3) +
+    #      ``recent_summaries``. Dynamic, written back by the Extractor.
+    #   ④ author intent — ``chapter.user_prompt``.
+    # ``all_characters`` (brief, with frozen_fields + author_notes) is kept so
+    # the Expander can still pick characters_involved / infer focus_traits
+    # (§5.L.4) even on the first pass when the involved set is still empty.
     summaries, _ = _recent_finalized(
         db,
         book.id,
@@ -32,6 +44,14 @@ def build_expander_context(db: Session, book: Book, chapter: Chapter) -> dict[st
         summaries_limit=RECENT_SUMMARIES_COUNT,
         style_samples_limit=0,
     )
+    structured_prompt = chapter.structured_prompt or {}
+    involved_ids = structured_prompt.get("characters_involved") or []
+    characters = _book_characters(db, book.id)
+    involved = [character for character in characters if character.id in involved_ids]
+    involved_timelines = {
+        character.id: _character_timeline(db, book.id, character.id, limit=15)
+        for character in involved
+    }
     return {
         "book": {
             "id": book.id,
@@ -45,12 +65,33 @@ def build_expander_context(db: Session, book: Book, chapter: Chapter) -> dict[st
             "title": chapter.title,
             "user_prompt": chapter.user_prompt,
         },
+        # ② whole outline, verbatim (no per-chapter slicing).
+        "outline": _book_outline_text(db, book.id),
+        # ③ relevant memory slice: involved cards + their recent timeline.
+        "involved_characters": [
+            _character_full(character, include_author_notes=True) for character in involved
+        ],
+        "involved_timelines": involved_timelines,
         "recent_summaries": summaries,
-        "all_characters": [_character_brief(character) for character in _book_characters(db, book.id)],
+        "all_characters": [_character_brief(character) for character in characters],
     }
 
 
 def build_writer_context(db: Session, book: Book, chapter: Chapter) -> dict[str, Any]:
+    # v1.0.0 EE Phase 3 (§4.2) — the Writer reads along TWO distinct lines (P1
+    # 红线, "两条线分明"):
+    #   · 方向 (direction): ``chapter_directive`` — the Expander's 200-300 字
+    #     steering, surfaced as a TOP-LEVEL key (lifted out of structured_prompt)
+    #     so it reads as its own input, not buried inside the blueprint JSON.
+    #   · 知识 (knowledge): ``characters`` / ``timelines`` / ``style_samples`` —
+    #     the relevant cards + memory, delivered by Context Pack on the same
+    #     separate line they always were. The directive NEVER carries this
+    #     knowledge (the Expander is forbidden from copying cards into it); it
+    #     only points the Writer where to go.
+    # The directive degrades gracefully: old / un-expanded chapters have no
+    # ``chapter_directive`` in their structured_prompt → ``None`` here, and the
+    # Writer simply falls back to the structured_prompt blueprint (the pre-P3
+    # behaviour). Never raises.
     structured_prompt = chapter.structured_prompt or {}
     involved_ids = structured_prompt.get("characters_involved") or []
     characters = _book_characters(db, book.id)
@@ -67,13 +108,24 @@ def build_writer_context(db: Session, book: Book, chapter: Chapter) -> dict[str,
         style_samples_limit=STYLE_SAMPLES_CHAPTER_COUNT,
         chars_per_side=STYLE_SAMPLES_CHARS_PER_SIDE,
     )
+    # 方向 line: lift chapter_directive out so it's its own top-level input.
+    # ``None`` (or empty/whitespace) means "no directive" — graceful degrade.
+    raw_directive = structured_prompt.get("chapter_directive")
+    chapter_directive = (
+        raw_directive.strip()
+        if isinstance(raw_directive, str) and raw_directive.strip()
+        else None
+    )
     return {
         "world_setting": book.world_setting or "",
         "style_directive": book.style_directive or "",
+        # 方向 (steering) — the Expander's directive, its own line.
+        "chapter_directive": chapter_directive,
         "structured_prompt": structured_prompt,
-        # Writer reads author_notes for backstage understanding (§5.L.5) —
-        # the system_prompt forbids narrating it directly, so feeding it is
-        # safe and lets the model judge "what would this character do here".
+        # 知识 (knowledge) — Writer reads author_notes for backstage
+        # understanding (§5.L.5); the system_prompt forbids narrating it
+        # directly, so feeding it is safe and lets the model judge "what
+        # would this character do here".
         "characters": [_character_full(character, include_author_notes=True) for character in selected],
         "timelines": timelines,
         "recent_summaries": summaries,
@@ -103,6 +155,18 @@ def build_extractor_context(db: Session, book: Book, chapter: Chapter) -> dict[s
 
 def _book_characters(db: Session, book_id: str) -> list[Character]:
     return list(db.scalars(select(Character).where(Character.book_id == book_id).order_by(Character.created_at)).all())
+
+
+def _book_outline_text(db: Session, book_id: str) -> str | None:
+    """Return the book's whole outline prose (``book_outlines.raw_text``).
+
+    v1.0.0 EE Phase 2 (§4.1 input ②) — read verbatim, never sliced. ``None``
+    when the author hasn't ingested an outline (or the row exists but is empty).
+    """
+    outline = db.scalar(select(BookOutline).where(BookOutline.book_id == book_id))
+    if outline is None:
+        return None
+    return outline.raw_text
 
 
 def _recent_finalized(

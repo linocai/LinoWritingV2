@@ -13,7 +13,6 @@ from tests.conftest import TEST_KEK_SECRET
 
 def _settings_with_grok(api_key: str | None) -> Settings:
     return Settings(
-        api_token="test-token-value",
         database_url="sqlite+pysqlite://",
         # v0.8 T-1: Settings requires a valid Fernet KEK; reuse the test one.
         kek_secret=TEST_KEK_SECRET,

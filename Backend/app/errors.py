@@ -37,6 +37,8 @@ _TEMPLATES: dict[tuple[str, str], str] = {
     ("not_found", "character"): "角色不存在，可能已被删除",
     ("not_found", "timeline_event"): "时间线事件不存在，可能已被删除",
     ("not_found", "provider_key"): "未找到对应的 LLM Key，可能已被删除",
+    # --- Agent persona (v1.0.0 EE §5.4) ---
+    ("not_found", "agent_persona"): "未找到对应的 Agent 人格（role 不合法）",
     # --- Provider key / per-Agent binding ---
     ("conflict", "provider_key_agent_mismatch"): (
         "此 Key 已绑定到「{key_role_cn}」专用，无法用于「{requested_role_cn}」"

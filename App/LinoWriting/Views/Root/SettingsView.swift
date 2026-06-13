@@ -25,7 +25,7 @@ public struct SettingsView: View {
 
     /// Tab selector. First-run mode forces `.connection`.
     /// v0.7 §5.D / Phase D-log adds `.agentLogs` for the Admin Log Panel.
-    private enum Tab: Hashable { case connection, providers, errorLog, agentLogs }
+    private enum Tab: Hashable { case connection, providers, personas, errorLog, agentLogs }
     @State private var tab: Tab = .connection
 
     public init(isFirstRun: Bool = false) {
@@ -56,6 +56,7 @@ public struct SettingsView: View {
                     Picker("", selection: $tab) {
                         Text("连接").tag(Tab.connection)
                         Text("LLM Providers").tag(Tab.providers)
+                        Text("人格").tag(Tab.personas)
                         Text("最近错误").tag(Tab.errorLog)
                         Text("Agent 日志").tag(Tab.agentLogs)
                     }
@@ -73,6 +74,8 @@ public struct SettingsView: View {
                             ConnectionSettingsView(isFirstRun: false)
                         case .providers:
                             ProviderKeysSettingsView()
+                        case .personas:
+                            PersonaSettingsView()
                         case .errorLog:
                             ErrorLogSettingsView()
                         case .agentLogs:
@@ -120,6 +123,13 @@ public struct SettingsView: View {
                                 .navigationBarTitleDisplayMode(.inline)
                         } label: {
                             Label("LLM Providers", systemImage: "key")
+                        }
+                        NavigationLink {
+                            PersonaSettingsView()
+                                .navigationTitle("Agent 人格")
+                                .navigationBarTitleDisplayMode(.inline)
+                        } label: {
+                            Label("Agent 人格", systemImage: "person.text.rectangle")
                         }
                     }
                     Section("诊断") {

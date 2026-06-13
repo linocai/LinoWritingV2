@@ -193,15 +193,17 @@ def test_admin_reset_is_idempotent(client, auth_headers):
     assert len(reset_logs) == 1, f"expected exactly 1 admin_reset log, got {len(reset_logs)}"
 
 
-def test_admin_reset_requires_auth(client):
+def test_admin_reset_requires_auth(client, auth_headers):
+    # Seed under the auth'd path (auth_headers mints a real device token),
+    # then call admin_reset with no header to confirm the 401 path.
     book = client.post(
         "/api/v1/books",
-        headers={"Authorization": "Bearer test-token-value"},
+        headers=auth_headers,
         json={"title": "X", "cover_color": "#000000"},
     ).json()
     chapter = client.post(
         f"/api/v1/books/{book['id']}/chapters",
-        headers={"Authorization": "Bearer test-token-value"},
+        headers=auth_headers,
         json={"user_prompt": "x"},
     ).json()
     # No auth header.

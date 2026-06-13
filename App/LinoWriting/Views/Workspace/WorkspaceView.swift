@@ -9,8 +9,12 @@ public struct WorkspaceView: View {
     @EnvironmentObject var chaptersStore: ChaptersStore
     @EnvironmentObject var chapterEditorStore: ChapterEditorStore
     @EnvironmentObject var timelineStore: TimelineStore
+    @EnvironmentObject var outlineStore: OutlineStore
 
     @State private var rightPanelTab: RightPanelTab = .characters
+    /// v1.0.0 EE §5.5 — book-level 大纲面板 presented as a sheet from the
+    /// workspace toolbar (uniform across macOS / iPad / iPhone).
+    @State private var showOutlineSheet: Bool = false
 
     // Responsive breakpoints (see PROJECT_PLAN §5.K.3).
     //
@@ -119,6 +123,9 @@ public struct WorkspaceView: View {
                     showingSidebarSheet = false
                 }
         }
+        .sheet(isPresented: $showOutlineSheet) {
+            OutlinePanelView(book: book)
+        }
         .onChange(of: chaptersStore.selectedChapterId) { _, newId in
             if let id = newId { Task { await chapterEditorStore.load(chapterId: id) } }
         }
@@ -151,6 +158,14 @@ public struct WorkspaceView: View {
         // visually distinct from the leading-side ``sidebar.left`` for the
         // chapter list — fixing the v0.7 confusion where both edges used
         // near-identical ``sidebar.*`` glyphs.
+        ToolbarItem(placement: .primaryAction) {
+            Button {
+                showOutlineSheet = true
+            } label: {
+                Label("大纲", systemImage: "list.bullet.rectangle")
+            }
+            .help("全书大纲")
+        }
         ToolbarItem(placement: .primaryAction) {
             Button {
                 showingInspector.toggle()
@@ -237,6 +252,13 @@ public struct WorkspaceView: View {
         .onChange(of: chapterEditorStore.chapter?.id) { _, _ in
             updateTimelineSelection()
         }
+        // v1.0.0 EE §5.5 — outline sheet shared by both iPad / iPhone branches.
+        .sheet(isPresented: $showOutlineSheet) {
+            NavigationStack {
+                OutlinePanelView(book: book)
+            }
+            .presentationDetents([.large])
+        }
     }
 
     // MARK: iPad — NavigationSplitView (sidebar / content / inspector)
@@ -295,6 +317,13 @@ public struct WorkspaceView: View {
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
+                    showOutlineSheet = true
+                } label: {
+                    Label("大纲", systemImage: "list.bullet.rectangle")
+                }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
                     toggleInspectorColumn()
                 } label: {
                     Label("辅助面板", systemImage: "rectangle.righthalf.inset.filled")
@@ -336,6 +365,13 @@ public struct WorkspaceView: View {
                             showChaptersSheet = true
                         } label: {
                             Label("章节", systemImage: "list.bullet")
+                        }
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            showOutlineSheet = true
+                        } label: {
+                            Label("大纲", systemImage: "list.bullet.rectangle")
                         }
                     }
                     ToolbarItem(placement: .topBarTrailing) {
@@ -398,6 +434,7 @@ public struct WorkspaceView: View {
         chaptersStore.reset()
         charactersStore.reset()
         timelineStore.reset()
+        outlineStore.reset()
         appStore.closeBook()
     }
 

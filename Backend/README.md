@@ -10,15 +10,16 @@ python3.11 -m venv .venv
 . .venv/bin/activate
 pip install -e ".[dev]"
 cp .env.example .env
-# edit .env: set API_TOKEN; GROK_API_KEY is optional (ProviderKey table now preferred)
+# edit .env: set KEK_SECRET (required); GROK_API_KEY is optional (ProviderKey table now preferred)
 alembic upgrade head
 uvicorn app.main:app --reload --port 8787
 ```
 
-Health check:
+Health check (v1.0.0: auth is per-device only — the static `API_TOKEN` env-var
+was removed. Pair a client via the in-app flow, then use that device token):
 
 ```bash
-curl -H "Authorization: Bearer <API_TOKEN>" http://localhost:8787/api/v1/health
+curl -H "Authorization: Bearer <device-token>" http://localhost:8787/api/v1/health
 ```
 
 OpenAPI is served by FastAPI at `/docs` and `/openapi.json`.

@@ -39,6 +39,10 @@ final class AppEnvironment: ObservableObject {
     private(set) lazy var agentLogStore: AgentLogStore = AgentLogStore(api: apiClient, errorBus: errorBus)
     // v0.9 §5.W / W-2: backs the Settings → 连接 → 设备管理 sub-section.
     private(set) lazy var deviceStore: DeviceStore = DeviceStore(api: apiClient, errorBus: errorBus)
+    // v1.0.0 EE §5.5: backs the book-level 大纲面板 (outline panel).
+    private(set) lazy var outlineStore: OutlineStore = OutlineStore(api: apiClient, errorBus: errorBus)
+    // v1.0.0 EE §5.5: backs the Settings → 人格 (Agent persona editor) tab.
+    private(set) lazy var personaStore: PersonaStore = PersonaStore(api: apiClient, errorBus: errorBus)
 
     init(
         keychain: KeychainStore = .shared,
