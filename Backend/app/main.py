@@ -19,7 +19,6 @@ from app.middleware.rate_limit import (
 from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.routers import (
     admin,
-    auth as auth_router,
     books,
     chapters,
     characters,
@@ -52,7 +51,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app() -> FastAPI:
     settings = get_settings()
-    app = FastAPI(title="Lino Writing v2 Backend", version="1.0.0", lifespan=_lifespan)
+    app = FastAPI(title="Lino Writing v2 Backend", version="1.0.1", lifespan=_lifespan)
     # NB: LLM client is no longer instantiated at startup. Each request that
     # needs LLM access now calls ``build_llm_client(db)`` via the
     # ``get_llm_client`` dependency, which reads the active ``ProviderKey``
@@ -89,13 +88,6 @@ def create_app() -> FastAPI:
     app.include_router(timeline_events.router, prefix="/api/v1", dependencies=dependencies)
     app.include_router(admin.router, prefix="/api/v1", dependencies=dependencies)
     app.include_router(provider_keys.router, prefix="/api/v1", dependencies=dependencies)
-    # v0.9 W-1 (§5.W.4): auth router intentionally NOT given the global
-    # require_bearer_token dependency — ``pair_confirm`` is the single
-    # whitelisted Bearer-less endpoint. Each function in the router that
-    # *does* need auth declares ``_auth: None = Depends(require_bearer_token)``
-    # at its signature level so the opt-in / opt-out is visible in the
-    # function definition rather than relying on router-level inheritance.
-    app.include_router(auth_router.router, prefix="/api/v1")
 
     return app
 

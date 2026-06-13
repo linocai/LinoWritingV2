@@ -53,15 +53,10 @@ def _parsed(limit_string: str):
     return item
 
 
-# --- Limits (§5.T.2, §5.W.4) -----------------------------------------------
+# --- Limits (§5.T.2) -------------------------------------------------------
 
 WRITE_LIMIT = "30/minute"
 DEFAULT_LIMIT = "600/minute"
-# v0.9 W-1 (§5.W.4): pair_confirm is the only Bearer-less endpoint and the
-# one place a remote attacker can brute-force a 6-digit code. Tighten the
-# budget hard (5/min/IP) — the legitimate flow needs at most one attempt
-# per device pairing, anything beyond that is suspicious.
-PAIR_CONFIRM_LIMIT = "5/minute"
 
 
 def _bearer_key(request: Request) -> str:
@@ -76,19 +71,6 @@ def _bearer_key(request: Request) -> str:
     auth = request.headers.get("authorization") or ""
     if auth.lower().startswith("bearer "):
         return f"token:{auth[7:].strip()}"
-    client = request.client
-    if client is not None:
-        return f"ip:{client.host}"
-    return "ip:unknown"
-
-
-def _ip_key(request: Request) -> str:
-    """v0.9 W-1: pair_confirm is anonymous so bucketing by Bearer would
-    collapse every attacker on the planet into a single ``ip:unknown``
-    bucket (because they're all using ``token:`` keys with random / no
-    token). Bucket strictly by client IP so each origin attacker sees
-    their own 5/min ceiling.
-    """
     client = request.client
     if client is not None:
         return f"ip:{client.host}"
@@ -111,17 +93,6 @@ def _is_write_endpoint(request: Request) -> bool:
         return False
     action = parts[-1]
     return action in {"expand", "write", "import", "finalize"}
-
-
-def _is_pair_confirm_endpoint(request: Request) -> bool:
-    """v0.9 W-1 (§5.W.4): match ``POST /api/v1/auth/pair_confirm``
-    exactly. Trailing slashes are stripped to be tolerant of common
-    client behaviours, but other ``/auth/*`` routes (initiate / devices)
-    stay on the normal Bearer-keyed bucket because they're authenticated.
-    """
-    if request.method != "POST":
-        return False
-    return request.url.path.rstrip("/") == "/api/v1/auth/pair_confirm"
 
 
 def _retry_after_seconds(limit_string: str) -> int:
@@ -184,15 +155,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         request: Request,
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
-        # v0.9 W-1 (§5.W.4): pair_confirm is anonymous (no Bearer) so it
-        # must bucket by IP, not by token. Branch first because the IP
-        # key and the tight 5/min budget are both endpoint-specific.
-        if _is_pair_confirm_endpoint(request):
-            limit_string = PAIR_CONFIRM_LIMIT
-            key = _ip_key(request)
-        else:
-            limit_string = WRITE_LIMIT if _is_write_endpoint(request) else DEFAULT_LIMIT
-            key = _bearer_key(request)
+        limit_string = WRITE_LIMIT if _is_write_endpoint(request) else DEFAULT_LIMIT
+        key = _bearer_key(request)
 
         # Hit the in-memory limiter. ``hit()`` returns True iff the
         # request is permitted (the slot was consumed); False means the

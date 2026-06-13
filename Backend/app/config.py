@@ -21,6 +21,14 @@ class Settings(BaseSettings):
     #     python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     kek_secret: str = Field(min_length=44, max_length=44, validation_alias="KEK_SECRET")
 
+    # v1.0.1: single fixed shared secret for Bearer auth (replaces the v0.9
+    # multi-device pairing subsystem). Required, no default — a deployment
+    # with no ``API_TOKEN`` set fails at startup rather than silently
+    # accepting every request. ``min_length=16`` rejects empty / trivially
+    # weak values; the author generates one with e.g.
+    #     python -c "import secrets; print(secrets.token_hex(32))"
+    api_token: str = Field(min_length=16, validation_alias="API_TOKEN")
+
     grok_api_key: str | None = None
     grok_base_url: str = "https://api.x.ai/v1"
     model_name: str = "grok-4"

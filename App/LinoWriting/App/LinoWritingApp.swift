@@ -17,7 +17,6 @@ struct LinoWritingApp: App {
                 .environmentObject(environment.timelineStore)
                 .environmentObject(environment.providerKeysStore)
                 .environmentObject(environment.agentLogStore)
-                .environmentObject(environment.deviceStore)
                 .environmentObject(environment.outlineStore)
                 .environmentObject(environment.personaStore)
                 .environmentObject(environment.errorBus)

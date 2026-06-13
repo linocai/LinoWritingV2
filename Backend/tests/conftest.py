@@ -9,12 +9,13 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session, sessionmaker
 
-# v1.0.0 EE Phase 6 (D6): the static ``api_token`` env-var auth path is gone.
-# ``TEST_TOKEN`` is now the *plaintext device token* minted into a
-# ``device_tokens`` row by the ``auth_headers`` fixture (see bottom of file),
-# which is the sole credential path. No ``API_TOKEN`` env var is set — its
-# absence is the proof that auth no longer depends on it.
-TEST_TOKEN = "test-token-value"
+# v1.0.1: auth is a single fixed shared secret again. ``TEST_TOKEN`` is the
+# plaintext value the ``auth_headers`` fixture presents as the Bearer token;
+# it is also set as the ``API_TOKEN`` env var below so ``Settings`` (and the
+# ``client`` fixture's ``get_settings`` override) compare against this exact
+# value in ``require_bearer_token``. ``min_length=16`` on the Settings field
+# is why this literal is comfortably longer than 16 chars.
+TEST_TOKEN = "test-token-value-0123456789"
 # v0.8 S-1: tests honour an externally-set DATABASE_URL (e.g. when running
 # against a local Postgres container to catch dialect-only bugs before HZ
 # cutover). Default stays SQLite in-memory for the fast dev cycle.
@@ -32,6 +33,15 @@ os.environ.setdefault(
     "udGFLEj2W2PMtAu_q4xKmDNljLX_mxTXuPLo2qhzKWE=",
 )
 TEST_KEK_SECRET = os.environ["KEK_SECRET"]
+
+# v1.0.1: ``API_TOKEN`` is now a required Settings field (fail-fast at
+# startup if unset). Provide the test value here so Settings construction
+# succeeds without the host's real token; ``setdefault`` lets an operator
+# override it from the shell. The ``client`` fixture's get_settings override
+# also passes this value, so the auth comparison matches the Bearer header
+# minted by ``auth_headers``.
+os.environ.setdefault("API_TOKEN", TEST_TOKEN)
+TEST_API_TOKEN = os.environ["API_TOKEN"]
 
 from app.config import Settings, get_settings
 from app.db import Base, get_db, make_engine
@@ -168,6 +178,9 @@ def client(session_factory: sessionmaker[Session]) -> Iterator[TestClient]:
         # Without this the dependency override would raise ValidationError
         # the first time a router resolves ``Depends(get_settings)``.
         kek_secret=TEST_KEK_SECRET,
+        # v1.0.1: Settings requires ``api_token``; require_bearer_token
+        # compares the Bearer header against this exact value.
+        api_token=TEST_API_TOKEN,
     )
     # v0.6+: get_llm_client is a DB-driven dependency; tests stub it directly
     # so we never need a real ProviderKey row for the happy path.
@@ -189,30 +202,12 @@ def client(session_factory: sessionmaker[Session]) -> Iterator[TestClient]:
 
 
 @pytest.fixture()
-def auth_headers(session_factory: sessionmaker[Session]) -> dict[str, str]:
-    """Mint a real, unrevoked ``device_tokens`` row and return its Bearer header.
+def auth_headers() -> dict[str, str]:
+    """Return the Bearer header carrying the fixed ``API_TOKEN``.
 
-    v1.0.0 EE Phase 6 (D6): with the static ``api_token`` fallback removed,
-    the only way a request authenticates is by matching an unrevoked
-    ``device_tokens`` row in ``require_bearer_token``. So instead of handing
-    back a static env-var token, this fixture persists a row whose Fernet
-    ciphertext decrypts to ``TEST_TOKEN`` (using the same ``encrypt_api_key``
-    helper and same ``TEST_KEK_SECRET`` the auth walk will decrypt with).
-
-    It shares the per-test ``session_factory`` engine with the ``client``
-    fixture (both depend on it, so pytest resolves it once per test), which is
-    why the row this fixture commits is visible to the request's auth walk —
-    the in-memory SQLite engine is a single ``StaticPool`` connection.
+    v1.0.1: auth is a single fixed shared secret. ``require_bearer_token``
+    compares the Bearer token against ``settings.api_token``, which the
+    ``client`` fixture's get_settings override pins to ``TEST_API_TOKEN``
+    (== ``TEST_TOKEN``). So presenting that value here authenticates.
     """
-    from app.models.device_token import DeviceToken
-    from app.services.encryption import encrypt_api_key
-
-    with session_factory() as session:
-        session.add(
-            DeviceToken(
-                device_name="test-fixture-device",
-                token_ciphertext=encrypt_api_key(TEST_TOKEN),
-            )
-        )
-        session.commit()
     return {"Authorization": f"Bearer {TEST_TOKEN}"}

@@ -69,21 +69,6 @@ public protocol APIClientProtocol: Sendable {
     // Export (§5.F)
     func exportBook(id: String, format: ExportFormat, includeDrafts: Bool) async throws -> (data: Data, suggestedFilename: String)
     func exportChapter(id: String, format: ExportFormat) async throws -> (data: Data, suggestedFilename: String)
-
-    // Device pairing (§5.W / W-1 backend, W-2 client)
-    /// `POST /api/v1/auth/pair_initiate` — Bearer required. Already-paired
-    /// device asks the backend for a fresh 6-digit short code (used by the
-    /// macOS 设备管理 "添加新设备" flow).
-    func pairInitiate() async throws -> PairInitiateResponse
-    /// `POST /api/v1/auth/pair_confirm` — the ONE Bearer-less endpoint.
-    /// A new device exchanges the short code for a device token (used by the
-    /// iOS startup pairing screen in W-3). The implementation deliberately
-    /// omits the `Authorization` header — there is no token yet.
-    func pairConfirm(code: String, deviceName: String) async throws -> PairConfirmResponse
-    /// `GET /api/v1/auth/devices` — Bearer required. Lists paired devices.
-    func listDevices() async throws -> [DeviceInfo]
-    /// `DELETE /api/v1/auth/devices/{id}` — Bearer required. Revokes a device.
-    func revokeDevice(id: String) async throws
 }
 
 /// Concrete URLSession-backed client.
@@ -102,29 +87,15 @@ public final class APIClient: APIClientProtocol, @unchecked Sendable {
 
     public typealias ConfigProvider = @Sendable () -> Config?
 
-    /// Resolves the backend base URL even when no token is configured yet.
-    /// Needed by `pairConfirm` (§5.W.4): on a fresh device the URL is known
-    /// (seeded default or author-entered) but there's no token, so the
-    /// regular `configProvider` returns `nil`. Returns `nil` only when no
-    /// URL has been configured at all.
-    public typealias BaseURLProvider = @Sendable () -> URL?
-
     private let session: URLSession
     private let configProvider: ConfigProvider
-    private let baseURLProvider: BaseURLProvider
     private let sseClient: SSEClient
     private let decoder = CodecFactory.makeDecoder()
     private let encoder = CodecFactory.makeEncoder()
 
-    /// - Parameter baseURLProvider: optional token-independent URL source for
-    ///   the pre-auth `pairConfirm` endpoint. Defaults to deriving the URL
-    ///   from `config` (which only yields a value once a token also exists);
-    ///   `AppEnvironment` overrides it to read the Keychain base URL directly
-    ///   so pairing works before any token is stored.
     public init(
         session: URLSession = .shared,
-        config: @escaping ConfigProvider,
-        baseURLProvider: BaseURLProvider? = nil
+        config: @escaping ConfigProvider
     ) {
         self.session = session
         // v0.8 Phase U-2 (§5.U.2): SSE 走自己的 timeout-tuned URLSession
@@ -133,7 +104,6 @@ public final class APIClient: APIClientProtocol, @unchecked Sendable {
         // Tests 可通过 `SSEClient(session:)` 直接注入 mock session 旁路。
         self.sseClient = SSEClient()
         self.configProvider = config
-        self.baseURLProvider = baseURLProvider ?? { config()?.baseURL }
     }
 
     /// Convenience init for tests/previews with a fixed config.
@@ -160,38 +130,6 @@ public final class APIClient: APIClientProtocol, @unchecked Sendable {
         var req = URLRequest(url: url)
         req.httpMethod = method
         req.setValue("Bearer \(cfg.token)", forHTTPHeaderField: "Authorization")
-        req.setValue(accept, forHTTPHeaderField: "Accept")
-        if let body {
-            req.httpBody = body
-            req.setValue(contentType, forHTTPHeaderField: "Content-Type")
-        }
-        return req
-    }
-
-    /// Build a request WITHOUT an `Authorization` header for the single
-    /// pre-auth endpoint, `pair_confirm` (§5.W.4). Uses `baseURLProvider`
-    /// (token-independent) so a fresh device with no token can still reach
-    /// the backend. Every other endpoint goes through `makeRequest`, which
-    /// always stamps the Bearer token.
-    private func makeUnauthenticatedRequest(
-        method: String,
-        path: String,
-        body: Data? = nil,
-        contentType: String = "application/json; charset=utf-8",
-        accept: String = "application/json; charset=utf-8"
-    ) throws -> URLRequest {
-        guard let baseURL = baseURLProvider() else {
-            throw AppError.unauthorized("尚未配置后端地址")
-        }
-        guard let url = URLComponents(
-            url: baseURL.appendingPathComponent(path),
-            resolvingAgainstBaseURL: false
-        )?.url else {
-            throw AppError.transport("URL 构造失败")
-        }
-        var req = URLRequest(url: url)
-        req.httpMethod = method
-        // No Authorization header — this is the whitelisted pairing endpoint.
         req.setValue(accept, forHTTPHeaderField: "Accept")
         if let body {
             req.httpBody = body
@@ -743,52 +681,6 @@ public final class APIClient: APIClientProtocol, @unchecked Sendable {
             }
         }
         return nil
-    }
-
-    // MARK: - Device pairing (§5.W)
-
-    /// `POST /api/v1/auth/pair_initiate`. Bearer required — the regular
-    /// `makeRequest` path stamps the token. Body is the canonical empty
-    /// `{}` other action endpoints use.
-    public func pairInitiate() async throws -> PairInitiateResponse {
-        let req = try makeRequest(
-            method: "POST",
-            path: "/api/v1/auth/pair_initiate",
-            body: "{}".data(using: .utf8)
-        )
-        return try await send(req, as: PairInitiateResponse.self)
-    }
-
-    /// `POST /api/v1/auth/pair_confirm`. Bearer-LESS (§5.W.4) — built via
-    /// `makeUnauthenticatedRequest` so no `Authorization` header is sent; the
-    /// device has no token yet at this point. The 6-digit `code` and
-    /// `deviceName` are trimmed by the caller to satisfy the backend's
-    /// 6-digit / 1–80-char schema constraints.
-    public func pairConfirm(code: String, deviceName: String) async throws -> PairConfirmResponse {
-        let payload = PairConfirmRequest(code: code, deviceName: deviceName)
-        let req = try makeUnauthenticatedRequest(
-            method: "POST",
-            path: "/api/v1/auth/pair_confirm",
-            body: body(payload)
-        )
-        return try await send(req, as: PairConfirmResponse.self)
-    }
-
-    /// `GET /api/v1/auth/devices`. Returns `{ "items": [...] }`, unwrapped
-    /// here via the shared `ListResponse` envelope.
-    public func listDevices() async throws -> [DeviceInfo] {
-        let req = try makeRequest(method: "GET", path: "/api/v1/auth/devices")
-        let resp: ListResponse<DeviceInfo> = try await send(req, as: ListResponse<DeviceInfo>.self)
-        return resp.items
-    }
-
-    /// `DELETE /api/v1/auth/devices/{id}` — 204. Revoking the device whose
-    /// token authenticated the request will self-401 on the next call (the
-    /// author has to re-pair); the backend sets `revoked_at` but keeps the
-    /// row for the audit trail.
-    public func revokeDevice(id: String) async throws {
-        let req = try makeRequest(method: "DELETE", path: "/api/v1/auth/devices/\(id)")
-        try await sendNoBody(req)
     }
 }
 

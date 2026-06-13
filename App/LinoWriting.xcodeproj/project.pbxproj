@@ -20,7 +20,6 @@
 		19321D4ECE64770012DC1055 /* NetworkProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DE2361D2021D4EFE7AA1395 /* NetworkProbe.swift */; };
 		1D6B44AB10A8006C890B9614 /* StructuredPrompt.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF6DBCC8C09225A7BDD25FF3 /* StructuredPrompt.swift */; };
 		1ED7C6BA17CB2958A84B415C /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEF305F27399F5CACE9B567E /* SettingsView.swift */; };
-		20B149123AAB3A898A630BC9 /* DevicePairView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5711CBB954D5A728D0BE280 /* DevicePairView.swift */; };
 		21A9918FD66A952258B6AD5D /* RightPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7C052BA1045B4B3171A60D5 /* RightPanelView.swift */; };
 		22214F0A6DCB7F2F6C3ED22C /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73C97B43B64880265CE9E5E9 /* KeychainStore.swift */; };
 		222A8E323B555671EFD63D65 /* Step2_StructuredPromptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CA7A47A6871A13EC540945E /* Step2_StructuredPromptView.swift */; };
@@ -28,7 +27,6 @@
 		2911D29C437555CF5F38DCF6 /* PersonaSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1261C1745567ADFAB690599B /* PersonaSettingsView.swift */; };
 		309AF07E5B1B1DDA63E0AB68 /* ProviderKeysStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71AED5CE653255C13D001BB /* ProviderKeysStoreTests.swift */; };
 		310BEA463DFF042BC683800C /* BookStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 864DFD10296B35AA09DEBCA0 /* BookStore.swift */; };
-		3483414CC7A251BA01A5F047 /* QRCodeGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B8D9158F07428CD9E7C2A92 /* QRCodeGenerator.swift */; };
 		3A6074DF63E085139A91BAA8 /* CodecFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A9347DAAC8E2D449DAD558F /* CodecFactory.swift */; };
 		3C0DEAEF91CC269D3D94C676 /* OutlineStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A4CFCD0CC64BE6BF6F11395 /* OutlineStore.swift */; };
 		3D9A3C3E60CB93E3C3DD0733 /* ErrorBusIOSTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CE6E0E89ED01835C3D4DB9E /* ErrorBusIOSTests.swift */; };
@@ -54,7 +52,6 @@
 		7DEDEB5953BE14F018F577CC /* ProviderKey.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9270C694BC872945963D987E /* ProviderKey.swift */; };
 		82BE172C1387320D1D5AB22B /* ChapterEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF2E9AEBC3EE3C46B4988BF4 /* ChapterEditorView.swift */; };
 		8345701D980C5A77DB446C7E /* ImportChapterSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = C701FE59322CE7CC25DD7AB9 /* ImportChapterSheet.swift */; };
-		83812A9C2D20790B046B6C5A /* DevicePairing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5262C347464D152DD5AD1EF7 /* DevicePairing.swift */; };
 		862FD6E5EBE708E39B992C86 /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36CEF891459AF0F2BF5838AC /* AppEnvironment.swift */; };
 		869E770F12D50D9479E97D09 /* AgentLogStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA8047237F4DACD3C829E349 /* AgentLogStore.swift */; };
 		87CDF927BB9877D10BA59D94 /* Step3_DraftView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47CDC0203B1B844B02D6D246 /* Step3_DraftView.swift */; };
@@ -90,21 +87,18 @@
 		DE180A1E35FBD00919A5837F /* ChapterEditorStoreIOSTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8857F99D5F43C9C8FF0BF722 /* ChapterEditorStoreIOSTests.swift */; };
 		DE3CEAE53EDF1A6F4C9A1BB7 /* BookshelfStoreIOSTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34B2354D9B16F0157FF117FD /* BookshelfStoreIOSTests.swift */; };
 		DF0C0FF8B3021737FD0127D5 /* JSONValue.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBE2B69F0497588D8DBF6EAF /* JSONValue.swift */; };
-		DFB05597EDF6B158453A21FE /* DevicePairViewModelIOSTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEB4D9E5B477A15660969B60 /* DevicePairViewModelIOSTests.swift */; };
 		E00370A3DCE6A2EA2792EF6B /* ChapterSplitterIOSTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69345F199892380615583BDD /* ChapterSplitterIOSTests.swift */; };
 		E20493209EC57E3FC5AE7412 /* CharacterCardEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CC9CD81ABE0EB20C14E4198 /* CharacterCardEditorView.swift */; };
 		E2C56A1DA3694B1D762C0C1B /* CharacterAuthorNotesCodecTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56A211433978FE2B59102902 /* CharacterAuthorNotesCodecTests.swift */; };
 		E3FCE58E28471D8646EAA7AA /* PersonaStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74177C1182E967C876C1E4B6 /* PersonaStore.swift */; };
 		E8C984A316754BDCE5752B8E /* BookshelfStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7399AB340E04D17D1317F54 /* BookshelfStore.swift */; };
 		ED74EEBF63E2764B9F52F714 /* ChapterSplitterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2C66467F9F8238B02B7F49D /* ChapterSplitterTests.swift */; };
-		EED800669AEA9C31FD4C33EE /* DevicePairingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C55E72267C8254CFB9D9CF97 /* DevicePairingTests.swift */; };
 		EF32D377C8F452C9EAB84558 /* BookCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD5F19942EF7BFC503F7F727 /* BookCardView.swift */; };
 		F235C2F080FC1BFB8C1F5694 /* ErrorBus.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6B7C55DE09B49123FDF68F2 /* ErrorBus.swift */; };
 		F3D276DC5FAE548BFAAEE9A8 /* Book.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E1A95792F4074A542705A2A /* Book.swift */; };
 		F77402661BB5E16C1E00EB09 /* CharacterFieldHighlightsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8AA7F06D6946A2E4DB10CCC2 /* CharacterFieldHighlightsTests.swift */; };
 		F987288D60AEDF8F5072BE2B /* ChaptersStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFFFA46EC62CC96A055989EF /* ChaptersStore.swift */; };
 		FD9BCF48D0942C14F68533AB /* ChapterEditorStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79FE421971D21F740D9135D5 /* ChapterEditorStore.swift */; };
-		FE47F24ED5EAB8DD75FE85D0 /* DeviceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 765AA4C3F06309830092E14C /* DeviceStore.swift */; };
 		FE50F412AE0DE84CA7FCC95F /* BookOutline.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE54AE198F5580B46224C451 /* BookOutline.swift */; };
 		FFCEC8D6109668772411223A /* WorkspaceLayoutIOSTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A9491250CA188F687E9ECBB /* WorkspaceLayoutIOSTests.swift */; };
 /* End PBXBuildFile section */
@@ -153,7 +147,6 @@
 		48BBF0A3A8E68611B0D13487 /* KeyboardShortcuts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardShortcuts.swift; sourceTree = "<group>"; };
 		4E0F9833502AA3687B8D3532 /* Character.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Character.swift; sourceTree = "<group>"; };
 		4E1C91690D492CF7A7B18086 /* SSEClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSEClient.swift; sourceTree = "<group>"; };
-		5262C347464D152DD5AD1EF7 /* DevicePairing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DevicePairing.swift; sourceTree = "<group>"; };
 		56A211433978FE2B59102902 /* CharacterAuthorNotesCodecTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CharacterAuthorNotesCodecTests.swift; sourceTree = "<group>"; };
 		57FEEF176E8A04434A70B8F4 /* MockAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockAPIClient.swift; sourceTree = "<group>"; };
 		5A1940EB3F6408EF2A087323 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -161,7 +154,6 @@
 		5EAB02FBFEE9D9708E8C2A1C /* ChapterExtractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChapterExtractTests.swift; sourceTree = "<group>"; };
 		61A3F85CE4E48F08E83451F9 /* AgentLogStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentLogStoreTests.swift; sourceTree = "<group>"; };
 		69345F199892380615583BDD /* ChapterSplitterIOSTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChapterSplitterIOSTests.swift; sourceTree = "<group>"; };
-		6B8D9158F07428CD9E7C2A92 /* QRCodeGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRCodeGenerator.swift; sourceTree = "<group>"; };
 		6DC058E61EDCD9E23C1CB27E /* ProviderKeyEditSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderKeyEditSheet.swift; sourceTree = "<group>"; };
 		6DE2361D2021D4EFE7AA1395 /* NetworkProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkProbe.swift; sourceTree = "<group>"; };
 		6E1A95792F4074A542705A2A /* Book.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Book.swift; sourceTree = "<group>"; };
@@ -169,7 +161,6 @@
 		73C97B43B64880265CE9E5E9 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
 		74177C1182E967C876C1E4B6 /* PersonaStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonaStore.swift; sourceTree = "<group>"; };
 		75310F1791024A41F4654534 /* FileSaver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileSaver.swift; sourceTree = "<group>"; };
-		765AA4C3F06309830092E14C /* DeviceStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceStore.swift; sourceTree = "<group>"; };
 		779A8AEDACC681C504E2847A /* StoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreTests.swift; sourceTree = "<group>"; };
 		79FE421971D21F740D9135D5 /* ChapterEditorStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChapterEditorStore.swift; sourceTree = "<group>"; };
 		7BC492920B9E8880FD492888 /* DotIndicator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DotIndicator.swift; sourceTree = "<group>"; };
@@ -197,7 +188,6 @@
 		C3E418C0FFB24B2E82F640E5 /* ChapterListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChapterListView.swift; sourceTree = "<group>"; };
 		C47BE64A71CBF4931E3ADB01 /* TimelineEventEditTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineEventEditTests.swift; sourceTree = "<group>"; };
 		C4EA7FD38964058A4E188243 /* TimelineTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineTabView.swift; sourceTree = "<group>"; };
-		C55E72267C8254CFB9D9CF97 /* DevicePairingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DevicePairingTests.swift; sourceTree = "<group>"; };
 		C682663516DA1B460A73870D /* OutlinePanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutlinePanelView.swift; sourceTree = "<group>"; };
 		C701FE59322CE7CC25DD7AB9 /* ImportChapterSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportChapterSheet.swift; sourceTree = "<group>"; };
 		C7445CF82AF6BE1968F06442 /* WorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceView.swift; sourceTree = "<group>"; };
@@ -218,7 +208,6 @@
 		E00A558E28508FC0B70B1AE8 /* ChapterSplitter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChapterSplitter.swift; sourceTree = "<group>"; };
 		E06B535E5F1871297DB18268 /* ChapterToolbar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChapterToolbar.swift; sourceTree = "<group>"; };
 		E465C3D7893A74D5806DB97A /* ExportFormat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportFormat.swift; sourceTree = "<group>"; };
-		E5711CBB954D5A728D0BE280 /* DevicePairView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DevicePairView.swift; sourceTree = "<group>"; };
 		E71AED5CE653255C13D001BB /* ProviderKeysStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderKeysStoreTests.swift; sourceTree = "<group>"; };
 		E7C052BA1045B4B3171A60D5 /* RightPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RightPanelView.swift; sourceTree = "<group>"; };
 		EA8047237F4DACD3C829E349 /* AgentLogStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentLogStore.swift; sourceTree = "<group>"; };
@@ -229,7 +218,6 @@
 		F70E45F97517D0B74E0A2010 /* BookshelfView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookshelfView.swift; sourceTree = "<group>"; };
 		FACFE821EB05C75DEF4F0782 /* Phase4OutlinePersonaTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Phase4OutlinePersonaTests.swift; sourceTree = "<group>"; };
 		FB518EAF78BE5EE3B258ED8A /* LinoWriting.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = LinoWriting.entitlements; sourceTree = "<group>"; };
-		FEB4D9E5B477A15660969B60 /* DevicePairViewModelIOSTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DevicePairViewModelIOSTests.swift; sourceTree = "<group>"; };
 		FF2E9AEBC3EE3C46B4988BF4 /* ChapterEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChapterEditorView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -278,7 +266,6 @@
 				7D3F1A62B85D8CE0D190CFA0 /* ChaptersStoreImportTests.swift */,
 				56A211433978FE2B59102902 /* CharacterAuthorNotesCodecTests.swift */,
 				8AA7F06D6946A2E4DB10CCC2 /* CharacterFieldHighlightsTests.swift */,
-				C55E72267C8254CFB9D9CF97 /* DevicePairingTests.swift */,
 				C951EA31F571E35670BF4D2F /* ErrorBusHistoryTests.swift */,
 				16237DD8AEB48AAFBF77622A /* ExportTests.swift */,
 				57FEEF176E8A04434A70B8F4 /* MockAPIClient.swift */,
@@ -320,7 +307,6 @@
 				34B2354D9B16F0157FF117FD /* BookshelfStoreIOSTests.swift */,
 				8857F99D5F43C9C8FF0BF722 /* ChapterEditorStoreIOSTests.swift */,
 				69345F199892380615583BDD /* ChapterSplitterIOSTests.swift */,
-				FEB4D9E5B477A15660969B60 /* DevicePairViewModelIOSTests.swift */,
 				2CE6E0E89ED01835C3D4DB9E /* ErrorBusIOSTests.swift */,
 				D4F5F0029889FA89A68FD10E /* FileSaverIOSTests.swift */,
 				CC5CC49F47D51D6A8FD31923 /* KeychainStoreIOSTests.swift */,
@@ -396,7 +382,6 @@
 				75310F1791024A41F4654534 /* FileSaver.swift */,
 				73C97B43B64880265CE9E5E9 /* KeychainStore.swift */,
 				6DE2361D2021D4EFE7AA1395 /* NetworkProbe.swift */,
-				6B8D9158F07428CD9E7C2A92 /* QRCodeGenerator.swift */,
 				00014DE449CF5813785CAAAE /* Settings.swift */,
 				4E1C91690D492CF7A7B18086 /* SSEClient.swift */,
 			);
@@ -416,7 +401,6 @@
 		AC4C943D8471A9ABE4347836 /* Root */ = {
 			isa = PBXGroup;
 			children = (
-				E5711CBB954D5A728D0BE280 /* DevicePairView.swift */,
 				1261C1745567ADFAB690599B /* PersonaSettingsView.swift */,
 				6DC058E61EDCD9E23C1CB27E /* ProviderKeyEditSheet.swift */,
 				1E6F32D725AE4A2282B1B71A /* RootView.swift */,
@@ -448,7 +432,6 @@
 				DE54AE198F5580B46224C451 /* BookOutline.swift */,
 				4333203ACD859F2AE7750E68 /* Chapter.swift */,
 				4E0F9833502AA3687B8D3532 /* Character.swift */,
-				5262C347464D152DD5AD1EF7 /* DevicePairing.swift */,
 				E465C3D7893A74D5806DB97A /* ExportFormat.swift */,
 				CBE2B69F0497588D8DBF6EAF /* JSONValue.swift */,
 				458E63E1FC585D07766A41D7 /* ListResponse.swift */,
@@ -478,7 +461,6 @@
 				79FE421971D21F740D9135D5 /* ChapterEditorStore.swift */,
 				EFFFA46EC62CC96A055989EF /* ChaptersStore.swift */,
 				D378AC8F7CBF8C2E98F29D97 /* CharactersStore.swift */,
-				765AA4C3F06309830092E14C /* DeviceStore.swift */,
 				A6B7C55DE09B49123FDF68F2 /* ErrorBus.swift */,
 				9A4CFCD0CC64BE6BF6F11395 /* OutlineStore.swift */,
 				74177C1182E967C876C1E4B6 /* PersonaStore.swift */,
@@ -608,7 +590,6 @@
 				DE3CEAE53EDF1A6F4C9A1BB7 /* BookshelfStoreIOSTests.swift in Sources */,
 				DE180A1E35FBD00919A5837F /* ChapterEditorStoreIOSTests.swift in Sources */,
 				E00370A3DCE6A2EA2792EF6B /* ChapterSplitterIOSTests.swift in Sources */,
-				DFB05597EDF6B158453A21FE /* DevicePairViewModelIOSTests.swift in Sources */,
 				3D9A3C3E60CB93E3C3DD0733 /* ErrorBusIOSTests.swift in Sources */,
 				CA0E7E3FA1B415ED41C217A3 /* FileSaverIOSTests.swift in Sources */,
 				693062A2EE3B3416780DE90B /* KeychainStoreIOSTests.swift in Sources */,
@@ -647,9 +628,6 @@
 				CEDDD72B47623006397B39D1 /* CharacterCardListView.swift in Sources */,
 				0185146B5183AA34FC92CC37 /* CharactersStore.swift in Sources */,
 				3A6074DF63E085139A91BAA8 /* CodecFactory.swift in Sources */,
-				20B149123AAB3A898A630BC9 /* DevicePairView.swift in Sources */,
-				83812A9C2D20790B046B6C5A /* DevicePairing.swift in Sources */,
-				FE47F24ED5EAB8DD75FE85D0 /* DeviceStore.swift in Sources */,
 				DDA51FE21DA32553EDA19FFC /* DotIndicator.swift in Sources */,
 				F235C2F080FC1BFB8C1F5694 /* ErrorBus.swift in Sources */,
 				DA06F1D070994F13591AB5BB /* ErrorMapping.swift in Sources */,
@@ -675,7 +653,6 @@
 				7DEDEB5953BE14F018F577CC /* ProviderKey.swift in Sources */,
 				4608C2541975C24D7B7554F3 /* ProviderKeyEditSheet.swift in Sources */,
 				D46CA5B00F11D9673EA28BD8 /* ProviderKeysStore.swift in Sources */,
-				3483414CC7A251BA01A5F047 /* QRCodeGenerator.swift in Sources */,
 				21A9918FD66A952258B6AD5D /* RightPanelView.swift in Sources */,
 				A7E32BDD0AE796BE8FF92257 /* RootView.swift in Sources */,
 				6C7AE12D238C23EF8E9C9244 /* SSEClient.swift in Sources */,
@@ -709,7 +686,6 @@
 				94D7994F7BE9DAD72FE52359 /* ChaptersStoreImportTests.swift in Sources */,
 				E2C56A1DA3694B1D762C0C1B /* CharacterAuthorNotesCodecTests.swift in Sources */,
 				F77402661BB5E16C1E00EB09 /* CharacterFieldHighlightsTests.swift in Sources */,
-				EED800669AEA9C31FD4C33EE /* DevicePairingTests.swift in Sources */,
 				A71D9DE94C4FFFF1D859704E /* ErrorBusHistoryTests.swift in Sources */,
 				235047FFF66A56D1E8CC3A61 /* ExportTests.swift in Sources */,
 				B24A9CEE22266DD7B0E57E5C /* MockAPIClient.swift in Sources */,
@@ -816,7 +792,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.0.0;
+				MARKETING_VERSION = 1.0.1;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -879,7 +855,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.0.0;
+				MARKETING_VERSION = 1.0.1;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";

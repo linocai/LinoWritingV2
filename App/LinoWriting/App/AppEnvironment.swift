@@ -20,11 +20,7 @@ final class AppEnvironment: ObservableObject {
                   !token.isEmpty
             else { return nil }
             return APIClient.Config(baseURL: url, token: token)
-        },
-        // §5.W.4: the pre-auth `pair_confirm` endpoint needs the base URL
-        // before any token exists, so resolve it straight from Keychain
-        // (seeded to the production default on first launch).
-        baseURLProvider: { [weak self] in self?.keychain.baseURL }
+        }
     )
 
     private(set) lazy var appStore: AppStore = AppStore(keychain: keychain, settings: settings)
@@ -37,8 +33,6 @@ final class AppEnvironment: ObservableObject {
     private(set) lazy var providerKeysStore: ProviderKeysStore = ProviderKeysStore(api: apiClient, errorBus: errorBus)
     // v0.7 §5.D / Phase D-log: backs the Settings → "Agent 日志" tab.
     private(set) lazy var agentLogStore: AgentLogStore = AgentLogStore(api: apiClient, errorBus: errorBus)
-    // v0.9 §5.W / W-2: backs the Settings → 连接 → 设备管理 sub-section.
-    private(set) lazy var deviceStore: DeviceStore = DeviceStore(api: apiClient, errorBus: errorBus)
     // v1.0.0 EE §5.5: backs the book-level 大纲面板 (outline panel).
     private(set) lazy var outlineStore: OutlineStore = OutlineStore(api: apiClient, errorBus: errorBus)
     // v1.0.0 EE §5.5: backs the Settings → 人格 (Agent persona editor) tab.

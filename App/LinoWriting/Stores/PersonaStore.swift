@@ -8,9 +8,9 @@ import SwiftUI
 ///   - `save(role:text:)`  → `PATCH /agent-personas/{role}` (is_default→false)
 ///   - `reset(role:)`      → `POST /agent-personas/{role}/reset` (is_default→true)
 ///
-/// Same ErrorBus + "endpoint returns the fresh row" pattern as `OutlineStore`
-/// / `DeviceStore`: a failed call publishes and leaves state intact; a
-/// successful mutation replaces just the touched role's row in `personas`.
+/// Same ErrorBus + "endpoint returns the fresh row" pattern as `OutlineStore`:
+/// a failed call publishes and leaves state intact; a successful mutation
+/// replaces just the touched role's row in `personas`.
 @MainActor
 public final class PersonaStore: ObservableObject {
 

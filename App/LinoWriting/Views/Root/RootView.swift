@@ -29,19 +29,11 @@ public struct RootView: View {
     @ViewBuilder
     private var content: some View {
         if !appStore.isConfigured {
-            // v0.9 §5.W.5 (W-3): iOS first-launch routes to the full-screen
-            // device-pairing screen (scan QR / enter 6-digit code) instead
-            // of the macOS first-run SettingsView. macOS is the pairing
-            // *source* and keeps its v0.8 SettingsView + banner flow.
-            #if os(iOS)
-            if appStore.needsDevicePairing {
-                DevicePairView()
-            } else {
-                SettingsView(isFirstRun: true)
-            }
-            #else
+            // v1.0.1: auth is a single fixed shared API_TOKEN. Both macOS and
+            // iOS first-run route to the same first-run SettingsView, where the
+            // author fills in the backend URL + token. The v0.9 iOS-only
+            // device-pairing screen (scan QR / enter 6-digit code) is gone.
             SettingsView(isFirstRun: true)
-            #endif
         } else if let book = appStore.currentBook {
             WorkspaceView(book: book)
         } else {
