@@ -2,7 +2,12 @@ name: LinoWriting
 options:
   bundleIdPrefix: com.lino.linowriting
   deploymentTarget:
-    macOS: "14.0"
+    # v1.1.0 (FF): macOS 14→26 to unlock native Liquid Glass `.glassEffect`
+    # (macOS 26 SDK). iOS stays 17.0 — all new glass API lives behind
+    # `#if os(macOS)`, so iOS compilation is untouched. Version number
+    # (MARKETING_VERSION) is bumped separately in Phase 6, not here, to avoid
+    # mid-build health-endpoint version drift.
+    macOS: "26.0"
     iOS: "17.0"
   createIntermediateGroups: true
   groupSortPosition: top
@@ -32,7 +37,7 @@ settings:
     CODE_SIGN_STYLE: Automatic
     DEVELOPMENT_TEAM: HX73DFL88G
     ENABLE_HARDENED_RUNTIME: YES
-    MARKETING_VERSION: "1.0.1"
+    MARKETING_VERSION: "1.1.0"
     CURRENT_PROJECT_VERSION: "1"
 
 targets:

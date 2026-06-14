@@ -16,7 +16,7 @@ def test_auth_rejects_wrong_token(client):
 def test_health_with_token(client, auth_headers):
     response = client.get("/api/v1/health", headers=auth_headers)
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "version": "1.0.1"}
+    assert response.json() == {"status": "ok", "version": "1.1.0"}
 
 
 def test_framework_errors_use_contract_shape(client, auth_headers):

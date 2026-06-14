@@ -11,6 +11,12 @@ public final class AppStore: ObservableObject {
     /// The currently opened book. `nil` means we're on the bookshelf.
     @Published public var currentBook: Book?
 
+    /// v1.1.0 (FF) — reader overlay state. When non-nil the macOS shell renders
+    /// the reading page (`ReaderView`, Phase 4) on top of the workspace for that
+    /// chapter; the workspace stays mounted underneath so returning lands back
+    /// on the same chapter. macOS-only consumer; iOS ignores it.
+    @Published public var readingChapterId: String?
+
     /// v0.8 §5.U.2 / §5.U.6: surfaced at the top of the Connection
     /// settings tab when the resolved `baseURL` has no token in Keychain.
     /// Trips on first launch after the default URL flipped from localhost
@@ -69,6 +75,18 @@ public final class AppStore: ObservableObject {
 
     public func closeBook() {
         currentBook = nil
+        readingChapterId = nil
+    }
+
+    /// v1.1.0 (FF) — enter the reading overlay for `chapterId`. No-op when nil.
+    public func openReader(chapterId: String?) {
+        guard let chapterId else { return }
+        readingChapterId = chapterId
+    }
+
+    /// v1.1.0 (FF) — leave the reading overlay, back to the workspace.
+    public func closeReader() {
+        readingChapterId = nil
     }
 
     /// Update the in-memory book metadata (e.g., after a PATCH).

@@ -40,8 +40,12 @@ struct LinoWritingApp: App {
                 #endif
         }
         #if os(macOS)
+        // v1.1.0 (FF): the redesign draws its own title bar (traffic-light
+        // gutter + 临渊 写作台 + book title + connection dot + ⚙ gear). Hide the
+        // native title bar / unified toolbar so it doesn't overlay and wash out
+        // the self-drawn glass bar.
+        .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentMinSize)
-        .windowToolbarStyle(.unifiedCompact(showsTitle: false))
         .commands {
             CommandGroup(replacing: .appSettings) {
                 Button("设置...") { environment.appStore.showSettings = true }

@@ -7,12 +7,18 @@ public enum ChapterStatus: String, Codable, CaseIterable, Sendable {
     case draftReady = "draft_ready"
     case finalized
 
+    /// v1.1.0 (FF): display labels switched to the handoff design-spec wording
+    /// (构思中 / 结构就绪 / 写作中 / 草稿就绪 / 已完成). This is presentation
+    /// text only — the enum `rawValue` (and therefore the wire contract /
+    /// backend) is unchanged. Cross-platform: iOS picks up the new wording too
+    /// (harmless, no behavior change). Old wording was
+    /// 草稿/提示完成/写作中/正文完成/已完成.
     public var label: String {
         switch self {
-        case .draft: return "草稿"
-        case .promptReady: return "提示完成"
+        case .draft: return "构思中"
+        case .promptReady: return "结构就绪"
         case .writing: return "写作中"
-        case .draftReady: return "正文完成"
+        case .draftReady: return "草稿就绪"
         case .finalized: return "已完成"
         }
     }

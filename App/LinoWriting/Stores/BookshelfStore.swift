@@ -66,6 +66,17 @@ public final class BookshelfStore: ObservableObject {
         }
     }
 
+    /// v1.1.0 (FF) — reflect an externally-patched book (e.g. the workspace
+    /// 设定 tab edited title / cover) into the cached shelf list so the next
+    /// shelf visit shows the change without a full reload. Inserts if absent.
+    public func upsert(_ book: Book) {
+        if let idx = books.firstIndex(where: { $0.id == book.id }) {
+            books[idx] = book
+        } else {
+            books.insert(book, at: 0)
+        }
+    }
+
     public func patch(_ book: Book, _ payload: BookPatchRequest) async {
         do {
             let updated = try await api.patchBook(id: book.id, payload)
