@@ -1,8 +1,13 @@
-#if os(macOS)
 import SwiftUI
 
-/// v1.1.0 (FF) Phase 3 — editor support widgets (text area / caret / flow).
-/// macOS-only.
+/// v1.1.0 (FF) Phase 3 — editor support widgets (styled text area + streaming
+/// caret).
+///
+/// v1.2.0 (GG, P1): **un-gated** from `MacEditorWidgets.swift`'s `#if os(macOS)`
+/// and moved into cross-platform `Views/Components/` so the iOS redesign reuses
+/// them (the iOS 大纲 / 设定 / 想法 surfaces use `LWTextArea`; the streaming
+/// 正文 uses `BlinkingCaret`). Both are platform-neutral SwiftUI
+/// (`TextEditor` / `Rectangle` + `.task`), so macOS rendering is unchanged.
 
 // MARK: - Styled TextEditor with placeholder + design chrome
 
@@ -62,11 +67,6 @@ struct BlinkingCaret: View {
             .fill(LWColor.accentStop)
             .frame(width: 2, height: 20)
             .opacity(visible ? 1 : 0)
-            .onAppear {
-                withAnimation(.linear(duration: 0.5).repeatForever(autoreverses: false)) {
-                    // step-toggle via a timer-like animation
-                }
-            }
             .task {
                 while !Task.isCancelled {
                     try? await Task.sleep(nanoseconds: 530_000_000)
@@ -76,7 +76,6 @@ struct BlinkingCaret: View {
     }
 }
 
-// NOTE: `FlowLayout` (wrapping tag layout) already exists in
+// NOTE: `FlowLayout` (wrapping tag layout) lives in
 // `Views/Components/InlineEditableTags.swift` with the same `FlowLayout(spacing:)`
-// signature — reused here, not redeclared.
-#endif
+// signature — reused by both glass widget sets, not redeclared.

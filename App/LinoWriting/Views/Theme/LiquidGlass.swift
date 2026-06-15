@@ -1,24 +1,23 @@
-#if os(macOS)
 import SwiftUI
 
 /// v1.1.0 (FF) — Liquid Glass theme layer · glass material modifiers.
 ///
-/// macOS 26 native `.glassEffect(_:in:)` is the base material; on top of it we
-/// layer the handoff's three signature traits so the result reads as the
-/// design's "液态玻璃" rather than plain system glass:
-///   1. **半透明** — `.glassEffect` (translucent, refracts the desktop behind).
+/// Native `.glassEffect(_:in:)` is the base material; on top of it we layer
+/// the handoff's three signature traits so the result reads as the design's
+/// "液态玻璃" rather than plain system glass:
+///   1. **半透明** — `.glassEffect` (translucent, refracts content behind).
 ///   2. **0.5px 细描边** — `rgba(40,45,70,0.10)` hairline (`LWMetrics.hairline`).
 ///   3. **顶部高光** — `inset 0 1px 0 rgba(255,255,255,0.7)`, drawn as a 1px
 ///      top-edge highlight line inside the clip shape.
 ///
-/// deploymentTarget is macOS 26, so `.glassEffect` is unconditionally
-/// available — no `if #available` tier. A `.regularMaterial` fallback path is
-/// kept behind a flag only for defensive reuse, but this version ships on 26.
+/// deploymentTarget is macOS 26 / **iOS 26** (v1.2.0 GG, P1), so
+/// `.glassEffect` + `GlassEffectContainer` are unconditionally available on
+/// BOTH platforms — no `if #available` tier. The whole modifier set is
+/// platform-neutral SwiftUI (no `NSVisualEffectView` / AppKit material), so
+/// this file un-gated cleanly from `#if os(macOS)` to share with iOS.
 ///
 /// Use `GlassEffectContainer` (re-exported convenience `LWGlassContainer`) to
-/// wrap adjacent glass elements so macOS 26 merges their morph/refraction.
-///
-/// macOS-only.
+/// wrap adjacent glass elements so the OS merges their morph/refraction.
 
 // MARK: - Top inset highlight overlay
 
@@ -133,4 +132,3 @@ struct LWGlassContainer<Content: View>: View {
         }
     }
 }
-#endif

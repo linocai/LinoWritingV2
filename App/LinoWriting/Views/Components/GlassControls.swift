@@ -1,11 +1,19 @@
-#if os(macOS)
 import SwiftUI
+#if os(macOS)
 import AppKit
+#endif
 
-/// v1.1.0 (FF) Phase 3 — small reusable glass controls shared across the
-/// macOS workspace (title bar / sidebar / editor / right panel). Pixel-exact
-/// transcriptions of the recurring button / chip / label idioms in the handoff
-/// (`LinoWriting.dc.html` 工作台). macOS-only.
+/// v1.1.0 (FF) Phase 3 — small reusable glass controls (button / chip / label /
+/// divider) used across the Liquid Glass workspace (title bar / sidebar /
+/// editor / right panel). Pixel-exact transcriptions of the recurring idioms in
+/// the handoff (`LinoWriting.dc.html` 工作台).
+///
+/// v1.2.0 (GG, P1): **un-gated** from `MacWorkspaceControls.swift`'s
+/// `#if os(macOS)` and moved into cross-platform `Views/Components/` so the iOS
+/// redesign (P2–P6) reuses the same controls. The ONLY platform-sensitive code
+/// is the `pointer(_:)` cursor helper — `NSCursor` on macOS, a no-op on iOS
+/// (touch has no cursor). Everything else is platform-neutral SwiftUI, so macOS
+/// rendering is byte-for-byte unchanged.
 
 // MARK: - Primary accent button (40 high, accent gradient, glow)
 
@@ -290,8 +298,13 @@ struct LWCenteredDivider: View {
 
 // MARK: - Pointer cursor helper
 
+/// Push / pop the pointing-hand cursor on macOS hover. On iOS there is no
+/// cursor (touch), so this is a no-op — the `.onHover` modifier still compiles
+/// and is simply inert for touch input. Keeping the seam here means the button
+/// call sites stay identical across platforms.
 @MainActor
 func pointer(_ inside: Bool) {
+    #if os(macOS)
     if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+    #endif
 }
-#endif

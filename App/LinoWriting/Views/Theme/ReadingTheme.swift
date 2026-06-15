@@ -1,11 +1,14 @@
-#if os(macOS)
 import SwiftUI
 
 /// v1.1.0 (FF) — Liquid Glass theme layer · reading-page themes.
 ///
 /// Three reading themes (日间 / 护眼 / 夜间) with the handoff's exact colors
-/// (§Design Tokens · 阅读页三主题). The reader (Phase 4) tints the whole
-/// window shell, not just the text column. macOS-only.
+/// (§Design Tokens · 阅读页三主题). The reader tints the whole window/screen
+/// shell, not just the text column.
+///
+/// v1.2.0 (GG, P1): un-gated from `#if os(macOS)` — pure enum + `Color` /
+/// `CGFloat` ladder, platform-neutral. The iOS reader (P5, `.fullScreenCover`
+/// + justified `UITextView`) reuses these color tables + font-size ladder.
 enum ReadingTheme: String, CaseIterable, Identifiable, Sendable {
     case day
     case sepia
@@ -114,4 +117,3 @@ enum ReadingTheme: String, CaseIterable, Identifiable, Sendable {
         size * 1.05
     }
 }
-#endif

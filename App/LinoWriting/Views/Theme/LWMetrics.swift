@@ -1,10 +1,14 @@
-#if os(macOS)
 import SwiftUI
 
 /// v1.1.0 (FF) — Liquid Glass theme layer · metrics.
 ///
 /// Corner radii / button heights / spacing / shadows from handoff
-/// §Design Tokens (圆角 / 间距 / 阴影). macOS-only.
+/// §Design Tokens (圆角 / 间距 / 阴影).
+///
+/// v1.2.0 (GG, P1): un-gated from `#if os(macOS)` — pure numeric / `Color`
+/// constants, platform-neutral. The 三栏 layout widths (`sidebarWidth` /
+/// `rightPanelWidth` / `window*`) are macOS-only by use but harmless as shared
+/// constants; iOS screens use their own vertical metrics.
 enum LWMetrics {
 
     // MARK: - Corner radii (圆角)
@@ -72,4 +76,3 @@ enum LWMetrics {
         static let y: CGFloat = 8
     }
 }
-#endif

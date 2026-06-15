@@ -1,4 +1,3 @@
-#if os(macOS)
 import SwiftUI
 
 /// v1.1.0 (FF) — Liquid Glass theme layer · colors.
@@ -9,7 +8,10 @@ import SwiftUI
 /// alpha use `.opacity(_:)`. Do not invent colors — the handoff says
 /// "颜色不要新造；以本文档值为准".
 ///
-/// macOS-only (the redesign is macOS-first; iOS keeps its existing palette).
+/// v1.2.0 (GG, P1): un-gated from `#if os(macOS)` — the iOS redesign is
+/// pixel-source with macOS, sharing the SAME tokens (handoff says iOS reuses
+/// the macOS token pack, nothing new). Every value is platform-neutral
+/// SwiftUI `Color` (no `NSColor` / AppKit), so this compiles unchanged on iOS.
 enum LWColor {
 
     // MARK: - Hex helper
@@ -127,4 +129,3 @@ enum LWColor {
         )
     }
 }
-#endif

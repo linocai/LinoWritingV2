@@ -14,11 +14,16 @@ public struct RootView: View {
         .sheet(isPresented: $appStore.showSettings) {
             #if os(macOS)
             // v1.1.0 (FF) Phase 5: macOS settings is the new four-section glass
-            // surface (连接 / 模型与密钥 / 人格编辑 / 调用日志). iOS keeps the
-            // legacy `SettingsView`.
+            // surface (连接 / 模型与密钥 / 人格编辑 / 调用日志).
             MacSettingsView()
             #else
-            SettingsView()
+            // v1.2.0 (GG, P6): iOS settings is the new Liquid Glass grouped
+            // sheet (连接 / 模型与密钥 / 人格编辑 / 调用日志, 砍「最近错误」tab),
+            // replacing the legacy `SettingsView` Form. `.large` detent + grabber
+            // per the handoff 设置 sheet.
+            IOSSettingsView()
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
             #endif
         }
         .task {
@@ -38,20 +43,15 @@ public struct RootView: View {
         #if os(macOS)
         // v1.1.0 (FF): macOS routes through the new Liquid Glass shell
         // (`MacShellView`), the `#if os(macOS)` seam that the per-screen
-        // Phases fill. iOS keeps its existing path below untouched.
+        // Phases fill.
         MacShellView()
         #else
-        if !appStore.isConfigured {
-            // v1.0.1: auth is a single fixed shared API_TOKEN. Both macOS and
-            // iOS first-run route to the same first-run SettingsView, where the
-            // author fills in the backend URL + token. The v0.9 iOS-only
-            // device-pairing screen (scan QR / enter 6-digit code) is gone.
-            SettingsView(isFirstRun: true)
-        } else if let book = appStore.currentBook {
-            WorkspaceView(book: book)
-        } else {
-            BookshelfView()
-        }
+        // v1.2.0 (GG, P0): iOS routes through the new `NavigationStack` shell
+        // (`RootViewIOS`), the `#if os(iOS)` seam the per-screen Phases (P2–P6)
+        // fill. The old `currentBook`-driven view swap is gone — book下钻 is now
+        // a real push/pop. First-run gate + single-密钥 auth (v1.0.1) preserved
+        // inside `RootViewIOS`.
+        RootViewIOS()
         #endif
     }
 }

@@ -1,18 +1,19 @@
-#if os(macOS)
 import SwiftUI
 
 /// v1.1.0 (FF) — Liquid Glass theme layer · fonts.
 ///
-/// - **Serif (宋体)**: system `Songti SC` (ships with macOS, NOT packaged).
-///   Titles / book names / chapter names / reading body / outline editor —
-///   the "literary" surfaces. Handoff used Noto Serif SC; `Songti SC` is the
-///   close system equivalent (verified present at
-///   `/System/Library/Fonts/Supplemental/Songti.ttc`).
+/// - **Serif (宋体)**: system `Songti SC` (ships with macOS *and* iOS, NOT
+///   packaged). Titles / book names / chapter names / reading body / outline
+///   editor — the "literary" surfaces. Handoff used Noto Serif SC; `Songti SC`
+///   is the close system equivalent (present on macOS at
+///   `/System/Library/Fonts/Supplemental/Songti.ttc`, and on iOS as a built-in
+///   `Font.custom("Songti SC", …)` family).
 /// - **UI**: SwiftUI default (San Francisco / PingFang SC) — leave as-is.
 /// - **Mono**: SF Mono via `.system(design: .monospaced)` for backend URL /
 ///   API_TOKEN / token counts.
 ///
-/// macOS-only.
+/// v1.2.0 (GG, P1): un-gated from `#if os(macOS)` — `Font.custom` / system
+/// fonts are platform-neutral, shared with the iOS redesign.
 enum LWFont {
 
     /// Serif (Songti SC) at an arbitrary point size. Use for headings, book /
@@ -34,8 +35,8 @@ enum LWFont {
     }
 
     /// Convenience: the literal PostScript family name, for callers that need
-    /// to construct an `NSFont` / attributed-string font directly (e.g. a
-    /// justified reading body via paragraph attributes).
+    /// to construct an `NSFont` (macOS) / `UIFont` (iOS) / attributed-string
+    /// font directly (e.g. a justified reading body via paragraph attributes —
+    /// the P5 iOS `UITextView` reader uses this).
     static let songtiFamily = "Songti SC"
 }
-#endif

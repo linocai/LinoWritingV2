@@ -3,12 +3,18 @@ options:
   bundleIdPrefix: com.lino.linowriting
   deploymentTarget:
     # v1.1.0 (FF): macOS 14→26 to unlock native Liquid Glass `.glassEffect`
-    # (macOS 26 SDK). iOS stays 17.0 — all new glass API lives behind
-    # `#if os(macOS)`, so iOS compilation is untouched. Version number
-    # (MARKETING_VERSION) is bumped separately in Phase 6, not here, to avoid
-    # mid-build health-endpoint version drift.
+    # (macOS 26 SDK).
+    #
+    # v1.2.0 (GG, P0): iOS 17→26 to unlock the SAME native `.glassEffect` /
+    # `GlassEffectContainer` on iPhone (the iOS redesign is pixel-source with
+    # macOS). macOS 26 == iOS 26 share the glass API, so the theme layer
+    # (`Views/Theme/*`) un-gates to both platforms (P1). Version number
+    # (MARKETING_VERSION) is bumped separately in the wrap-up Phase, not here,
+    # to avoid mid-build health-endpoint version drift.
+    # NOTE (author ruling): the iOS redesign ships under MARKETING_VERSION
+    # 1.1.0 — do NOT bump to 1.2.0; "v1.2.0" is only the iteration codename.
     macOS: "26.0"
-    iOS: "17.0"
+    iOS: "26.0"
   createIntermediateGroups: true
   groupSortPosition: top
   generateEmptyDirectories: true
@@ -75,7 +81,11 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         SUPPORTED_PLATFORMS: "iphoneos iphonesimulator macosx"
-        TARGETED_DEVICE_FAMILY: "1,2"
+        # v1.2.0 (GG, P0): drop iPad. The iOS redesign is an iPhone-only
+        # portrait NavigationStack app; the iPad NavigationSplitView dispatch
+        # in WorkspaceView is deleted and Info.plist's `~ipad` orientation
+        # block removed. "1" = iPhone only.
+        TARGETED_DEVICE_FAMILY: "1"
         SUPPORTS_MACCATALYST: NO
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks @executable_path/Frameworks"
 
@@ -124,6 +134,10 @@ targets:
         BUNDLE_LOADER: "$(TEST_HOST)"
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/LinoI.app/LinoI"
         GENERATE_INFOPLIST_FILE: YES
+        # v1.2.0 (GG, P0): match the app target — iPhone only. Without this
+        # xcodegen defaults the test bundle to "1,2" (iPad nominally claimed),
+        # harmless for a logic-test bundle but kept consistent with the app.
+        TARGETED_DEVICE_FAMILY: "1"
         # Restrict to iphone* platforms only so a `-destination
         # platform=macOS` invocation auto-skips building this test
         # bundle. Without this Xcode tries to resolve TEST_HOST against
