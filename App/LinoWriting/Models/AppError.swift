@@ -1,7 +1,7 @@
 import Foundation
 
 /// Application-level error type. Mirrors the backend error envelope
-/// described in §3.1 of `PLAN_FRONTEND.md` plus local transport failures.
+/// (see `Backend/app/errors.py`) plus local transport failures.
 public enum AppError: Error, Equatable, Sendable {
     case validation(String)
     case notFound(String)

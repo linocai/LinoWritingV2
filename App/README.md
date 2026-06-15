@@ -1,6 +1,6 @@
 # LinoWriting (前端，v0.5)
 
-SwiftUI 实现的 Mac/iOS 双平台原生 App，对接 `PLAN_FRONTEND.md` 描述的后端 API。
+SwiftUI 实现的 Mac/iOS 双平台原生 App，对接后端 API（契约与现状见仓库根 `PROJECT_PLAN.md`）。
 
 > **iOS 自用安装：** 见 `README_iOS.md`（v0.8 §5.R.9：免费 Apple Developer 账号 + Xcode 直装 + 7 天 re-sign 工作流）。
 
@@ -48,7 +48,7 @@ xcodebuild -project LinoWriting.xcodeproj -scheme LinoWriting \
 
 ## 项目结构
 
-详见 `PLAN_FRONTEND.md` §5。简短版：
+详见仓库根 `PROJECT_PLAN.md` §2。简短版：
 
 ```
 LinoWriting/

@@ -183,7 +183,11 @@ fi
 # ---- deploy to Desktop -----------------------------------------------------
 step "deploy to $DEPLOY_DEST"
 rm -rf "$DEPLOY_DEST"
-cp -R "$APP" "$DEPLOY_DEST"
+# ditto, NOT cp -R: cp -R can silently corrupt .app Resources while codesign
+# --verify still passes (project CLAUDE.md landmine). The launch-verify copy on
+# Desktop must be a faithful bundle, or a corrupt-copy launch failure gets
+# misread as a code/signing bug.
+ditto "$APP" "$DEPLOY_DEST"
 
 # ---- report version --------------------------------------------------------
 step "done"
