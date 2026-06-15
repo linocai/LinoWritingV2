@@ -189,8 +189,8 @@ struct IOSConnectionSettingsSection: View {
     // MARK: - State
 
     private var canSave: Bool {
-        !baseURLString.trimmingCharacters(in: .whitespaces).isEmpty &&
-        !token.trimmingCharacters(in: .whitespaces).isEmpty
+        !baseURLString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func loadExisting() {
@@ -203,12 +203,12 @@ struct IOSConnectionSettingsSection: View {
     }
 
     private func save() {
-        let urlString = baseURLString.trimmingCharacters(in: .whitespaces)
+        let urlString = baseURLString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: urlString), url.scheme != nil else {
             saveError = "URL 无效，请包含 http(s):// 前缀"
             return
         }
-        appStore.saveCredentials(baseURL: url, token: token.trimmingCharacters(in: .whitespaces))
+        appStore.saveCredentials(baseURL: url, token: token.trimmingCharacters(in: .whitespacesAndNewlines))
         saveError = nil
         statusState = .connected
         // First-run path: saving flips `isConfigured`, the shell re-routes off

@@ -202,8 +202,8 @@ struct MacConnectionSettingsSection: View {
     // MARK: - State
 
     private var canSave: Bool {
-        !baseURLString.trimmingCharacters(in: .whitespaces).isEmpty &&
-        !token.trimmingCharacters(in: .whitespaces).isEmpty
+        !baseURLString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func loadExisting() {
@@ -216,12 +216,12 @@ struct MacConnectionSettingsSection: View {
     }
 
     private func save() {
-        let urlString = baseURLString.trimmingCharacters(in: .whitespaces)
+        let urlString = baseURLString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: urlString), url.scheme != nil else {
             saveError = "URL 无效，请包含 http(s):// 前缀"
             return
         }
-        appStore.saveCredentials(baseURL: url, token: token.trimmingCharacters(in: .whitespaces))
+        appStore.saveCredentials(baseURL: url, token: token.trimmingCharacters(in: .whitespacesAndNewlines))
         saveError = nil
         statusState = .connected
         // First-run path: saving flips `isConfigured`, the shell re-routes off
@@ -281,7 +281,7 @@ private struct MacNetworkSelfTest: View {
     @State private var copied = false
 
     private var parsedHost: String? {
-        URL(string: currentURLString.trimmingCharacters(in: .whitespaces))?.host
+        URL(string: currentURLString.trimmingCharacters(in: .whitespacesAndNewlines))?.host
     }
 
     private var hostsFixCommand: String {
@@ -384,7 +384,7 @@ private struct MacNetworkSelfTest: View {
     }
 
     private func runHealth() async {
-        guard let url = URL(string: currentURLString.trimmingCharacters(in: .whitespaces)) else { return }
+        guard let url = URL(string: currentURLString.trimmingCharacters(in: .whitespacesAndNewlines)) else { return }
         probing = true
         healthResult = await NetworkProbe.probeHealth(baseURL: url)
         probing = false

@@ -45,7 +45,10 @@ struct IOSBookshelfView: View {
         .sheet(isPresented: $bookshelfStore.showNewBookSheet) {
             IOSNewBookSheet()
         }
-        .task { await refreshHealth() }
+        .task {
+            await bookshelfStore.load()
+            await refreshHealth()
+        }
         .refreshable {
             await bookshelfStore.load()
             await refreshHealth()

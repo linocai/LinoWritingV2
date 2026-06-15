@@ -280,10 +280,10 @@ public struct ProviderKeyEditSheet: View {
     }
 
     private var canSubmit: Bool {
-        let trimmedLabel = keyLabel.trimmingCharacters(in: .whitespaces)
-        let trimmedUrl = baseUrl.trimmingCharacters(in: .whitespaces)
-        let trimmedModel = modelName.trimmingCharacters(in: .whitespaces)
-        let trimmedKey = apiKey.trimmingCharacters(in: .whitespaces)
+        let trimmedLabel = keyLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedUrl = baseUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedModel = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedLabel.isEmpty, !trimmedUrl.isEmpty, !trimmedModel.isEmpty else {
             return false
         }
@@ -295,10 +295,10 @@ public struct ProviderKeyEditSheet: View {
 
     private func submit() async {
         submitError = nil
-        let trimmedLabel = keyLabel.trimmingCharacters(in: .whitespaces)
-        let trimmedUrl = baseUrl.trimmingCharacters(in: .whitespaces)
-        let trimmedModel = modelName.trimmingCharacters(in: .whitespaces)
-        let trimmedKey = apiKey.trimmingCharacters(in: .whitespaces)
+        let trimmedLabel = keyLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedUrl = baseUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedModel = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         let hint = preset.providerHintValue
 
         // Quick URL sanity check — backend will 422 if junk arrives anyway,
