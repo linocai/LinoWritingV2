@@ -45,6 +45,17 @@ public final class MockAPIClient: APIClientProtocol, @unchecked Sendable {
     public var onExtract: ((String) throws -> ChapterImportResponse)?
     public var onAdminReset: ((String, ChapterStatus) -> Chapter)?
 
+    /// v1.2.0 (HH) P5 — simulates a *real* transport-level disconnect mid
+    /// stream: yields the given tokens as `.token` events, then the
+    /// `AsyncThrowingStream` itself finishes with `throwing: error` (NOT an
+    /// `.error` SSEEvent — that's the graceful "backend told us it failed"
+    /// path already covered by `onWrite`). This is what `SSEClient.swift`
+    /// actually does on a URLSession timeout/dropped connection: the
+    /// `for try await` loop in `ChapterEditorStore.startWriting` throws
+    /// rather than receiving one more event, which is exactly the case the
+    /// P5 catch-branch fix (`refreshAfterIncompleteStream`) targets.
+    public var onWriteThrowAfterTokens: (tokens: [String], error: Error)?
+
     /// Captures the last `importChapter` payload so tests can assert that the
     /// Swift-side encoding (e.g. `runExtractor` → `run_extractor`) survived.
     public var lastImportPayload: ChapterImportRequest?
@@ -413,6 +424,17 @@ public final class MockAPIClient: APIClientProtocol, @unchecked Sendable {
 
     public func writeStream(chapterId: String) -> AsyncThrowingStream<SSEEvent, Error> {
         recordCall("writeStream")
+        if let onWriteThrowAfterTokens {
+            return AsyncThrowingStream { continuation in
+                Task {
+                    continuation.yield(.started(chapterId: chapterId))
+                    for token in onWriteThrowAfterTokens.tokens {
+                        continuation.yield(.token(text: token))
+                    }
+                    continuation.finish(throwing: onWriteThrowAfterTokens.error)
+                }
+            }
+        }
         let events: [SSEEvent]
         if let onWrite {
             events = onWrite(chapterId)

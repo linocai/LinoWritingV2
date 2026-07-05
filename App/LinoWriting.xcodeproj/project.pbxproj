@@ -31,6 +31,7 @@
 		2F6DACF7B4678DCF5DC2FA23 /* LWFont.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6D025FDE2776B5B9B5012D5 /* LWFont.swift */; };
 		309AF07E5B1B1DDA63E0AB68 /* ProviderKeysStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71AED5CE653255C13D001BB /* ProviderKeysStoreTests.swift */; };
 		310BEA463DFF042BC683800C /* BookStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 864DFD10296B35AA09DEBCA0 /* BookStore.swift */; };
+		33C1AE1A411FC8CB322F679A /* ChapterEditorStorePartialDraftTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8808B993A148FD14273E4A52 /* ChapterEditorStorePartialDraftTests.swift */; };
 		3629C94DC568E39700EDD6D5 /* ReaderView_iOS.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12F81F91EC047908A981B640 /* ReaderView_iOS.swift */; };
 		3A6074DF63E085139A91BAA8 /* CodecFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A9347DAAC8E2D449DAD558F /* CodecFactory.swift */; };
 		3B4AB90988D9F707612F6A6F /* ReadingTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E6890ECD2C92049C83A1936 /* ReadingTheme.swift */; };
@@ -106,12 +107,12 @@
 		D8AF1AC7D6E0CFE4B109B257 /* EditorWidgets.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95A1D123D6A024487328198E /* EditorWidgets.swift */; };
 		DA06F1D070994F13591AB5BB /* ErrorMapping.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36E43F39997D7B409EDA47C2 /* ErrorMapping.swift */; };
 		DA3216AB52622446AF4324D8 /* MacChapterSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 857022D14C47FD298E4451F6 /* MacChapterSidebar.swift */; };
-		DB82E945E327D25E5B630D74 /* IOSLogsSettingsSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6FD490840BF9A9BE686D5A6 /* IOSLogsSettingsSection.swift */; };
 		DBB5AFD6C5AF43DB65AD7C59 /* MockAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57FEEF176E8A04434A70B8F4 /* MockAPIClient.swift */; };
 		DDA51FE21DA32553EDA19FFC /* DotIndicator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BC492920B9E8880FD492888 /* DotIndicator.swift */; };
 		DE180A1E35FBD00919A5837F /* ChapterEditorStoreIOSTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8857F99D5F43C9C8FF0BF722 /* ChapterEditorStoreIOSTests.swift */; };
 		DE3CEAE53EDF1A6F4C9A1BB7 /* BookshelfStoreIOSTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34B2354D9B16F0157FF117FD /* BookshelfStoreIOSTests.swift */; };
 		DF0C0FF8B3021737FD0127D5 /* JSONValue.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBE2B69F0497588D8DBF6EAF /* JSONValue.swift */; };
+		DF6B00D800ABCB18E7401A90 /* ChapterEditorStoreThinkingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43871483E703D8F17242298E /* ChapterEditorStoreThinkingTests.swift */; };
 		E00370A3DCE6A2EA2792EF6B /* ChapterSplitterIOSTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69345F199892380615583BDD /* ChapterSplitterIOSTests.swift */; };
 		E2C56A1DA3694B1D762C0C1B /* CharacterAuthorNotesCodecTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56A211433978FE2B59102902 /* CharacterAuthorNotesCodecTests.swift */; };
 		E34EE4B0A49EA73BC97EBB8A /* MacCharacterTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DEDB9AD693FADFE24DCA09D /* MacCharacterTab.swift */; };
@@ -176,6 +177,7 @@
 		3E6890ECD2C92049C83A1936 /* ReadingTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadingTheme.swift; sourceTree = "<group>"; };
 		4200A4C1B87B2644B3D219AE /* GlassControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlassControls.swift; sourceTree = "<group>"; };
 		4333203ACD859F2AE7750E68 /* Chapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Chapter.swift; sourceTree = "<group>"; };
+		43871483E703D8F17242298E /* ChapterEditorStoreThinkingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChapterEditorStoreThinkingTests.swift; sourceTree = "<group>"; };
 		43C890CF38D4096579E181EF /* LWColor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LWColor.swift; sourceTree = "<group>"; };
 		455E75EE0A22ADAAD4D24F95 /* SheetPresentationIOSTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SheetPresentationIOSTests.swift; sourceTree = "<group>"; };
 		458E63E1FC585D07766A41D7 /* ListResponse.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListResponse.swift; sourceTree = "<group>"; };
@@ -217,6 +219,7 @@
 		857022D14C47FD298E4451F6 /* MacChapterSidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacChapterSidebar.swift; sourceTree = "<group>"; };
 		864DFD10296B35AA09DEBCA0 /* BookStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookStore.swift; sourceTree = "<group>"; };
 		87927A4FB806DF2AFB08E322 /* MacModelsSettingsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacModelsSettingsSection.swift; sourceTree = "<group>"; };
+		8808B993A148FD14273E4A52 /* ChapterEditorStorePartialDraftTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChapterEditorStorePartialDraftTests.swift; sourceTree = "<group>"; };
 		8857F99D5F43C9C8FF0BF722 /* ChapterEditorStoreIOSTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChapterEditorStoreIOSTests.swift; sourceTree = "<group>"; };
 		89EBA0FD3845842B23FAEC5E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		8A9347DAAC8E2D449DAD558F /* CodecFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodecFactory.swift; sourceTree = "<group>"; };
@@ -244,7 +247,6 @@
 		BC128B5999E185FFB2979A12 /* ProviderKeysStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderKeysStore.swift; sourceTree = "<group>"; };
 		C47BE64A71CBF4931E3ADB01 /* TimelineEventEditTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineEventEditTests.swift; sourceTree = "<group>"; };
 		C4A01A077E5F5B1CA5FE97A8 /* IOSModelsSettingsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSModelsSettingsSection.swift; sourceTree = "<group>"; };
-		C6FD490840BF9A9BE686D5A6 /* IOSLogsSettingsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSLogsSettingsSection.swift; sourceTree = "<group>"; };
 		C701FE59322CE7CC25DD7AB9 /* ImportChapterSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportChapterSheet.swift; sourceTree = "<group>"; };
 		C951EA31F571E35670BF4D2F /* ErrorBusHistoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ErrorBusHistoryTests.swift; sourceTree = "<group>"; };
 		CAAD20ABBC10FE6DA153CF85 /* IOSNewBookSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSNewBookSheet.swift; sourceTree = "<group>"; };
@@ -284,7 +286,6 @@
 			isa = PBXGroup;
 			children = (
 				1D4638717DEFCA4420ECEE09 /* IOSConnectionSettingsSection.swift */,
-				C6FD490840BF9A9BE686D5A6 /* IOSLogsSettingsSection.swift */,
 				C4A01A077E5F5B1CA5FE97A8 /* IOSModelsSettingsSection.swift */,
 				67998F67DAE4CDA459E01FE3 /* IOSPersonaSettingsSection.swift */,
 				686161A32E57316C3ABBC71C /* IOSSettingsRoleVocab.swift */,
@@ -343,7 +344,9 @@
 				61A3F85CE4E48F08E83451F9 /* AgentLogStoreTests.swift */,
 				A9045653BE603E3F6D51FFBD /* APIClientTests.swift */,
 				A1C1E4DA441F543FD625F726 /* AppStoreBannerTests.swift */,
+				8808B993A148FD14273E4A52 /* ChapterEditorStorePartialDraftTests.swift */,
 				DEB10166F920ADCE13814BCE /* ChapterEditorStoreResetTests.swift */,
+				43871483E703D8F17242298E /* ChapterEditorStoreThinkingTests.swift */,
 				5EAB02FBFEE9D9708E8C2A1C /* ChapterExtractTests.swift */,
 				F2C66467F9F8238B02B7F49D /* ChapterSplitterTests.swift */,
 				7D3F1A62B85D8CE0D190CFA0 /* ChaptersStoreImportTests.swift */,
@@ -781,7 +784,6 @@
 				E4A9ED88421B0ABB91EE2531 /* IOSChaptersSection.swift in Sources */,
 				BDB0F4247ABACBCD951E6940 /* IOSCharactersSection.swift in Sources */,
 				B58BE0D283D56BA2085FFB1D /* IOSConnectionSettingsSection.swift in Sources */,
-				DB82E945E327D25E5B630D74 /* IOSLogsSettingsSection.swift in Sources */,
 				81425B1593EB6C5255878CC3 /* IOSModelsSettingsSection.swift in Sources */,
 				0587824124C19C7E0503966C /* IOSNewBookSheet.swift in Sources */,
 				4823A0B9657E736CC3675874 /* IOSOutlineSection.swift in Sources */,
@@ -852,7 +854,9 @@
 				8F6100610085B5EEA4CE7C98 /* APIClientTests.swift in Sources */,
 				9364CC51BCC9830A740561F6 /* AgentLogStoreTests.swift in Sources */,
 				78BDB4BC5AAF690D3890CD18 /* AppStoreBannerTests.swift in Sources */,
+				33C1AE1A411FC8CB322F679A /* ChapterEditorStorePartialDraftTests.swift in Sources */,
 				5EDFBBAA897E8C62323311ED /* ChapterEditorStoreResetTests.swift in Sources */,
+				DF6B00D800ABCB18E7401A90 /* ChapterEditorStoreThinkingTests.swift in Sources */,
 				5F079BF4EBBC7DCB807B1607 /* ChapterExtractTests.swift in Sources */,
 				ED74EEBF63E2764B9F52F714 /* ChapterSplitterTests.swift in Sources */,
 				94D7994F7BE9DAD72FE52359 /* ChaptersStoreImportTests.swift in Sources */,
@@ -964,7 +968,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 1.1.0;
+				MARKETING_VERSION = 1.2.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -1027,7 +1031,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 1.1.0;
+				MARKETING_VERSION = 1.2.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";

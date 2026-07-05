@@ -250,7 +250,8 @@ def test_writer_still_streams_without_directive(db_session):
     db_session.commit()
 
     ctx = build_writer_context(db_session, book, current)
-    out = "".join(WriterAgent(MockLLMClient()).stream(ctx))
+    # v1.2.0 (HH) P7: WriterAgent.stream yields typed StreamChunk now.
+    out = "".join(chunk.text for chunk in WriterAgent(MockLLMClient()).stream(ctx) if chunk.kind == "token")
     # MockLLMClient yields two prose fragments — proves the stream ran.
     assert out  # non-empty → did not raise / stall
 

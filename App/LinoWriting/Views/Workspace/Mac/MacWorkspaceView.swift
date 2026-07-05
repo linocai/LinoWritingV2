@@ -7,7 +7,7 @@ import SwiftUI
 /// **replacing** the old `NavigationSplitView` / `.inspector` `WorkspaceView`
 /// on macOS. Pixel-exact transcription of the handoff 工作台
 /// (`LinoWriting.dc.html` / `README.md` §2):
-///   - title bar (46 high) — traffic-light gutter + ✦ 临渊写作台 (back to shelf)
+///   - title bar (46 high) — traffic-light gutter + ✦ 写作台 (back to shelf)
 ///     + centred book title + connection dot (health) + ⚙ settings.
 ///   - left chapter sidebar (~258, `.lwSidebar`).
 ///   - centre editor (flexible) — three-stage flow (一句话 / HERO directive /
@@ -123,7 +123,7 @@ struct MacWorkspaceView: View {
                     .fill(LWColor.logoGradient)
                     .frame(width: 16, height: 16)
                     .shadow(color: LWColor.hex(0x6A7BFF, opacity: 0.5), radius: 1.5, y: 1)
-                Text("临渊 写作台")
+                Text("写作台")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(LWColor.bodyText)
             }

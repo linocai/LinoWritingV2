@@ -164,8 +164,14 @@ struct IOSChapterEditPlaceholder: View {
                 ScrollView {
                     VStack(spacing: 16) {
                         if isFinalized(chapter) { readerButton }
-                        stage1(chapter)
-                        if hasStructured(chapter) { stage2(chapter) }
+                        // v1.2.0 (HH) P4: a finalized chapter only shows 正文
+                        // (stage3) — steps ①想法 and ②结构化提示 are no longer
+                        // relevant once the chapter is done (mirrors
+                        // MacChapterEditor.flow).
+                        if !isFinalized(chapter) {
+                            stage1(chapter)
+                            if hasStructured(chapter) { stage2(chapter) }
+                        }
                         if showDraftStage(chapter) { stage3(chapter).id("stage3") }
                     }
                     .padding(.horizontal, 18)
@@ -366,6 +372,11 @@ struct IOSChapterEditPlaceholder: View {
                 stageBadge("3")
                 Text("正文").font(.system(size: 14, weight: .semibold)).foregroundStyle(LWColor.bodyText)
                 Spacer()
+                // v1.2.0 (HH) P7: "模型思考中…" indicator only (mirrors
+                // MacChapterEditor) — no collapsible reasoning content.
+                if chapterEditorStore.isThinking {
+                    thinkingIndicator
+                }
                 Text("\(draftWordCount(chapter)) 字").font(.system(size: 11)).foregroundStyle(LWColor.mutedText3)
             }
 
@@ -460,6 +471,17 @@ struct IOSChapterEditPlaceholder: View {
             }
         }
         .padding(.top, 4)
+    }
+
+    /// v1.2.0 (HH) P7 — "模型思考中…" process indicator (mirrors
+    /// MacChapterEditor's). Only while `chapterEditorStore.isThinking`.
+    private var thinkingIndicator: some View {
+        HStack(spacing: 5) {
+            ProgressView().controlSize(.small)
+            Text("模型思考中…")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(LWColor.mutedText3)
+        }
     }
 
     // MARK: - Stage helpers

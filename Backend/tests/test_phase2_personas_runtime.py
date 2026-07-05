@@ -19,6 +19,7 @@ from app.agents.prompt_expander import (
     PromptExpanderAgent,
 )
 from app.agents.writer import WriterAgent
+from app.llm.base import StreamChunk
 from app.models.book import Book
 from app.models.book_outline import BookOutline
 from app.models.chapter import Chapter
@@ -41,7 +42,7 @@ class _SystemCapturingStreamLLM(MockLLMClient):
 
     def complete_stream(self, *, system: str, user: str, **kwargs: Any):
         type(self).last_system = system
-        yield "一句正文。"
+        yield StreamChunk(kind="token", text="一句正文。")
 
 
 def _seed_book_character(client, auth_headers):

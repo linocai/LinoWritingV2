@@ -46,6 +46,7 @@ TEST_API_TOKEN = os.environ["API_TOKEN"]
 from app.config import Settings, get_settings
 from app.db import Base, get_db, make_engine
 from app.llm.base import (
+    StreamChunk,
     get_expander_llm_client,
     get_extractor_llm_client,
     get_llm_client,
@@ -94,9 +95,9 @@ class MockLLMClient:
             ],
         }
 
-    def complete_stream(self, *, system: str, user: str, **kwargs: Any) -> Iterator[str]:
-        yield "雨声压低了山洞里的呼吸。"
-        yield "林夕在石缝中摸到一枚带血的铜钱。"
+    def complete_stream(self, *, system: str, user: str, **kwargs: Any) -> Iterator[StreamChunk]:
+        yield StreamChunk(kind="token", text="雨声压低了山洞里的呼吸。")
+        yield StreamChunk(kind="token", text="林夕在石缝中摸到一枚带血的铜钱。")
 
 
 # v0.7 M-1: tuple of every per-Agent LLM dependency the routers may

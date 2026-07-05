@@ -6,7 +6,7 @@
 # "Developer ID Application" certificate (overriding the X-1 "Apple
 # Development" signature), notarizes it via Apple's notary service,
 # staples the ticket, verifies Gatekeeper acceptance, and deploys a copy
-# to ~/Desktop/LinoI.app.
+# to /Applications/LinoI.app.
 #
 # Prerequisites (set up once by the author, NOT by this script):
 #   - "Developer ID Application: <Name> (HX73DFL88G)" cert in the login
@@ -30,7 +30,7 @@ CONFIG="Release"
 APP_NAME="LinoI.app"
 TEAM_ID="HX73DFL88G"
 NOTARY_PROFILE="LinoI-deploy"
-DEPLOY_DEST="$HOME/Desktop/${APP_NAME}"
+DEPLOY_DEST="/Applications/${APP_NAME}"
 
 SKIP_NOTARIZE=0
 
@@ -79,6 +79,16 @@ echo "    working dir: $(pwd)"
 # ---- regenerate xcodeproj from project.yml --------------------------------
 step "xcodegen generate"
 xcodegen generate
+
+# xcodegen derives scheme BuildableName from the *target* name
+# ("LinoWriting"), not PRODUCT_NAME ("LinoI") — every `generate` run cocks
+# the 3 schemes' 12 BuildableName entries back to "LinoWriting.app", which
+# doesn't match the real build product. CLI build/test still pass either way
+# (product name comes from PRODUCT_NAME), so this drifts silently unless
+# pinned back after every generate. See project CLAUDE.md. Only the .app
+# BuildableName is touched — .xctest bundle names are untouched.
+step "pin scheme BuildableName back to LinoI.app (xcodegen regen artifact)"
+sed -i '' 's/BuildableName = "LinoWriting.app"/BuildableName = "LinoI.app"/g' LinoWriting.xcodeproj/xcshareddata/xcschemes/*.xcscheme
 
 # ---- clean Release build --------------------------------------------------
 step "xcodebuild Release clean build (macOS)"
@@ -180,13 +190,20 @@ else
     spctl --assess --type execute -vv "$APP"
 fi
 
-# ---- deploy to Desktop -----------------------------------------------------
+# ---- deploy to /Applications -----------------------------------------------
 step "deploy to $DEPLOY_DEST"
+# If a copy is currently running from the deploy target, ditto over the top of
+# a live bundle risks a corrupt/half-replaced .app. Do NOT force-kill (the user
+# may have unsaved work); prompt them to quit and re-run instead.
+if pgrep -x LinoI >/dev/null 2>&1; then
+    die "LinoI 正在运行。请先退出 App（⌘Q / 右键程序坞图标 → 退出）后重跑本脚本，避免覆盖正在运行的进程。"
+fi
+# Remove any stale bundle first so a residual mixed-signature copy can't linger.
 rm -rf "$DEPLOY_DEST"
 # ditto, NOT cp -R: cp -R can silently corrupt .app Resources while codesign
-# --verify still passes (project CLAUDE.md landmine). The launch-verify copy on
-# Desktop must be a faithful bundle, or a corrupt-copy launch failure gets
-# misread as a code/signing bug.
+# --verify still passes (project CLAUDE.md landmine). The deployed copy in
+# /Applications must be a faithful bundle, or a corrupt-copy launch failure
+# gets misread as a code/signing bug.
 ditto "$APP" "$DEPLOY_DEST"
 
 # ---- report version --------------------------------------------------------

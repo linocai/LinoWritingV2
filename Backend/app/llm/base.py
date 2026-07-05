@@ -2,12 +2,37 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from threading import Event
-from typing import Any, Protocol
+from typing import Any, Literal, NamedTuple, Protocol
 
 from fastapi import Depends
 from sqlalchemy.orm import Session
 
 from app.db import get_db
+
+
+class StreamChunk(NamedTuple):
+    """v1.2.0 (HH) P7 — a single typed unit yielded by ``complete_stream``.
+
+    This is the **authoritative** contract change: ``complete_stream`` used
+    to yield bare ``str`` tokens; reasoning-capable upstreams (DeepSeek-R1
+    style ``reasoning_content`` deltas, etc.) need a way to tell the consumer
+    "this text is the model's chain-of-thought, not final prose" so it can
+    be surfaced as a transient "thinking…" indicator instead of being
+    appended to the chapter draft or counted toward word count.
+
+    ``kind`` is a closed two-value tag rather than a boolean so a future
+    third stream-chunk category (should one ever be needed) doesn't require
+    flipping a polarity everywhere ``kind == "token"`` is checked today.
+
+    Every consumer of ``complete_stream`` (writer.py's sole caller, plus
+    every test's stub LLM) must be updated in lockstep — this is a Protocol
+    change, so a stub that still ``yield``s bare strings will type-check
+    fine (Python doesn't enforce Protocol shapes at runtime) but blow up
+    with an ``AttributeError``/unpacking error the moment production code
+    tries `.kind`/`.text` on a plain `str`.
+    """
+    kind: Literal["token", "thinking"]
+    text: str
 
 
 class LLMClient(Protocol):
@@ -24,8 +49,13 @@ class LLMClient(Protocol):
         user: str,
         cancel_event: Event | None = None,
         **kwargs: Any,
-    ) -> Iterator[str]:
-        """Stream LLM tokens.
+    ) -> Iterator[StreamChunk]:
+        """Stream LLM output as typed chunks (v1.2.0 P7 — was ``Iterator[str]``).
+
+        Yields :class:`StreamChunk` — ``kind="token"`` for final-answer
+        content (goes into the draft, counted toward word count) and
+        ``kind="thinking"`` for chain-of-thought / reasoning deltas (surfaced
+        as a transient UI indicator only, never persisted to draft_text).
 
         If ``cancel_event`` is provided, implementations MUST check it
         regularly during the stream and stop as soon as it is set. This is

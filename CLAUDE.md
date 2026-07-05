@@ -58,3 +58,7 @@
 * 导出前必须把所有 JS 驱动的终态强制写死（计数终值、条形/雷达宽度、展开 hover/折叠），并 `print-color-adjust:exact` 保深色与强调色；逐页渲 PNG 拼总览图自查「数据不崩」。
 * CJK 表格防溢出：`table-layout:fixed` + 单元格 `word-break:break-word;overflow-wrap:anywhere`；外部 URL 用 `[文字](链)` 短链文本，别贴裸长 URL（不可断字会撑破列）。
 * 中文/PDF 工具链先确认「同一个 python 解释器同时有 markdown+fitz+PIL」再开工，别假设 `python3` 指向你想要的那个。写文件时若字符串里的空格被写成 `\x00`（SyntaxError: EOL/null bytes），换非空格哨兵重写整文件。
+
+## SSE 写作链错误可见性（v1.2.0 审查抓出）
+
+* `ChapterEditorStore.writingState` 的 `.failed`/`.done` 在 Views 层**零消费者**（视图只 pattern-match `.streaming`）——失败反馈唯一通道是 `errorBus.publish` 的 Toast。改动 startWriting 错误路径时，任何落 `.failed` 而不 publish 的分支 = 用户完全无感；且 `writingState` 在 HTTP 请求发出前就置 `.streaming`，流前 401/409/429/5xx 也会以「曾在流式中」的姿态进 catch，别按「必是断流」处理。

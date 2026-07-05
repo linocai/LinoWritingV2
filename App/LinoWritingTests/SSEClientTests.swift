@@ -54,4 +54,17 @@ final class SSEClientTests: XCTestCase {
             XCTAssertTrue(err.retryable)
         } else { XCTFail("expected .error") }
     }
+
+    /// v1.2.0 (HH) P6 — locks the timeout values so a future edit can't
+    /// silently regress them. `timeoutIntervalForRequest` (per-chunk gap
+    /// upper bound) stays at 120s, aligned with Nginx `proxy_read_timeout
+    /// 120s`; `timeoutIntervalForResource` (whole-stream upper bound) is
+    /// widened 600s → 3600s so a slow relay writing a full chapter at
+    /// 1-2 字/秒 (which can run >30 minutes) doesn't get cut off mid-stream,
+    /// while still keeping a finite ceiling against a truly-hung connection.
+    func test_makeDefaultSession_hasP6TimeoutValues() {
+        let session = SSEClient.makeDefaultSession()
+        XCTAssertEqual(session.configuration.timeoutIntervalForRequest, 120)
+        XCTAssertEqual(session.configuration.timeoutIntervalForResource, 3600)
+    }
 }

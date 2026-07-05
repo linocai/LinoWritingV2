@@ -23,6 +23,7 @@ from typing import Any
 from unittest.mock import patch
 
 from app.agents.writer import WriterAgent
+from app.llm.base import StreamChunk
 from app.llm.openai_compatible import OpenAICompatibleClient
 from app.models.provider_key import ProviderKey
 from tests.conftest import MockLLMClient
@@ -80,7 +81,7 @@ def test_stream_breaks_immediately_when_cancel_event_set_before_iter():
     )
 
     with patch("app.llm.openai_compatible.httpx.stream", return_value=fake):
-        tokens = list(
+        chunks = list(
             client.complete_stream(
                 system="s",
                 user="u",
@@ -88,7 +89,7 @@ def test_stream_breaks_immediately_when_cancel_event_set_before_iter():
             )
         )
 
-    assert tokens == []  # No tokens consumed.
+    assert chunks == []  # No tokens consumed.
     assert fake.closed  # Context manager exited → upstream socket closed.
 
 
@@ -111,8 +112,8 @@ def test_stream_breaks_mid_iteration_when_cancel_event_set_during():
 
     with patch("app.llm.openai_compatible.httpx.stream", return_value=fake):
         gen = client.complete_stream(system="s", user="u", cancel_event=cancel)
-        for token in gen:
-            yielded.append(token)
+        for chunk in gen:
+            yielded.append(chunk.text)
             if len(yielded) == 2:
                 cancel.set()
         # Generator must close naturally after seeing cancel.
@@ -142,12 +143,12 @@ class _ControlledStreamLLM(MockLLMClient):
         user: str,
         cancel_event: threading.Event | None = None,
         **kwargs: Any,
-    ) -> Iterator[str]:
+    ) -> Iterator[StreamChunk]:
         for i in range(self.n_tokens):
             if cancel_event is not None and cancel_event.is_set():
                 return
             self.considered.append(i)
-            yield f"t{i}"
+            yield StreamChunk(kind="token", text=f"t{i}")
             time.sleep(self.per_token_sleep)
 
 
@@ -191,12 +192,22 @@ def test_write_stream_generator_finally_signals_cancel(db_session):
             live_fields={"current_status": "等待"},
         )
     )
+    # v1.2.0 (HH) P5: previous_status is "draft_ready" with a pre-existing
+    # complete draft — the conservative partial-draft policy says a
+    # disconnected *regenerate* attempt must never overwrite that draft, so
+    # `chapter.status`/`draft_text` staying exactly as seeded here is the
+    # right assertion for "the finally block restored the previous state"
+    # under the new policy (see test_partial_draft_save.py for the
+    # prompt_ready → draft_ready save-on-disconnect case this test used to
+    # incidentally exercise).
+    original_draft = "这是断连前已经完成的旧稿。"
     chapter = Chapter(
         book_id=book.id,
         index=1,
         title="第一章",
         user_prompt="短一点。",
         status="writing",
+        draft_text=original_draft,
     )
     db_session.add(chapter)
     db_session.commit()
@@ -206,7 +217,7 @@ def test_write_stream_generator_finally_signals_cancel(db_session):
     gen = _write_stream(
         db_session,
         chapter.id,
-        previous_status="prompt_ready",
+        previous_status="draft_ready",
         context={},
         llm=slow_llm,
         writer_persona="测试 Writer 人格",
@@ -230,8 +241,11 @@ def test_write_stream_generator_finally_signals_cancel(db_session):
     time.sleep(0.4)
 
     db_session.refresh(chapter)
-    # The finally block must restore the previous status.
-    assert chapter.status == "prompt_ready"
+    # The finally block must restore the previous status, and (P5
+    # conservative policy) must not overwrite the pre-existing draft with
+    # the half-finished regenerate attempt.
+    assert chapter.status == "draft_ready"
+    assert chapter.draft_text == original_draft
     # And the LLM must have stopped well short of its 30-token budget.
     # Slack: a couple of tokens may already be in flight when cancel
     # fires; what matters is it didn't run to completion.

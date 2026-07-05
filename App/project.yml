@@ -11,8 +11,9 @@ options:
     # (`Views/Theme/*`) un-gates to both platforms (P1). Version number
     # (MARKETING_VERSION) is bumped separately in the wrap-up Phase, not here,
     # to avoid mid-build health-endpoint version drift.
-    # NOTE (author ruling): the iOS redesign ships under MARKETING_VERSION
-    # 1.1.0 — do NOT bump to 1.2.0; "v1.2.0" is only the iteration codename.
+    # NOTE (author ruling): the iOS redesign shipped under MARKETING_VERSION
+    # 1.1.0 (not bumped — "v1.2.0"/GG was only the iteration codename at the
+    # time). v1.2.0 (HH) P9 is the actual real 1.2.0 release, bumped below.
     macOS: "26.0"
     iOS: "26.0"
   createIntermediateGroups: true
@@ -43,7 +44,7 @@ settings:
     CODE_SIGN_STYLE: Automatic
     DEVELOPMENT_TEAM: HX73DFL88G
     ENABLE_HARDENED_RUNTIME: YES
-    MARKETING_VERSION: "1.1.0"
+    MARKETING_VERSION: "1.2.0"
     CURRENT_PROJECT_VERSION: "1"
 
 targets:

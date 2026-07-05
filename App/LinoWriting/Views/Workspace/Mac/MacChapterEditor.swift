@@ -133,8 +133,14 @@ struct MacChapterEditor: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(spacing: 18) {
-                    stage1(chapter)
-                    if hasStructured(chapter) { stage2(chapter) }
+                    // v1.2.0 (HH) P4: a finalized chapter only shows 正文 (stage3)
+                    // — steps ①一句话 and ②创作指令 are no longer relevant once the
+                    // chapter is done, and `hasStructured` returns true for
+                    // `.finalized` so stage2 used to still render here.
+                    if !isFinalized(chapter) {
+                        stage1(chapter)
+                        if hasStructured(chapter) { stage2(chapter) }
+                    }
                     if showDraftStage(chapter) { stage3(chapter).id("stage3") }
                 }
                 .frame(maxWidth: LWMetrics.contentMaxWidth)
@@ -303,6 +309,12 @@ struct MacChapterEditor: View {
                 Text("Writer 起草 · 你读一遍定稿")
                     .font(.system(size: 11)).foregroundStyle(LWColor.mutedText3)
                 Spacer()
+                // v1.2.0 (HH) P7: "模型思考中…" indicator only — no
+                // collapsible reasoning content shown (作者拍板收窄范围).
+                // Thinking text never enters draftBody/word count.
+                if chapterEditorStore.isThinking {
+                    thinkingIndicator
+                }
                 Text("\(draftWordCount(chapter)) 字")
                     .font(.system(size: 11)).foregroundStyle(LWColor.mutedText3)
             }
@@ -380,6 +392,19 @@ struct MacChapterEditor: View {
             Spacer()
         }
         .padding(.top, 4)
+    }
+
+    /// v1.2.0 (HH) P7 — "模型思考中…" process indicator (stage3 header,
+    /// only while `chapterEditorStore.isThinking`). No collapsible content,
+    /// no persistence — purely a transient hint that a reasoning model is
+    /// generating chain-of-thought before its first prose token arrives.
+    private var thinkingIndicator: some View {
+        HStack(spacing: 5) {
+            ProgressView().controlSize(.small)
+            Text("模型思考中…")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(LWColor.mutedText3)
+        }
     }
 
     // MARK: - Stage helpers

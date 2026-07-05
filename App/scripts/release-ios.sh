@@ -82,6 +82,16 @@ trap 'on_error "$LINENO" "$?"' ERR
 echo "==> [1/4] xcodegen generate"
 xcodegen generate
 
+# xcodegen derives scheme BuildableName from the *target* name
+# ("LinoWriting"), not PRODUCT_NAME ("LinoI") — every `generate` run cocks
+# the 3 schemes' 12 BuildableName entries back to "LinoWriting.app", which
+# doesn't match the real build product. CLI build/test still pass either way
+# (product name comes from PRODUCT_NAME), so this drifts silently unless
+# pinned back after every generate. See project CLAUDE.md. Only the .app
+# BuildableName is touched — .xctest bundle names are untouched.
+echo "==> pin scheme BuildableName back to LinoI.app (xcodegen regen artifact)"
+sed -i '' 's/BuildableName = "LinoWriting.app"/BuildableName = "LinoI.app"/g' LinoWriting.xcodeproj/xcshareddata/xcschemes/*.xcscheme
+
 # --- step 2: archive (MUST keep -allowProvisioningUpdates) -------------------
 WORKDIR=$(mktemp -d)
 ARCHIVE="$WORKDIR/LinoI.xcarchive"

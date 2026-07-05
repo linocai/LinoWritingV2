@@ -8,8 +8,8 @@ import SwiftUI
 /// behind the `appStore.showSettings` sheet, presented from the shelf ⚙ button.
 /// Pixel-aligned to the handoff 设置 sheet (`LinoWriting iOS.dc.html`
 /// L359–447): a grabber + 设置 / 完成 header over an `#F2F2F7` grouped grid that
-/// scrolls all four sections in one column (NOT a top segmented control — the
-/// iOS design lists 连接 → 模型与密钥 → 人格编辑 → 调用日志 vertically):
+/// scrolls all sections in one column (NOT a top segmented control — the iOS
+/// design lists 连接 → 模型与密钥 → 人格编辑 vertically):
 ///
 ///   - **连接** — backend URL + API_TOKEN(Bearer) + 保存并连接 + status badge.
 ///     Keeps v1.0.1 single-key auth (URL + token → Keychain, every request
@@ -17,10 +17,11 @@ import SwiftUI
 ///   - **模型与密钥** — provider-key cards + 新增 (reuses `ProviderKeyEditSheet`)
 ///     + per-agent active key chips (409 role-mismatch → Toast).
 ///   - **人格编辑** — three persona cards (默认/已自定义 badge + editor + 恢复默认).
-///   - **调用日志** — filter chips + log cards (error in red).
 ///
 /// The legacy ErrorBus「最近错误」tab is dropped (同 macOS Phase 5, 作者拍板砍掉
-/// 独立 tab); ErrorBus still drives the Toast.
+/// 独立 tab); ErrorBus still drives the Toast. **调用日志 dropped on iOS in
+/// v1.2.0 (HH) P3** (作者拍板瘦身) — macOS keeps it (`MacLogsSettingsSection`),
+/// the backend log endpoints are unchanged.
 ///
 /// Presented as `.sheet` with `.presentationDetents([.large])` — the
 /// presentation chrome (drag indicator) is configured in `RootView`. iOS-only;
@@ -37,7 +38,8 @@ struct IOSSettingsView: View {
                     IOSConnectionSettingsSection()
                     IOSModelsSettingsSection()
                     IOSPersonaSettingsSection()
-                    IOSLogsSettingsSection()
+                    // v1.2.0 (HH) P3: 调用日志 section dropped on iOS (作者拍板瘦身).
+                    // The backend log endpoints stay — macOS still reads them.
                 }
                 .padding(.bottom, 40)
             }

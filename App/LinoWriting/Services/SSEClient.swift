@@ -5,6 +5,13 @@ public enum SSEEvent: Equatable, Sendable {
     case started(chapterId: String)
     case token(text: String)
     case progress(chars: Int)
+    /// v1.2.0 (HH) P7 — a chain-of-thought / reasoning increment from a
+    /// thinking-capable model. Process indicator only: never appended to
+    /// the draft buffer, never counted toward word count, never persisted.
+    /// Old clients that don't know this case fall through to `.other` and
+    /// silently ignore it (verified: `SSEParser.decode`'s `default` branch
+    /// + `ChapterEditorStore`'s `.other: continue`).
+    case thinking(text: String)
     case done(chapter: Chapter)
     case error(AppError)
     /// Catch-all for unknown event types so the stream can keep flowing.
@@ -85,6 +92,11 @@ public final class SSEParser {
             if let p = try? decoder.decode(P.self, from: jsonData) {
                 return .progress(chars: p.chars)
             }
+        case "thinking":
+            struct P: Decodable { let text: String }
+            if let p = try? decoder.decode(P.self, from: jsonData) {
+                return .thinking(text: p.text)
+            }
         case "done":
             struct P: Decodable { let chapter: Chapter }
             if let p = try? decoder.decode(P.self, from: jsonData) {
@@ -105,18 +117,22 @@ public final class SSEParser {
 /// Streaming client that opens an SSE connection and yields `SSEEvent`s.
 public final class SSEClient: @unchecked Sendable {
     /// Build a URLSession tuned for SSE long-lived writes against the cloud backend.
-    /// v0.8 Phase U-2 (§5.U.2):
-    ///   - `timeoutIntervalForRequest = 120`  — upper bound on gap between chunks / first byte.
-    ///     公网长链路 + Nginx `proxy_read_timeout 120s` 对齐(§5.S.3)。
-    ///   - `timeoutIntervalForResource = 600` — upper bound on total stream duration.
-    ///     Writer 一章通常 1-3 分钟,留 10 分钟余量防 outlier 章节。
+    /// v0.8 Phase U-2 (§5.U.2), values updated v1.2.0 (HH) P6:
+    ///   - `timeoutIntervalForRequest = 120`  — upper bound on gap between chunks / first byte
+    ///     (unchanged). 公网长链路 + Nginx `proxy_read_timeout 120s` 对齐(§5.S.3)；每收到一块
+    ///     就续期,慢速逐字流每 <120s 必有字节才不会触发,>120s 真无字节才算真卡死。
+    ///   - `timeoutIntervalForResource = 3600` — upper bound on total stream duration
+    ///     (was 600 = 10 分钟). 慢速中转 1-2 字/秒写整章可能 >30 分钟,600s 会到点掐断报
+    ///     「超时失败」；放大到 1 小时覆盖极慢中转的整章长跑，同时仍保留一个总上限防真挂死
+    ///     连接永久占用（不是「去掉/无限」）。
     /// 注：SSE 弱网断流时,URLSession 不会自动重试(会丢已收 token);客户端处理是
     /// "进入 .failed(upstream, retryable: true) 状态,用户决定重新生成",见
-    /// `ChapterEditorStore.startWriting` / `refreshAfterIncompleteStream`(§5.U.5)。
+    /// `ChapterEditorStore.startWriting` / `refreshAfterIncompleteStream`(§5.U.5)。P5
+    /// 断流落稿则让后端在这之前就把已生成部分保守落库，两者互补。
     public static func makeDefaultSession() -> URLSession {
         let cfg = URLSessionConfiguration.default
         cfg.timeoutIntervalForRequest = 120
-        cfg.timeoutIntervalForResource = 600
+        cfg.timeoutIntervalForResource = 3600
         return URLSession(configuration: cfg)
     }
 

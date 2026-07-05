@@ -17,7 +17,10 @@ def test_agents_use_mock_llm_contract():
     assert expanded["characters_involved"] == ["char-1"]
 
     writer_context = {"structured_prompt": expanded, "characters": [], "timelines": {}, "recent_summaries": []}
-    text = "".join(WriterAgent(llm).stream(writer_context))
+    # v1.2.0 (HH) P7: WriterAgent.stream yields typed StreamChunk now — join
+    # only the "token" chunks (mirrors chapters.py's produce_tokens, which
+    # never lets "thinking" chunks into draft_text).
+    text = "".join(chunk.text for chunk in WriterAgent(llm).stream(writer_context) if chunk.kind == "token")
     assert "铜钱" in text
 
     extractor_context = {

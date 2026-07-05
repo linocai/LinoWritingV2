@@ -15,6 +15,27 @@ public final class ChapterEditorStore: ObservableObject {
     @Published public private(set) var chapter: Chapter?
     @Published public private(set) var isLoading: Bool = false
     @Published public private(set) var writingState: WritingState = .idle
+    /// v1.2.0 (HH) P7 — accumulated chain-of-thought text from `.thinking`
+    /// SSE frames, kept separate from `writingState`'s draft buffer so the
+    /// "模型思考中…" UI indicator never mixes with (or gets mistaken for)
+    /// final prose. Reset to empty whenever a new write starts or the
+    /// editor tears down (`resetAllPublishedToIdle`). Not persisted, not
+    /// counted toward word count — purely a transient process indicator.
+    @Published public private(set) var thinkingBuffer: String = ""
+    /// True while `.thinking` frames are actively arriving and no `.token`
+    /// has superseded them yet this stream — drives the "模型思考中…"
+    /// indicator's visibility. Cleared the moment the first `.token` for
+    /// this write arrives (thinking is done once real prose starts).
+    public var isThinking: Bool {
+        isStreaming && !thinkingBuffer.isEmpty && streamingBufferIsEmpty
+    }
+    /// Backing check for `isThinking` — true once any token text has
+    /// arrived this stream, so "thinking" never lingers visually once the
+    /// model has moved on to writing prose.
+    private var streamingBufferIsEmpty: Bool {
+        if case .streaming(let buffer, _) = writingState { return buffer.isEmpty }
+        return true
+    }
 
     /// True while an SSE write stream is in flight — used by the toolbar
     /// to short-circuit the chapter.status switch so users can't fire a
@@ -100,6 +121,7 @@ public final class ChapterEditorStore: ObservableObject {
         cancelStream()
         chapter = nil
         writingState = .idle
+        thinkingBuffer = ""
         isExpanding = false
         isFinalizing = false
         isImporting = false
@@ -161,6 +183,7 @@ public final class ChapterEditorStore: ObservableObject {
         guard let chapter else { return }
         cancelStream()
         writingState = .streaming(buffer: "", chars: 0)
+        thinkingBuffer = ""
 
         streamTask = Task { [weak self] in
             guard let self else { return }
@@ -177,6 +200,12 @@ public final class ChapterEditorStore: ObservableObject {
                         } else {
                             self.writingState = .streaming(buffer: text, chars: text.count)
                         }
+                    case .thinking(let text):
+                        // v1.2.0 (HH) P7: accumulate into the separate
+                        // thinkingBuffer — never touches writingState's
+                        // draft buffer/chars, so reasoning text can't leak
+                        // into the saved chapter or the word count.
+                        self.thinkingBuffer += text
                     case .progress(let chars):
                         if case .streaming(let buf, _) = self.writingState {
                             self.writingState = .streaming(buffer: buf, chars: chars)
@@ -196,34 +225,91 @@ public final class ChapterEditorStore: ObservableObject {
                 }
                 // Stream ended without an explicit done — if we have a chapter, refresh it.
                 if case .streaming = self.writingState {
-                    await self.refreshAfterIncompleteStream(onDone: onDone)
+                    await self.refreshAfterIncompleteStream(
+                        originalError: .upstream("写作中断，可点重新生成", retryable: true),
+                        onDone: onDone
+                    )
                 }
             } catch let error as AppError {
                 // v0.8 Phase U-2 (§5.U.5): SSE 弱网断流不自动重连(会丢已收 token);
                 // 落到 .failed 状态由 toolbar 让用户主动决定重新生成 / 取消。
-                self.writingState = .failed(error)
-                if error != .cancelled { self.errorBus.publish(error) }
+                //
+                // v1.2.0 (HH) P5 (致命 1, plan-critic 拦下): a real disconnect
+                // (URLSession timeout / dropped connection) throws here rather
+                // than ending the loop gracefully, so `refreshAfterIncompleteStream`
+                // (wired to the graceful "stream ended without done" path above)
+                // never used to run for this case — the backend's P5 partial-draft
+                // save (previous_status == prompt_ready → draft_ready) went
+                // undiscovered until the author manually reopened the chapter.
+                // If we were mid-stream and the failure isn't a user-initiated
+                // cancel, do the same GET-and-reconcile the graceful path does
+                // before giving up: the backend may have salvaged a partial
+                // draft, and `refreshAfterIncompleteStream` already knows how to
+                // promote that to `.done` (or fall back to `.failed` if the GET
+                // itself fails or the chapter still shows no usable draft).
+                let wasStreaming: Bool = { if case .streaming = self.writingState { return true }; return false }()
+                if wasStreaming, error != .cancelled {
+                    await self.refreshAfterIncompleteStream(originalError: error, onDone: onDone)
+                } else {
+                    self.writingState = .failed(error)
+                    if error != .cancelled { self.errorBus.publish(error) }
+                }
             } catch {
                 // v0.8 Phase U-2 (§5.U.5): 同上,transport 层断开 = 提示 + Stop 状态,不重连。
+                // v1.2.0 (HH) P5: same reconcile-before-giving-up as above for
+                // non-AppError transport failures.
+                let wasStreaming: Bool = { if case .streaming = self.writingState { return true }; return false }()
                 let mapped = AppError.transport(error.localizedDescription)
-                self.writingState = .failed(mapped)
-                self.errorBus.publish(mapped)
+                if wasStreaming {
+                    await self.refreshAfterIncompleteStream(originalError: mapped, onDone: onDone)
+                } else {
+                    self.writingState = .failed(mapped)
+                    self.errorBus.publish(mapped)
+                }
             }
         }
     }
 
-    private func refreshAfterIncompleteStream(onDone: (@MainActor (Chapter) -> Void)?) async {
+    /// GET-and-reconcile after a stream ended without an explicit `.done`.
+    ///
+    /// v1.2.0 (HH) P5 (🔴#1, reviewer 抓出): this used to promote to `.done`
+    /// unconditionally on any successful GET, regardless of whether the
+    /// backend actually salvaged a usable draft. That silently swallowed
+    /// real failures (e.g. a pre-stream 401/409/429/5xx thrown before any
+    /// token arrived — `writingState` is already `.streaming` at that point,
+    /// see `startWriting`'s `wasStreaming` check) — the chapter would still
+    /// show `prompt_ready`/no draft, yet the store reported `.done` with no
+    /// Toast. The GET-failure branch also failed to publish to `errorBus`,
+    /// making the .failed transition invisible (Views only pattern-match
+    /// `.streaming`; ErrorBus Toast is the only failure-visibility channel).
+    ///
+    /// Contract (plan §4.1 P5): GET succeeds AND `status == .draftReady` AND
+    /// `draftText` is non-empty → `.done`. Otherwise (GET fails, or GET
+    /// succeeds but the chapter still shows no usable draft) → maintain
+    /// `.failed(originalError)` and publish `originalError` so the failure
+    /// is visible.
+    private func refreshAfterIncompleteStream(
+        originalError: AppError,
+        onDone: (@MainActor (Chapter) -> Void)?
+    ) async {
         guard let chapter else {
-            writingState = .failed(.upstream("写作中断", retryable: true))
+            writingState = .failed(originalError)
+            errorBus.publish(originalError)
             return
         }
         do {
             let refreshed = try await api.getChapter(id: chapter.id)
             self.chapter = refreshed
-            self.writingState = .done
-            onDone?(refreshed)
+            if refreshed.status == .draftReady, let draft = refreshed.draftText, !draft.isEmpty {
+                self.writingState = .done
+                onDone?(refreshed)
+            } else {
+                self.writingState = .failed(originalError)
+                self.errorBus.publish(originalError)
+            }
         } catch {
-            self.writingState = .failed(.upstream("写作中断，可点重新生成", retryable: true))
+            self.writingState = .failed(originalError)
+            self.errorBus.publish(originalError)
         }
     }
 

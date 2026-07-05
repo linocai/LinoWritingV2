@@ -37,6 +37,7 @@ import json
 from typing import Any
 
 from app.llm.base import (
+    StreamChunk,
     get_expander_llm_client,
     get_extractor_llm_client,
     get_writer_llm_client,
@@ -117,7 +118,7 @@ class _RecordingWriterLLM(MockLLMClient):
         context = json.loads(user.split("\n\n")[0])
         idx = context.get("structured_prompt", {}).get("_chapter_index", "?")
         # Stream a long body with a unique mid-body marker (see _chapter_body).
-        yield _chapter_body(idx)
+        yield StreamChunk(kind="token", text=_chapter_body(idx))
 
 
 class _RecordingExtractorLLM(MockLLMClient):

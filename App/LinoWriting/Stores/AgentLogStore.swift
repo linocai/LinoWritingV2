@@ -67,7 +67,8 @@ public final class AgentLogStore: ObservableObject {
     private let api: APIClientProtocol
     private let errorBus: ErrorBus
 
-    public init(api: APIClientProtocol, errorBus: ErrorBus, pageSize: Int = 50) {
+    // v1.2.0 (HH) P3: default page size trimmed 50 → 20 (调用日志瘦身).
+    public init(api: APIClientProtocol, errorBus: ErrorBus, pageSize: Int = 20) {
         self.api = api
         self.errorBus = errorBus
         self.pageSize = pageSize

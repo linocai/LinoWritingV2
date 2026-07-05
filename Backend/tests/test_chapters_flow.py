@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import time
 
-from app.llm.base import get_llm_client
+from app.llm.base import StreamChunk, get_llm_client
 from app.main import app
 from app.routers import chapters as chapters_router
 from tests.conftest import MockLLMClient, override_all_llm_clients
@@ -12,7 +12,7 @@ from tests.conftest import MockLLMClient, override_all_llm_clients
 class SlowStreamLLM(MockLLMClient):
     def complete_stream(self, *, system: str, user: str, **kwargs):
         time.sleep(0.03)
-        yield "迟到的第一句。"
+        yield StreamChunk(kind="token", text="迟到的第一句。")
 
 
 class FailingStreamLLM(MockLLMClient):

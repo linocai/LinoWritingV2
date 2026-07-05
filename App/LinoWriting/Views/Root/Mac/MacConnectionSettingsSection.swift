@@ -17,7 +17,6 @@ import AppKit
 struct MacConnectionSettingsSection: View {
 
     let isFirstRun: Bool
-    let onDismiss: () -> Void
 
     @EnvironmentObject private var appStore: AppStore
 
@@ -90,13 +89,12 @@ struct MacConnectionSettingsSection: View {
                     .padding(.bottom, 12)
             }
 
-            HStack(spacing: 12) {
-                LWPrimaryButton(title: "保存并连接", systemImage: "checkmark", height: 38, enabled: canSave) {
-                    save()
-                }
-                if !isFirstRun {
-                    LWBorderedButton(title: "关闭", height: 38) { onDismiss() }
-                }
+            // v1.2.0 (HH) P2: the internal 关闭 button is removed (作者拍板) —
+            // the settings sheet now has one close affordance, the ✕ that
+            // stays visible in `MacSettingsView.segmentBar` across all
+            // sections. Only 保存并连接 remains here.
+            LWPrimaryButton(title: "保存并连接", systemImage: "checkmark", height: 38, enabled: canSave) {
+                save()
             }
         }
         .padding(.horizontal, 20)

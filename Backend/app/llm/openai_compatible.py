@@ -17,6 +17,7 @@ from typing import Any
 
 import httpx
 
+from app.llm.base import StreamChunk
 from app.llm.errors import LLMError
 from app.models.provider_key import ProviderKey
 from app.services.encryption import decrypt_api_key
@@ -97,14 +98,32 @@ class OpenAICompatibleClient:
         user: str,
         cancel_event: Event | None = None,
         **kwargs: Any,
-    ) -> Iterator[str]:
+    ) -> Iterator[StreamChunk]:
         # cancel_event is plumbed all the way down to the httpx.iter_lines()
         # loop so we can stop pulling tokens from the upstream as soon as the
         # client disconnects. See §5.P.1 D.
+        #
+        # v1.2.0 (HH) P6: the caller's ``timeout`` kwarg used to become a
+        # plain ``httpx.Timeout(N)`` (that int applies to connect/read/write
+        # /pool *all four* phases), so a slow relay's inter-chunk gap was
+        # bound by the same 180s that was meant as an overall budget. An
+        # explicit ``httpx.Timeout(connect=…, read=…, write=…, pool=…)``
+        # gives each phase its own bound — ``read`` (inter-chunk gap) keeps
+        # the caller's value (Writer passes 180, unchanged from before —
+        # author-approved, not tightened to 120 so slow relays' block
+        # intervals aren't misfired on); connect/write/pool get short fixed
+        # bounds since they only matter once at the start of the request.
+        # Critically, httpx has **no separate overall-duration timeout** —
+        # as long as each individual read keeps arriving inside `read`
+        # seconds, the stream can run indefinitely, which is exactly the
+        # "no total time limit, only a per-chunk stall detector" contract
+        # P6 wants for multi-hour slow-relay chapters.
         payload = self._payload(system=system, user=user, stream=True, **kwargs)
+        read_timeout = kwargs.get("timeout", 180)
+        timeout = httpx.Timeout(connect=15, read=read_timeout, write=30, pool=15)
         response = self._stream(
             payload,
-            timeout=kwargs.get("timeout", 180),
+            timeout=timeout,
             cancel_event=cancel_event,
         )
         yield from response
@@ -160,9 +179,9 @@ class OpenAICompatibleClient:
         self,
         payload: dict[str, Any],
         *,
-        timeout: int,
+        timeout: int | httpx.Timeout,
         cancel_event: Event | None = None,
-    ) -> Iterator[str]:
+    ) -> Iterator[StreamChunk]:
         url = f"{self.base_url}/chat/completions"
         try:
             with httpx.stream(
@@ -210,9 +229,19 @@ class OpenAICompatibleClient:
                     if not choices:
                         continue
                     delta = choices[0].get("delta") or {}
+                    # v1.2.0 (HH) P7: reasoning-capable upstreams (DeepSeek-R1
+                    # style) put chain-of-thought deltas in a separate
+                    # `reasoning_content` field alongside (or instead of, for
+                    # that particular chunk) the final-answer `content`
+                    # field. Forward both as distinctly-tagged StreamChunks —
+                    # `thinking` chunks are a process indicator only and must
+                    # never be mistaken for draft prose downstream.
+                    reasoning = delta.get("reasoning_content")
+                    if reasoning:
+                        yield StreamChunk(kind="thinking", text=reasoning)
                     token = delta.get("content")
                     if token:
-                        yield token
+                        yield StreamChunk(kind="token", text=token)
         except (httpx.TimeoutException, httpx.TransportError) as exc:
             raise LLMError(str(exc), retryable=True) from exc
 

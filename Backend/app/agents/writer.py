@@ -5,7 +5,7 @@ from collections.abc import Iterator
 from threading import Event
 from typing import Any
 
-from app.llm.base import LLMClient
+from app.llm.base import LLMClient, StreamChunk
 from app.services.personas import DEFAULT_PERSONAS, compose_system
 
 # v1.0.0 EE Phase 2 (archive/v1.0.0_plan.md §4.2 / §4.4) — the runtime system
@@ -86,7 +86,10 @@ structured_prompt.must_not_happen 中的事件、元素和信息一字不提。
         self,
         context: dict[str, Any],
         cancel_event: Event | None = None,
-    ) -> Iterator[str]:
+    ) -> Iterator[StreamChunk]:
+        # v1.2.0 (HH) P7: pure pass-through — `complete_stream` now yields
+        # typed StreamChunk (token/thinking) instead of bare str; this
+        # method transparently forwards whatever the LLM client yields.
         yield from self.llm.complete_stream(
             system=self.system_prompt,
             user=self._render_user_message(context),

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+import logging
+from collections.abc import AsyncIterator, Iterator
 from queue import Empty, Queue
 from threading import Event, Thread
 from typing import Literal
 
+import anyio
 from fastapi import APIRouter, Body, Depends, Query, Response, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -54,6 +56,7 @@ ExportFormat = Literal["markdown", "txt"]
 
 router = APIRouter(tags=["chapters"])
 KEEPALIVE_SECONDS = 15
+logger = logging.getLogger(__name__)
 
 # Explicit allowlist for PATCH /chapters/{id}. ChapterPatch schema already
 # only exposes these four fields, but we re-assert it at the router level
@@ -184,10 +187,148 @@ def write_chapter(
     chapter.updated_at = utc_now()
     db.commit()
 
+    # v1.2.0 (HH) P8: Starlette drives a *sync* generator body via
+    # `iterate_in_threadpool`, which calls
+    # `anyio.to_thread.run_sync(next, gen)` with the library default
+    # `abandon_on_cancel=False` — i.e. the await is wrapped in a *shielded*
+    # cancel scope. That means client-disconnect cancellation of the
+    # request task never reaches the blocked worker thread, and — worse —
+    # once the request task itself finishes tearing down, nothing ever
+    # calls `.close()` on our generator, so `_write_stream`'s own
+    # `finally` (partial-draft save, `cancel_event.set()` that stops the
+    # daemon producer thread) can be starved indefinitely: it only runs
+    # if/when the upstream LLM finishes on its own. Measured locally: a
+    # disconnected stream sat with zero cleanup for minutes, not the ~140s
+    # originally suspected — see PROJECT_PLAN.md P8 for the repro.
+    # `_iterate_sync_stream_cancellable` replaces Starlette's default
+    # threadpool driver with one that isn't shielded, so real disconnects
+    # unblock promptly (bounded by whatever single blocking call the
+    # generator is currently parked in — typically one LLM token
+    # interval, not indefinite).
+    disconnect_event = Event()
     return StreamingResponse(
-        _write_stream(db, chapter.id, previous_status, context, llm, writer_persona),
+        _iterate_sync_stream_cancellable(
+            _write_stream(db, chapter.id, previous_status, context, llm, writer_persona, disconnect_event),
+            disconnect_event,
+            chapter.id,
+        ),
         media_type="text/event-stream",
     )
+
+
+class _SyncStreamStopIteration(Exception):
+    """Private stand-in for ``StopIteration`` when crossing an ``await``
+    boundary (worker thread → event loop). Mirrors
+    ``starlette.concurrency._StopIteration`` — a real ``StopIteration``
+    escaping a coroutine is converted by Python (PEP 479) into
+    ``RuntimeError: coroutine raised StopIteration`` instead of propagating
+    as-is, so it must be caught and re-thrown as an ordinary ``Exception``
+    before it can cross that boundary.
+    """
+
+
+def _next_or_stop(iterator: Iterator[str]) -> str:
+    try:
+        return next(iterator)
+    except StopIteration:
+        raise _SyncStreamStopIteration from None
+
+
+async def _iterate_sync_stream_cancellable(
+    sync_iter: Iterator[str], disconnect_event: Event, chapter_id: str
+) -> AsyncIterator[str]:
+    """Drive a sync generator (``_write_stream``) from async code without
+    Starlette's default shielded ``iterate_in_threadpool`` behaviour.
+
+    On cancellation of the *consuming* task (client disconnect, detected by
+    Starlette's own ``listen_for_disconnect`` + cancel scope — see
+    ``StreamingResponse.__call__``), two things happen instead of nothing:
+
+    1. ``disconnect_event`` (thread-safe) is set immediately, so if the
+       generator's own consumer loop ever gets to check it again it will
+       see the signal right away.
+    2. The generator is explicitly closed via a *safe*, retrying
+       ``sync_iter.close()`` call — safe because we don't call it until
+       any in-flight ``next()`` call (running in an abandoned worker
+       thread; ``abandon_on_cancel=True`` lets it run to completion rather
+       than blocking us on it) has actually returned. Calling ``.close()``
+       while a generator is still executing in another thread raises
+       ``ValueError: generator already executing``; the bounded retry loop
+       in ``_safe_close`` waits that out instead of crashing.
+
+    ``.close()`` throws ``GeneratorExit`` into ``_write_stream``, which is
+    exactly what happens on the "happy" (non-cancelled) path when a
+    ``StreamingResponse`` body iterator is torn down — so this reaches the
+    same ``finally`` block, just promptly instead of never.
+    """
+
+    async def _safe_close() -> None:
+        # Bounded retry: worst case the generator is blocked on the
+        # existing KEEPALIVE_SECONDS queue.get() or a single slow LLM
+        # token: 200 * 0.1s = 20s ceiling is generous headroom above
+        # that. If it's still "already executing" after 20s something is
+        # very wrong upstream (not a disconnect-handling bug) — give up
+        # rather than looping forever; the daemon producer thread and the
+        # DB session are still safely isolated either way.
+        for attempt in range(200):
+            try:
+                await anyio.to_thread.run_sync(sync_iter.close, abandon_on_cancel=True)
+                return
+            except ValueError as exc:
+                if "already executing" not in str(exc):
+                    raise
+                await anyio.sleep(0.1)
+        # v1.2.0 (HH) 审后修复 🟡#2 (reviewer 抓出): give-up path used to be
+        # silent — the generator's `finally` (partial-draft save,
+        # `cancel_event.set()`) never runs, so the producer thread may still
+        # be pulling billed tokens, and the eventual `db.close()` in FastAPI's
+        # dependency teardown can race a still-executing generator over the
+        # same (non-thread-safe) SQLAlchemy Session. This is a pathological
+        # case (single blocking call >20s) with no automatic recovery beyond
+        # eventual GC — at minimum make it observable for on-call triage.
+        logger.error(
+            "chapter %s: _safe_close gave up after ~20s retrying "
+            "generator.close() (still 'already executing') — cleanup "
+            "finally block did not run; producer thread may still be "
+            "streaming and the DB session may be concurrently in use",
+            chapter_id,
+        )
+
+    completed_normally = False
+    try:
+        while True:
+            try:
+                # Plain `next` can't be used directly here: a `StopIteration`
+                # escaping across an `await` boundary is converted by
+                # Python (PEP 479) into `RuntimeError: coroutine raised
+                # StopIteration` instead of propagating as-is — the same
+                # reason Starlette's own `iterate_in_threadpool` coerces it
+                # into a private exception type before crossing the thread
+                # boundary. `_next_or_stop` does the same coercion.
+                item = await anyio.to_thread.run_sync(_next_or_stop, sync_iter, abandon_on_cancel=True)
+            except _SyncStreamStopIteration:
+                completed_normally = True
+                return
+            yield item
+    finally:
+        if not completed_normally:
+            # Only reached via cancellation (client disconnect) or an
+            # unexpected exception — NOT the generator's own clean
+            # StopIteration. `disconnect_event`'s name promises "the
+            # client went away"; setting it on the success path too would
+            # be harmless today (nothing re-checks it after
+            # `_write_stream` has already finished) but is a foot-gun for
+            # future code, so keep the signal accurate.
+            disconnect_event.set()
+            # We are very likely running here *because* this task was
+            # just cancelled — shield the cleanup itself so it can
+            # actually finish (bounded by _safe_close's own retry cap,
+            # not open-ended). On the normal-completion path `.close()`
+            # on an already-exhausted generator is a harmless no-op, but
+            # skip the shielded retry loop entirely since there's nothing
+            # to clean up.
+            with anyio.CancelScope(shield=True):
+                await _safe_close()
 
 
 @router.post("/chapters/{chapter_id}/finalize")
@@ -518,6 +659,7 @@ def _write_stream(
     context: dict[str, object],
     llm: LLMClient,
     writer_persona: str,
+    disconnect_event: Event | None = None,
 ) -> Iterator[str]:
     started = now_ms()
     parts: list[str] = []
@@ -532,19 +674,42 @@ def _write_stream(
     # pulling (billable) tokens until the model finished naturally.
     # See §5.P.1 D.
     cancel_event = Event()
+    # v1.2.0 (HH) P8: externally-owned signal, set by
+    # `_iterate_sync_stream_cancellable` the instant it detects the ASGI
+    # request task was cancelled (client disconnect). Optional/defaulted so
+    # every existing direct-driving test (`for chunk in gen: ...` +
+    # `gen.close()`) keeps working unmodified — a fresh, never-set Event
+    # here behaves identically to before. Checked once per consumer-loop
+    # iteration alongside the existing KEEPALIVE_SECONDS queue.get() poll;
+    # in production this is belt-and-suspenders (the wrapper's explicit
+    # `.close()` is what actually unblocks a disconnected stream) but it
+    # means a generator that happens to get one more `next()` call after
+    # disconnect (e.g. mid-retry-window) exits immediately instead of
+    # producing another token first.
+    if disconnect_event is None:
+        disconnect_event = Event()
     try:
         yield _sse("started", {"chapter_id": chapter_id})
         queue: Queue[tuple[str, object]] = Queue()
 
         def produce_tokens() -> None:
             try:
-                for token in WriterAgent(llm, persona=writer_persona).stream(context, cancel_event=cancel_event):
+                # v1.2.0 (HH) P7: WriterAgent.stream now yields typed
+                # StreamChunk (kind="token"|"thinking") instead of bare str.
+                # Route each kind to its own queue message so the consumer
+                # loop below can dispatch without re-inspecting content —
+                # "thinking" chunks must never be mistaken for "token" and
+                # accidentally counted into parts/chars/draft_text.
+                for chunk in WriterAgent(llm, persona=writer_persona).stream(context, cancel_event=cancel_event):
                     if cancel_event.is_set():
                         # Defensive: even if the LLM client somehow yielded
                         # one more token after we signalled cancel, don't
                         # bother enqueueing it — the consumer is gone.
                         break
-                    queue.put(("token", token))
+                    if chunk.kind == "thinking":
+                        queue.put(("thinking", chunk.text))
+                    else:
+                        queue.put(("token", chunk.text))
                 # Only mark done if we weren't cancelled — a cancelled
                 # stream is neither "done" nor "error" from the consumer's
                 # perspective, the generator is already being torn down.
@@ -557,6 +722,20 @@ def _write_stream(
         Thread(target=produce_tokens, daemon=True).start()
 
         while True:
+            if disconnect_event.is_set():
+                # Same effective outcome as an external `.close()`: skip
+                # the "success" block below entirely (draft_text/status
+                # must NOT be unconditionally overwritten here — that's
+                # exactly the data-loss the P5 conservative policy exists
+                # to prevent) and land in `finally` with
+                # `restored_or_completed` still False, so the partial-draft
+                # save policy applies. Plain `return` (not
+                # `raise GeneratorExit()`) is the correct way to bail out
+                # of a generator's own body from the inside — it reaches
+                # `finally` and then surfaces as a clean `StopIteration` to
+                # the caller, whereas manually raising `GeneratorExit`
+                # propagates as an uncaught exception instead.
+                return
             try:
                 event_type, payload = queue.get(timeout=KEEPALIVE_SECONDS)
             except Empty:
@@ -566,6 +745,11 @@ def _write_stream(
                 break
             if event_type == "error":
                 raise payload  # type: ignore[misc]
+            if event_type == "thinking":
+                # Process indicator only: not appended to parts/chars, never
+                # persisted to draft_text, doesn't count toward word count.
+                yield _sse("thinking", {"text": str(payload)})
+                continue
             token = str(payload)
             parts.append(token)
             chars += len(token)
@@ -591,15 +775,13 @@ def _write_stream(
     except Exception as exc:
         db.rollback()
         chapter = _get_chapter(db, chapter_id)
-        chapter.status = previous_status
-        chapter.updated_at = utc_now()
-        log_agent_call(
+        _save_partial_draft(
             db,
-            chapter_id=chapter.id,
-            agent_name="writer",
-            input_data=context,
-            output_data="".join(parts) if parts else None,
-            started_at=started,
+            chapter=chapter,
+            previous_status=previous_status,
+            parts=parts,
+            context=context,
+            started=started,
             error=str(exc),
         )
         db.commit()
@@ -637,20 +819,73 @@ def _write_stream(
             try:
                 chapter = _get_chapter(db, chapter_id)
                 if chapter.status == "writing":
-                    chapter.status = previous_status
-                    chapter.updated_at = utc_now()
-                    log_agent_call(
+                    _save_partial_draft(
                         db,
-                        chapter_id=chapter.id,
-                        agent_name="writer",
-                        input_data=context,
-                        output_data="".join(parts) if parts else None,
-                        started_at=started,
+                        chapter=chapter,
+                        previous_status=previous_status,
+                        parts=parts,
+                        context=context,
+                        started=started,
                         error="stream cancelled before completion",
                     )
                     db.commit()
             except Exception:
                 db.rollback()
+
+
+def _save_partial_draft(
+    db: Session,
+    *,
+    chapter: Chapter,
+    previous_status: str,
+    parts: list[str],
+    context: dict[str, object],
+    started: float,
+    error: str,
+) -> None:
+    """v1.2.0 (HH) P5 — conservative partial-draft save shared by the
+    ``_write_stream`` ``except`` (upstream/LLM error, incl. the P6 httpx read
+    timeout) and ``finally`` (client disconnect) branches. Both call sites
+    already caught/are tearing down the same way; this just makes the save
+    policy identical instead of duplicated.
+
+    Policy (author-approved, deliberately conservative):
+      - ``previous_status == "prompt_ready"`` (no prior draft to lose) and
+        ``parts`` non-empty → unconditionally save ``draft_text`` and flip to
+        ``draft_ready`` (reuses the existing state — a partial draft is a
+        draft like any other; ``write``/``finalize`` already accept it).
+      - ``previous_status == "draft_ready"`` (a complete earlier draft
+        exists) → never overwrite: the half-finished regenerate attempt is
+        logged only, the old ``draft_text``/``status`` are left untouched.
+      - ``parts`` empty (nothing generated before the failure/disconnect) →
+        restore ``previous_status`` as before, no draft_text write.
+      - Any other ``previous_status`` → conservative default: restore
+        ``previous_status``, log only, no draft_text write.
+
+    The ``agent_logs`` row is always written (with ``error``) so partial vs.
+    complete generations stay distinguishable for audit, independent of the
+    business-state decision above.
+    """
+    joined = "".join(parts) if parts else None
+    if parts and previous_status == "prompt_ready":
+        chapter.draft_text = joined
+        chapter.status = "draft_ready"
+        chapter.updated_at = utc_now()
+    else:
+        # draft_ready-with-existing-draft, empty parts, or any other
+        # previous_status: restore the prior status untouched, never
+        # overwrite a possibly-complete draft_text with a half one.
+        chapter.status = previous_status
+        chapter.updated_at = utc_now()
+    log_agent_call(
+        db,
+        chapter_id=chapter.id,
+        agent_name="writer",
+        input_data=context,
+        output_data=joined,
+        started_at=started,
+        error=error,
+    )
 
 
 def _sse(event: str, data: dict[str, object]) -> str:

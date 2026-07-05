@@ -67,6 +67,10 @@ struct MacSettingsView: View {
             idealHeight: isFirstRun ? 560 : 640
         )
         .background(LWColor.hex(0xFCFCFE, opacity: 0.85))
+        // v1.2.0 (HH) P2: non-first-run sheet gets a persistent Esc exit.
+        // First-run must stay locked until the connection is configured, so
+        // the shortcut is only wired up outside that branch.
+        .modifier(EscToDismiss(enabled: !isFirstRun, dismiss: dismiss))
     }
 
     // MARK: - Header / segmentation
@@ -86,11 +90,32 @@ struct MacSettingsView: View {
         .padding(.bottom, 4)
     }
 
+    /// v1.2.0 (HH) P2: the ✕ sits to the right of the segmented control and
+    /// stays visible across every segment (连接/模型与密钥/人格编辑/调用日志) —
+    /// before this, the only close affordance lived inside the 连接 section,
+    /// so switching to another segment left no way to dismiss the sheet.
     private var segmentBar: some View {
         HStack {
             Spacer()
             MacSettingsSegmentControl(selection: $section)
             Spacer()
+        }
+        .overlay(alignment: .trailing) {
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(LWColor.mutedText2)
+                    .frame(width: 26, height: 26)
+                    .background(
+                        LWColor.hex(0x787D96, opacity: 0.12),
+                        in: Circle()
+                    )
+            }
+            .buttonStyle(.plain)
+            .onHover { pointer($0) }
+            .padding(.trailing, 20)
         }
         .padding(.top, 22)
         .padding(.bottom, 6)
@@ -102,7 +127,7 @@ struct MacSettingsView: View {
     private var content: some View {
         switch isFirstRun ? .connection : section {
         case .connection:
-            MacConnectionSettingsSection(isFirstRun: isFirstRun) { dismiss() }
+            MacConnectionSettingsSection(isFirstRun: isFirstRun)
         case .models:
             MacModelsSettingsSection()
         case .persona:
@@ -171,6 +196,28 @@ private struct MacSettingsSegmentControl: View {
         }
         .buttonStyle(.plain)
         .onHover { pointer($0) }
+    }
+}
+
+// MARK: - Esc-to-dismiss
+
+/// v1.2.0 (HH) P2: wires `.keyboardShortcut(.cancelAction)` (Esc) to
+/// `dismiss()` via a zero-size hidden button, since the shortcut only
+/// attaches to a `Button`. Gated by `enabled` so first-run (which must stay
+/// locked until the connection is configured) never responds to Esc.
+private struct EscToDismiss: ViewModifier {
+    let enabled: Bool
+    let dismiss: DismissAction
+
+    func body(content: Content) -> some View {
+        content.background {
+            if enabled {
+                Button("", action: { dismiss() })
+                    .keyboardShortcut(.cancelAction)
+                    .opacity(0)
+                    .accessibilityHidden(true)
+            }
+        }
     }
 }
 #endif
