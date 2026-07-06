@@ -17,7 +17,6 @@ struct LinoWritingApp: App {
                 .environmentObject(environment.timelineStore)
                 .environmentObject(environment.providerKeysStore)
                 .environmentObject(environment.agentLogStore)
-                .environmentObject(environment.outlineStore)
                 .environmentObject(environment.personaStore)
                 .environmentObject(environment.errorBus)
                 // K-1 follow-up (🟡 5): window-wide minimum size kept here

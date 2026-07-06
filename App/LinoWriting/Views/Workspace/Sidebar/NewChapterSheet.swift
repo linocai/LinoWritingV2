@@ -141,7 +141,7 @@ public struct NewChapterSheet: View {
 
     private var idealHeight: CGFloat {
         switch mode {
-        case .create: return 460
+        case .create: return 560
         case .importing: return batchMode ? 560 : 540
         }
     }
@@ -217,9 +217,9 @@ public struct NewChapterSheet: View {
     @ViewBuilder
     private var createFields: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("章节想法（约 50 字）").font(.callout.weight(.medium))
+            Text("本章剧情 · 完整写出这章发生的事").font(.callout.weight(.medium))
             TextEditor(text: $prompt)
-                .frame(height: 120)
+                .frame(height: 220)
                 .scrollContentBackground(.hidden)
                 .padding(8)
                 .background(
@@ -228,7 +228,7 @@ public struct NewChapterSheet: View {
                 )
             Text("\(prompt.count) 字")
                 .font(.caption)
-                .foregroundStyle(prompt.count > 200 ? .orange : .secondary)
+                .foregroundStyle(.secondary)
         }
     }
 

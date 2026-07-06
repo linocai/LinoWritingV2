@@ -5,9 +5,9 @@ import SwiftUI
 ///
 /// v1.2.0 (GG, P1): **un-gated** from `MacEditorWidgets.swift`'s `#if os(macOS)`
 /// and moved into cross-platform `Views/Components/` so the iOS redesign reuses
-/// them (the iOS 大纲 / 设定 / 想法 surfaces use `LWTextArea`; the streaming
-/// 正文 uses `BlinkingCaret`). Both are platform-neutral SwiftUI
-/// (`TextEditor` / `Rectangle` + `.task`), so macOS rendering is unchanged.
+/// them (the iOS 设定 / 想法 surfaces use `LWTextArea`; the streaming 正文 uses
+/// `BlinkingCaret`). Both are platform-neutral SwiftUI (`TextEditor` /
+/// `Rectangle` + `.task`), so macOS rendering is unchanged.
 
 // MARK: - Styled TextEditor with placeholder + design chrome
 

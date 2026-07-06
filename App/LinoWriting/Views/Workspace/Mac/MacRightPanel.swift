@@ -1,17 +1,19 @@
 #if os(macOS)
 import SwiftUI
 
-/// v1.1.0 (FF) Phase 3 — macOS workspace right column (5-tab panel).
+/// v1.1.0 (FF) Phase 3 — macOS workspace right column (4-tab panel).
 ///
 /// Handoff `LinoWriting.dc.html` 工作台 RIGHT (~326, `.lwSidebar`):
-/// 角色 / 大纲 / 时间线 / 梗概 / 设定. macOS-only.
+/// 角色 / 时间线 / 梗概 / 设定. macOS-only.
+///
+/// v1.3.0 (JJ) P6 — 大纲 tab removed (whole outline module deleted); "导入
+/// 人物卡" moved into the 角色 tab (`MacCharacterTab`).
 enum MacRightPanelTab: String, CaseIterable, Identifiable {
-    case characters, outline, timeline, summaries, settings
+    case characters, timeline, summaries, settings
     var id: String { rawValue }
     var label: String {
         switch self {
         case .characters: return "角色"
-        case .outline: return "大纲"
         case .timeline: return "时间线"
         case .summaries: return "梗概"
         case .settings: return "设定"
@@ -71,7 +73,6 @@ struct MacRightPanel: View {
     private var content: some View {
         switch tab {
         case .characters: MacCharacterTab(book: book)
-        case .outline: MacOutlineTab(book: book)
         case .timeline: MacTimelineTab()
         case .summaries: MacSummariesTab()
         case .settings: MacBookSettingsTab(book: book)

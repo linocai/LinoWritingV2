@@ -3,8 +3,8 @@ import SwiftUI
 /// v1.1.0 (FF) — Liquid Glass theme layer · fonts.
 ///
 /// - **Serif (宋体)**: system `Songti SC` (ships with macOS *and* iOS, NOT
-///   packaged). Titles / book names / chapter names / reading body / outline
-///   editor — the "literary" surfaces. Handoff used Noto Serif SC; `Songti SC`
+///   packaged). Titles / book names / chapter names / reading body / Step1
+///   本章剧情 editor — the "literary" surfaces. Handoff used Noto Serif SC; `Songti SC`
 ///   is the close system equivalent (present on macOS at
 ///   `/System/Library/Fonts/Supplemental/Songti.ttc`, and on iOS as a built-in
 ///   `Font.custom("Songti SC", …)` family).
@@ -17,7 +17,7 @@ import SwiftUI
 enum LWFont {
 
     /// Serif (Songti SC) at an arbitrary point size. Use for headings, book /
-    /// chapter names, reading body, outline editor.
+    /// chapter names, reading body, Step1 本章剧情 editor.
     static func songti(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
         Font.custom("Songti SC", size: size).weight(weight)
     }

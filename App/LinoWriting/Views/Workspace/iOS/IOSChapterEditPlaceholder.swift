@@ -10,8 +10,9 @@ import SwiftUI
 ///   - glass nav bar: ‹ 返回 + centred (章号 + status chip / Songti 章名) + ···
 ///     menu (导入文本 `POST .../import` / 导出本章 `GET .../export` / 强制重置状态
 ///     `POST .../admin_reset`); finalized 章 gets a top "阅读模式 ›" button.
-///   - ① 想法 (约 50 字): `user_prompt` textarea + 展开提纲 (draft) / 重新展开
-///     (prompt_ready, force) → `POST .../expand`.
+///   - ① 本章剧情 (v1.3.0 JJ P7: full prose, not a one-liner): `user_prompt`
+///     textarea + 展开提纲 (draft) / 重新展开 (prompt_ready, force) →
+///     `POST .../expand`.
 ///   - ② 结构化提示: HERO 本章创作指令 (accent box, `chapter_directive`) + 结构
 ///     要点 tags; 写作 (prompt_ready)/重新生成 (draft_ready) → `POST .../write`
 ///     (SSE); 取消写作 while streaming.
@@ -165,7 +166,7 @@ struct IOSChapterEditPlaceholder: View {
                     VStack(spacing: 16) {
                         if isFinalized(chapter) { readerButton }
                         // v1.2.0 (HH) P4: a finalized chapter only shows 正文
-                        // (stage3) — steps ①想法 and ②结构化提示 are no longer
+                        // (stage3) — steps ①本章剧情 and ②结构化提示 are no longer
                         // relevant once the chapter is done (mirrors
                         // MacChapterEditor.flow).
                         if !isFinalized(chapter) {
@@ -218,23 +219,22 @@ struct IOSChapterEditPlaceholder: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: - ① 想法
+    // MARK: - ① 本章剧情
 
     private func stage1(_ chapter: Chapter) -> some View {
         stageCard {
             HStack(spacing: 9) {
                 stageBadge("1")
-                Text("想法").font(.system(size: 14, weight: .semibold)).foregroundStyle(LWColor.bodyText)
+                Text("本章剧情").font(.system(size: 14, weight: .semibold)).foregroundStyle(LWColor.bodyText)
                 Spacer()
-                Text("约 50 字").font(.system(size: 11.5)).foregroundStyle(LWColor.mutedText3)
             }
-            Text("用一句话描述本章想发生什么")
+            Text("把这章发生的事完整写出来")
                 .font(.system(size: 11.5)).foregroundStyle(LWColor.mutedText3).lineSpacing(2)
 
             LWTextArea(
                 text: $promptDraft,
-                placeholder: "约 50 字描述本章想发生什么…",
-                minHeight: 76,
+                placeholder: "把这一章要发生的事完整写下来（场景、人物、冲突、结局…）",
+                minHeight: 220,
                 font: .system(size: 14.5),
                 lineSpacing: 5,
                 background: LWColor.hex(0xFCFCFE, opacity: 0.8)

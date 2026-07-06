@@ -105,6 +105,19 @@ public struct CharacterCreateRequest: Codable, Sendable {
     }
 }
 
+/// v1.3.0 (II) P2 — "导入人物卡" LLM parse request body.
+public struct CharacterParseRequest: Codable, Sendable {
+    public var rawText: String
+
+    enum CodingKeys: String, CodingKey {
+        case rawText = "raw_text"
+    }
+
+    public init(rawText: String) {
+        self.rawText = rawText
+    }
+}
+
 public struct CharacterPatchRequest: Codable, Sendable {
     public var name: String?
     public var role: String?

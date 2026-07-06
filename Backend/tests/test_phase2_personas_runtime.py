@@ -1,14 +1,17 @@
 from __future__ import annotations
 
-# v1.0.0 EE Phase 2 (archive/v1.0.0_plan.md §7-Phase 2) gates:
+# v1.0.0 EE Phase 2 (archive/v1.0.0_plan.md §7-Phase 2) gates, updated by
+# v1.3.0 (II/JJ) P4/P8 去大纲化 (see PROJECT_PLAN §4.0 / §4 P4 / §4 P8):
 #   1. persona runtime生效 — PATCHing a persona changes the Agent's runtime
 #      ``system`` prompt (asserted against the captured LLM system, not the old
 #      hardcoded literal).
 #   2. directive 合规 — the Expander emits a 200-300 字 ``chapter_directive`` and
 #      it does NOT leak character-card / author_notes content (P1 红线).
-#   3. 优化师 context — ``build_expander_context`` injects the WHOLE outline
-#      raw_text, carries NO per-chapter pre-sliced章纲 (P4 红线), and selects the
-#      relevant-memory slice by ``characters_involved`` (not dump-all, P3).
+#   3. 优化师 context — ``build_expander_context`` carries NO ``outline`` key
+#      (whole-book outline input deleted with the outline module), carries
+#      ``recent_summaries`` (已完成章梗概, the new continuity-grounding input),
+#      and selects the relevant-memory slice by ``characters_involved`` (not
+#      dump-all, P3 — unchanged by the outline removal).
 
 import json
 from typing import Any
@@ -21,7 +24,6 @@ from app.agents.prompt_expander import (
 from app.agents.writer import WriterAgent
 from app.llm.base import StreamChunk
 from app.models.book import Book
-from app.models.book_outline import BookOutline
 from app.models.chapter import Chapter
 from app.models.character import Character
 from app.models.timeline_event import TimelineEvent
@@ -199,11 +201,14 @@ def test_expander_operational_rules_forbid_copying_cards_into_directive():
 
 
 # --------------------------------------------------------------------------
-# Gate 3 — 优化师 context (整份大纲 / 无预切章纲 / 相关记忆按 involved 选)
+# Gate 3 — 优化师 context (无 outline 键 / recent_summaries 在 / 相关记忆按
+# involved 选) — rewritten for v1.3.0 (II/JJ) P4 去大纲化 (P8, see
+# PROJECT_PLAN §4 P4 / P8: the Expander no longer reads a whole-book outline;
+# continuity is grounded in ``recent_summaries`` instead).
 # --------------------------------------------------------------------------
 
 
-def _seed_outline_world(db_session):
+def _seed_memory_world(db_session):
     book = Book(title="长夜", world_setting="雨城", style_directive="克制")
     db_session.add(book)
     db_session.flush()
@@ -224,8 +229,17 @@ def _seed_outline_world(db_session):
     )
     db_session.add_all([c1, c2])
     db_session.flush()
-    outline_text = "这是一份约五千字的全书纯散文大纲，整份注入优化师。" * 30
-    db_session.add(BookOutline(book_id=book.id, raw_text=outline_text))
+    # A finalized prior chapter with a summary — the new continuity-grounding
+    # input (``recent_summaries``), replacing the old whole-book outline.
+    prior = Chapter(
+        book_id=book.id,
+        index=1,
+        user_prompt="第一章的本章剧情叙述。",
+        status="finalized",
+        summary="林夕在山洞发现一枚旧信。",
+    )
+    db_session.add(prior)
+    db_session.flush()
     current = Chapter(
         book_id=book.id,
         index=2,
@@ -246,19 +260,28 @@ def _seed_outline_world(db_session):
         )
     )
     db_session.commit()
-    return book, c1, c2, current, outline_text
+    return book, c1, c2, current, prior
 
 
-def test_expander_context_injects_whole_outline_verbatim(db_session):
-    book, c1, c2, current, outline_text = _seed_outline_world(db_session)
+def test_expander_context_has_no_outline_key(db_session):
+    """P4 红线: the whole-book outline input is gone — ``build_expander_context``
+    must not carry an ``outline`` key at all (not even ``None``)."""
+    book, c1, c2, current, _ = _seed_memory_world(db_session)
     ctx = build_expander_context(db_session, book, current)
-    # ② whole outline, verbatim (not sliced / truncated).
-    assert ctx["outline"] == outline_text
+    assert "outline" not in ctx
+
+
+def test_expander_context_carries_recent_summaries(db_session):
+    """The new continuity-grounding input: already-finalized chapter summaries,
+    replacing the old whole-book outline read."""
+    book, c1, c2, current, prior = _seed_memory_world(db_session)
+    ctx = build_expander_context(db_session, book, current)
+    assert ctx["recent_summaries"] == [{"index": prior.index, "summary": prior.summary}]
 
 
 def test_expander_context_has_no_per_chapter_presliced_outline(db_session):
     """P4 红线: no pre-sliced per-chapter 章纲 anywhere in the context."""
-    book, c1, c2, current, _ = _seed_outline_world(db_session)
+    book, c1, c2, current, _ = _seed_memory_world(db_session)
     ctx = build_expander_context(db_session, book, current)
     # No banned slice keys leaked into the context dict.
     for banned in ("outline_slice", "chapter_outline", "arc_beats", "presliced_outline"):
@@ -270,7 +293,7 @@ def test_expander_context_has_no_per_chapter_presliced_outline(db_session):
 
 def test_expander_context_relevant_memory_selected_by_characters_involved(db_session):
     """P3: the relevant-memory slice is the involved subset, not dump-all."""
-    book, c1, c2, current, _ = _seed_outline_world(db_session)
+    book, c1, c2, current, _ = _seed_memory_world(db_session)
     ctx = build_expander_context(db_session, book, current)
     involved_ids = [c["id"] for c in ctx["involved_characters"]]
     assert involved_ids == [c1.id]  # c2 (not involved) excluded from the slice.
@@ -284,14 +307,14 @@ def test_expander_context_relevant_memory_selected_by_characters_involved(db_ses
 
 def test_expander_context_first_pass_empty_involved_slice(db_session):
     """Before the first expand, characters_involved is empty → the relevant
-    slice is empty, but the outline + all_characters pool are still present so
-    the Expander can pick characters and infer focus_traits."""
+    slice is empty, but ``recent_summaries`` (empty, no prior chapters here)
+    and the all_characters pool are still present so the Expander can pick
+    characters and infer focus_traits."""
     book = Book(title="新书")
     db_session.add(book)
     db_session.flush()
     char = Character(book_id=book.id, name="甲", role="主角", frozen_fields={}, live_fields={})
     db_session.add(char)
-    db_session.add(BookOutline(book_id=book.id, raw_text="散文大纲。" * 50))
     chapter = Chapter(book_id=book.id, index=1, user_prompt="开篇", status="draft")
     db_session.add(chapter)
     db_session.commit()
@@ -299,16 +322,6 @@ def test_expander_context_first_pass_empty_involved_slice(db_session):
     ctx = build_expander_context(db_session, book, chapter)
     assert ctx["involved_characters"] == []
     assert ctx["involved_timelines"] == {}
-    assert ctx["outline"].startswith("散文大纲。")
+    assert ctx["recent_summaries"] == []
+    assert "outline" not in ctx
     assert {c["id"] for c in ctx["all_characters"]} == {char.id}
-
-
-def test_expander_context_outline_none_when_not_ingested(db_session):
-    book = Book(title="无大纲")
-    db_session.add(book)
-    db_session.flush()
-    chapter = Chapter(book_id=book.id, index=1, user_prompt="x", status="draft")
-    db_session.add(chapter)
-    db_session.commit()
-    ctx = build_expander_context(db_session, book, chapter)
-    assert ctx["outline"] is None

@@ -38,7 +38,7 @@ enum MacRoleVocab {
     /// One-line responsibility blurb for the persona cards (handoff `roleDesc`).
     static func desc(_ role: AgentRole) -> String {
         switch role {
-        case .expander: return "把大纲 ＋ 记忆 ＋ 你的一句话，磨成 200–300 字「本章创作指令」"
+        case .expander: return "把已完成章梗概 ＋ 记忆 ＋ 你写的本章剧情，磨成 200–300 字「本章创作指令」"
         case .writer: return "依据指令与上下文包，写出 2500–3000 字正文"
         case .extractor: return "把本章实际发生的事，回写进人物卡与时间线"
         }

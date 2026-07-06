@@ -1,63 +1,22 @@
 import XCTest
 @testable import LinoWriting
 
-/// PROJECT_PLAN v1.0.0 EE Phase 4 (前端) — outline panel + persona editor +
-/// Step2 directive store/codec logic.
+/// PROJECT_PLAN v1.0.0 EE Phase 4 (前端) — persona editor + Step2 directive
+/// store/codec logic.
+///
+/// v1.3.0 (JJ) P8 — split off from `Phase4OutlinePersonaTests.swift` (renamed
+/// to this file): the outline half (`OutlineStore` tests +
+/// `OutlineWriteRequest` encoding) is deleted along with the whole outline
+/// module (P6); this file keeps the persona half untouched.
 ///
 /// Coverage:
-///  - OutlineStore: load (nil when never ingested) / ingest upsert / patch;
-///    every success replaces `outline` with the server copy.
 ///  - PersonaStore: load three rows / save flips is_default semantics in store
 ///    state / per-role mutating flag clears.
 ///  - StructuredPrompt: `chapter_directive` round-trips snake_case and
 ///    `decodeIfPresent` tolerates an absent key (legacy payload → nil).
-///  - OutlineWriteRequest / AgentPersonaUpdateRequest encode snake_case bodies.
+///  - AgentPersonaUpdateRequest encodes a snake_case body.
 @MainActor
-final class Phase4OutlinePersonaTests: XCTestCase {
-
-    // MARK: - OutlineStore
-
-    func test_outline_load_nilWhenNeverIngested() async {
-        let mock = MockAPIClient()
-        let store = OutlineStore(api: mock, errorBus: ErrorBus())
-        await store.load(bookId: "b1")
-        XCTAssertNil(store.outline)
-        XCTAssertEqual(store.rawText, "")
-        XCTAssertTrue(mock.calls.contains("getOutline"))
-    }
-
-    func test_outline_ingest_upsertsThenLoadReadsBack() async {
-        let mock = MockAPIClient()
-        let store = OutlineStore(api: mock, errorBus: ErrorBus())
-        let saved = await store.ingest(bookId: "b1", rawText: "我的大纲")
-        XCTAssertEqual(saved?.rawText, "我的大纲")
-        XCTAssertEqual(store.outline?.rawText, "我的大纲")
-        // A fresh load on the same book reads the upserted row back.
-        let store2 = OutlineStore(api: mock, errorBus: ErrorBus())
-        await store2.load(bookId: "b1")
-        XCTAssertEqual(store2.outline?.rawText, "我的大纲")
-    }
-
-    func test_outline_patch_overwritesStoredText() async {
-        let mock = MockAPIClient()
-        let store = OutlineStore(api: mock, errorBus: ErrorBus())
-        _ = await store.ingest(bookId: "b1", rawText: "v1")
-        let patched = await store.patch(bookId: "b1", rawText: "v2")
-        XCTAssertEqual(patched?.rawText, "v2")
-        XCTAssertEqual(store.outline?.rawText, "v2")
-    }
-
-    func test_outline_failure_publishesAndKeepsPriorState() async {
-        let mock = MockAPIClient()
-        let bus = ErrorBus()
-        let store = OutlineStore(api: mock, errorBus: bus)
-        _ = await store.ingest(bookId: "b1", rawText: "good")
-        mock.errorToThrow = .transport("boom")
-        let result = await store.patch(bookId: "b1", rawText: "bad")
-        XCTAssertNil(result)
-        XCTAssertEqual(store.outline?.rawText, "good")  // unchanged
-        XCTAssertNotNil(bus.current)
-    }
+final class PersonaTests: XCTestCase {
 
     // MARK: - PersonaStore
 
@@ -127,13 +86,6 @@ final class Phase4OutlinePersonaTests: XCTestCase {
     }
 
     // MARK: - Request body encoding
-
-    func test_outlineWriteRequest_encodesSnakeCase() throws {
-        let data = try CodecFactory.makeEncoder().encode(OutlineWriteRequest(rawText: "abc"))
-        let json = String(data: data, encoding: .utf8) ?? ""
-        XCTAssertTrue(json.contains("\"raw_text\""))
-        XCTAssertTrue(json.contains("abc"))
-    }
 
     func test_personaUpdateRequest_encodesSnakeCase() throws {
         let data = try CodecFactory.makeEncoder().encode(AgentPersonaUpdateRequest(systemPrompt: "p"))

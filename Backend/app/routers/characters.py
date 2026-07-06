@@ -7,14 +7,22 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.errors import i18n_not_found
+from app.errors import i18n_not_found, i18n_upstream
+from app.llm.base import LLMClient, get_extractor_llm_client
+from app.llm.errors import LLMError
 from app.models.book import Book
 from app.models.chapter import Chapter
 from app.models.character import Character
 from app.models.common import utc_now
 from app.models.timeline_event import TimelineEvent
-from app.schemas.character import CharacterCreate, CharacterPatch, CharacterRead
+from app.schemas.character import (
+    CharacterCreate,
+    CharacterParseRequest,
+    CharacterPatch,
+    CharacterRead,
+)
 from app.schemas.timeline import TimelineEventRead
+from app.services.character_parser import land_parsed_characters, parse_characters_from_text
 
 router = APIRouter(tags=["characters"])
 
@@ -41,6 +49,44 @@ def create_character(book_id: str, payload: CharacterCreate, db: Session = Depen
     db.commit()
     db.refresh(character)
     return CharacterRead.model_validate(character)
+
+
+@router.post(
+    "/books/{book_id}/characters/parse",
+    status_code=status.HTTP_201_CREATED,
+)
+def parse_characters(
+    book_id: str,
+    payload: CharacterParseRequest,
+    db: Session = Depends(get_db),
+    # v1.3.0 (II) P2 — reuses the extractor per-Agent key (fallback to
+    # generic active key), same as /chapters/{id}/finalize|extract: "把文本
+    # 结构化进卡" is the extractor's natural job description.
+    llm: LLMClient = Depends(get_extractor_llm_client),
+) -> dict[str, list[CharacterRead]]:
+    """Parse a pasted character-sheet text blob into landed Character rows.
+
+    PROJECT_PLAN §4 P2 contract: always 201 on a successful LLM round-trip
+    (even an empty ``characters: []`` result is not an error — the caller
+    only inspects ``items``). LLM transport/shape failures 502 via the
+    standard ``i18n_upstream`` envelope. Same-name (trimmed, exact match)
+    characters already on the book are skipped, not overwritten.
+    """
+    _ensure_book(db, book_id)
+    try:
+        raw_items = parse_characters_from_text(llm, payload.raw_text)
+    except (LLMError, ValueError) as exc:
+        raise i18n_upstream("llm_generic", retryable=getattr(exc, "retryable", False), detail=str(exc)) from exc
+
+    try:
+        created = land_parsed_characters(db, book_id, raw_items)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    for character in created:
+        db.refresh(character)
+    return {"items": [CharacterRead.model_validate(character) for character in created]}
 
 
 @router.get("/characters/{character_id}", response_model=CharacterRead)

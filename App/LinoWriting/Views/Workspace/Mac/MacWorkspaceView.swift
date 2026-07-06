@@ -10,9 +10,9 @@ import SwiftUI
 ///   - title bar (46 high) — traffic-light gutter + ✦ 写作台 (back to shelf)
 ///     + centred book title + connection dot (health) + ⚙ settings.
 ///   - left chapter sidebar (~258, `.lwSidebar`).
-///   - centre editor (flexible) — three-stage flow (一句话 / HERO directive /
+///   - centre editor (flexible) — three-stage flow (本章剧情 / HERO directive /
 ///     正文) with SSE write reuse.
-///   - right panel (~326, `.lwSidebar`, 5 tabs).
+///   - right panel (~326, `.lwSidebar`, 4 tabs).
 ///
 /// Reflow (§3.2.5): ≥1100 all three columns; 800–1100 right panel folds into a
 /// toolbar-toggled drawer; <800 sidebar also folds (rare, near minWidth 1080).
@@ -28,7 +28,6 @@ struct MacWorkspaceView: View {
     @EnvironmentObject var chaptersStore: ChaptersStore
     @EnvironmentObject var chapterEditorStore: ChapterEditorStore
     @EnvironmentObject var timelineStore: TimelineStore
-    @EnvironmentObject var outlineStore: OutlineStore
     @EnvironmentObject var environment: AppEnvironment
 
     @State private var rightTab: MacRightPanelTab = .characters
@@ -204,9 +203,6 @@ struct MacWorkspaceView: View {
                   chapterEditorStore.chapter?.id != id {
             Task { await chapterEditorStore.load(chapterId: id) }
         }
-        if outlineStore.loadedBookId != currentBook.id {
-            Task { await outlineStore.load(bookId: currentBook.id) }
-        }
     }
 
     private func updateTimelineSelection() {
@@ -229,7 +225,6 @@ struct MacWorkspaceView: View {
         chaptersStore.reset()
         charactersStore.reset()
         timelineStore.reset()
-        outlineStore.reset()
         appStore.closeBook()
     }
 

@@ -20,11 +20,6 @@ public final class MockAPIClient: APIClientProtocol, @unchecked Sendable {
         .expander: nil
     ]
 
-    /// v1.0.0 EE §5.1: in-memory book outlines keyed by `book_id` (singleton
-    /// per book). `nil` for a book means "never ingested" → `getOutline`
-    /// returns nil. `ingest` / `patch` upsert here.
-    public var outlines: [String: BookOutline] = [:]
-
     /// v1.0.0 EE §5.4: in-memory persona rows keyed by role. Seeded lazily on
     /// first access so a test that doesn't touch personas pays nothing, and so
     /// the three rows always come back in a stable role order (mirrors the
@@ -44,6 +39,10 @@ public final class MockAPIClient: APIClientProtocol, @unchecked Sendable {
     public var onImport: ((String, ChapterImportRequest) throws -> ChapterImportResponse)?
     public var onExtract: ((String) throws -> ChapterImportResponse)?
     public var onAdminReset: ((String, ChapterStatus) -> Chapter)?
+    /// v1.3.0 (II) P2 — pluggable "导入人物卡" LLM-parse result. Defaults to
+    /// nil (no characters parsed) when unset; tests set this to control the
+    /// mocked parse outcome, or throw to simulate a 502.
+    public var onParseCharacters: ((String, String) throws -> [Character])?
 
     /// v1.2.0 (HH) P5 — simulates a *real* transport-level disconnect mid
     /// stream: yields the given tokens as `.token` events, then the
@@ -182,6 +181,7 @@ public final class MockAPIClient: APIClientProtocol, @unchecked Sendable {
         if let r = req.role { c.role = r }
         if let f = req.frozenFields { c.frozenFields = f }
         if let l = req.liveFields { c.liveFields = l }
+        if let notes = req.authorNotes { c.authorNotes = notes }
         c.updatedAt = Date()
         characters[idx] = c
         return c
@@ -192,6 +192,14 @@ public final class MockAPIClient: APIClientProtocol, @unchecked Sendable {
         try maybeThrow()
         characters.removeAll { $0.id == id }
         timelineEvents.removeAll { $0.characterId == id }
+    }
+
+    public func parseCharacters(bookId: String, rawText: String) async throws -> [Character] {
+        recordCall("parseCharacters")
+        try maybeThrow()
+        let parsed = try onParseCharacters?(bookId, rawText) ?? []
+        characters.append(contentsOf: parsed)
+        return parsed
     }
 
     public func listTimeline(characterId: String, limit: Int, before: Date?) async throws -> [TimelineEvent] {
@@ -275,63 +283,6 @@ public final class MockAPIClient: APIClientProtocol, @unchecked Sendable {
         recordCall("deleteChapter")
         try maybeThrow()
         chapters.removeAll { $0.id == id }
-    }
-
-    // MARK: - Book outline (v1.0.0 EE §5.1 mock)
-
-    public func getOutline(bookId: String) async throws -> BookOutline? {
-        recordCall("getOutline")
-        return try locked {
-            try maybeThrow()
-            return outlines[bookId]
-        }
-    }
-
-    public func ingestOutline(bookId: String, rawText: String?) async throws -> BookOutline {
-        recordCall("ingestOutline")
-        return try locked {
-            try maybeThrow()
-            let now = Date()
-            if var existing = outlines[bookId] {
-                existing.rawText = rawText
-                existing.updatedAt = now
-                outlines[bookId] = existing
-                return existing
-            }
-            let outline = BookOutline(
-                id: UUID().uuidString,
-                bookId: bookId,
-                rawText: rawText,
-                createdAt: now,
-                updatedAt: now
-            )
-            outlines[bookId] = outline
-            return outline
-        }
-    }
-
-    public func patchOutline(bookId: String, rawText: String?) async throws -> BookOutline {
-        recordCall("patchOutline")
-        return try locked {
-            try maybeThrow()
-            let now = Date()
-            if var existing = outlines[bookId] {
-                existing.rawText = rawText
-                existing.updatedAt = now
-                outlines[bookId] = existing
-                return existing
-            }
-            // Mirror the backend: PATCH on a never-ingested book upserts one.
-            let outline = BookOutline(
-                id: UUID().uuidString,
-                bookId: bookId,
-                rawText: rawText,
-                createdAt: now,
-                updatedAt: now
-            )
-            outlines[bookId] = outline
-            return outline
-        }
     }
 
     // MARK: - Agent personas (v1.0.0 EE §5.4 mock)

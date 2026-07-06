@@ -22,7 +22,6 @@ struct IOSBookSettingsSection: View {
     @EnvironmentObject var chaptersStore: ChaptersStore
     @EnvironmentObject var charactersStore: CharactersStore
     @EnvironmentObject var timelineStore: TimelineStore
-    @EnvironmentObject var outlineStore: OutlineStore
 
     @State private var titleDraft = ""
     @State private var worldDraft = ""
@@ -166,7 +165,6 @@ struct IOSBookSettingsSection: View {
             chaptersStore.reset()
             charactersStore.reset()
             timelineStore.reset()
-            outlineStore.reset()
             appStore.closeBook()
         }
     }

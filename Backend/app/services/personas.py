@@ -22,13 +22,20 @@ from app.schemas.provider_key import AGENT_ROLES, AgentRole
 # Agents' runtime system prompts — that re-route to ``get_persona`` is
 # Phase 2. Phase 1 only stands up the table / service / endpoints + seed.
 
+# v1.3.0 (II/JJ) P4 — 去大纲化: this code-level default persona is updated to
+# match the new job description (no more "读整份全书大纲"). Note: this only
+# changes the DEFAULT constant (seed / reset / DB-miss fallback source) — any
+# DB persona row the author has already customised (incl. PATCHes made before
+# this Phase landed) is untouched; see PROJECT_PLAN §4.2 user-facing checklist
+# item for a "please self-review your persona for outline mentions" nudge.
 DEFAULT_EXPANDER_PERSONA = """
-[人格] 你是冷静的章节结构师，just-in-time 读整份全书大纲 + 当前结构化记忆，
-       定位故事走到哪了，把上下文编译成一条清晰的「本章创作指令」。
-[原则] 贴着大纲与已发生的进度走；克制、聚焦；只编译已知信息，不脑补大纲外的新剧情。
+[人格] 你是冷静的章节结构师，just-in-time 读已完成章梗概 + 当前结构化记忆 + 作者本章叙述，
+       核对连续性，把上下文编译成一条清晰的「本章创作指令」。
+[原则] 贴着已完成章梗概与作者的本章叙述走；克制、聚焦；只结构化 + 核连续 + 蒸馏已知信息，
+       不发明作者没写的新剧情。
 [边界] chapter_directive 是方向盘(200–300 字)：写本章要达成什么、张力在哪、承接什么落点、
        注意哪条还开着的伏笔——绝不把人物卡/时间线的内容抄进 directive（知识由 Context Pack 直达 Writer）。
-       不发明大纲之外的情节；focus_traits 最多 2 个。
+       不发明情节；focus_traits 最多 2 个。
 """.strip()
 
 DEFAULT_WRITER_PERSONA = """

@@ -16,6 +16,8 @@ public protocol APIClientProtocol: Sendable {
     func getCharacter(id: String) async throws -> Character
     func patchCharacter(id: String, _ req: CharacterPatchRequest) async throws -> Character
     func deleteCharacter(id: String) async throws
+    // v1.3.0 (II) P2 — "导入人物卡" LLM parse: POST /books/{id}/characters/parse.
+    func parseCharacters(bookId: String, rawText: String) async throws -> [Character]
     func listTimeline(characterId: String, limit: Int, before: Date?) async throws -> [TimelineEvent]
     func updateTimelineEvent(id: String, eventText: String?, eventType: TimelineEventType?) async throws -> TimelineEvent
     func deleteTimelineEvent(id: String) async throws
@@ -43,11 +45,6 @@ public protocol APIClientProtocol: Sendable {
         limit: Int,
         before: Date?
     ) async throws -> [AgentLog]
-
-    // Book outline (v1.0.0 EE §5.1) — plain-prose, no digest.
-    func getOutline(bookId: String) async throws -> BookOutline?
-    func ingestOutline(bookId: String, rawText: String?) async throws -> BookOutline
-    func patchOutline(bookId: String, rawText: String?) async throws -> BookOutline
 
     // Agent personas (v1.0.0 EE §5.4) — DB-stored, App-editable persona layer.
     func listAgentPersonas() async throws -> [AgentPersona]
@@ -251,6 +248,16 @@ public final class APIClient: APIClientProtocol, @unchecked Sendable {
         try await sendNoBody(req)
     }
 
+    // v1.3.0 (II) P2 — POST /books/{id}/characters/parse. Backend returns
+    // `{"items": [CharacterRead, ...]}`, same envelope shape as listCharacters.
+    public func parseCharacters(bookId: String, rawText: String) async throws -> [Character] {
+        let req = try makeRequest(method: "POST",
+                                  path: "/api/v1/books/\(bookId)/characters/parse",
+                                  body: body(CharacterParseRequest(rawText: rawText)))
+        let resp: ListResponse<Character> = try await send(req, as: ListResponse<Character>.self)
+        return resp.items
+    }
+
     public func listTimeline(characterId: String, limit: Int, before: Date?) async throws -> [TimelineEvent] {
         var q: [URLQueryItem] = [URLQueryItem(name: "limit", value: String(limit))]
         if let before {
@@ -440,48 +447,6 @@ public final class APIClient: APIClientProtocol, @unchecked Sendable {
         let req = try makeRequest(method: "GET", path: "/api/v1/admin/logs", query: q)
         let resp: ListResponse<AgentLog> = try await send(req, as: ListResponse<AgentLog>.self)
         return resp.items
-    }
-
-    // MARK: - Book outline (v1.0.0 EE §5.1)
-
-    /// `GET /api/v1/books/{id}/outline` — returns the singleton outline or
-    /// `nil` when the book never ingested one (`{ "outline": null }`).
-    public func getOutline(bookId: String) async throws -> BookOutline? {
-        let req = try makeRequest(method: "GET", path: "/api/v1/books/\(bookId)/outline")
-        let env: OutlineEnvelope = try await send(req, as: OutlineEnvelope.self)
-        return env.outline
-    }
-
-    /// `POST /api/v1/books/{id}/outline/ingest` — upsert `raw_text`. No LLM,
-    /// always succeeds (mirrors the chapter-import philosophy). Returns the
-    /// stored outline (never null on this path).
-    public func ingestOutline(bookId: String, rawText: String?) async throws -> BookOutline {
-        let req = try makeRequest(
-            method: "POST",
-            path: "/api/v1/books/\(bookId)/outline/ingest",
-            body: body(OutlineWriteRequest(rawText: rawText))
-        )
-        let env: OutlineEnvelope = try await send(req, as: OutlineEnvelope.self)
-        guard let outline = env.outline else {
-            throw AppError.decoding("摄入大纲后未返回 outline")
-        }
-        return outline
-    }
-
-    /// `PATCH /api/v1/books/{id}/outline` — author hand-edit of the living
-    /// outline (whitelist: `raw_text` only). PATCHing a book that never
-    /// ingested upserts one on the backend.
-    public func patchOutline(bookId: String, rawText: String?) async throws -> BookOutline {
-        let req = try makeRequest(
-            method: "PATCH",
-            path: "/api/v1/books/\(bookId)/outline",
-            body: body(OutlineWriteRequest(rawText: rawText))
-        )
-        let env: OutlineEnvelope = try await send(req, as: OutlineEnvelope.self)
-        guard let outline = env.outline else {
-            throw AppError.decoding("保存大纲后未返回 outline")
-        }
-        return outline
     }
 
     // MARK: - Agent personas (v1.0.0 EE §5.4)

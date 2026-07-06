@@ -9,9 +9,10 @@ import SwiftUI
 ///   - glass nav bar: ‹ 书架 (pops the stack via `appStore.closeBook`) + ···
 ///     menu (导出整本 `GET /books/{id}/export` / 删除作品 `DELETE /books/{id}`);
 ///     large-title = book title (Songti).
-///   - a horizontally-scrolling pill row of **6 segments** matching
-///     `MacRightPanelTab` + 章节: 章节 / 角色 / 大纲 / 时间线 / 梗概 / 设定.
-///   - 6 vertically-stacked full-width content views (one per segment), each a
+///   - a horizontally-scrolling pill row of **5 segments** matching
+///     `MacRightPanelTab` + 章节: 章节 / 角色 / 时间线 / 梗概 / 设定 (v1.3.0
+///     JJ P6: 大纲 segment removed, whole outline module deleted).
+///   - 5 vertically-stacked full-width content views (one per segment), each a
 ///     separate iOS view that reuses the same Stores the macOS Mac*Tab views do.
 ///
 /// Chapter rows push the chapter editor — for P3 that destination is the legacy
@@ -26,7 +27,6 @@ struct BookDetailView: View {
     @EnvironmentObject var charactersStore: CharactersStore
     @EnvironmentObject var chaptersStore: ChaptersStore
     @EnvironmentObject var timelineStore: TimelineStore
-    @EnvironmentObject var outlineStore: OutlineStore
     @EnvironmentObject var environment: AppEnvironment
 
     @State private var tab: IOSBookTab = .chapters
@@ -156,7 +156,6 @@ struct BookDetailView: View {
                 switch tab {
                 case .chapters:   IOSChaptersSection(book: currentBook)
                 case .characters: IOSCharactersSection(book: currentBook)
-                case .outline:    IOSOutlineSection(book: currentBook)
                 case .timeline:   IOSTimelineSection()
                 case .summaries:  IOSSummariesSection()
                 case .settings:   IOSBookSettingsSection(book: currentBook)
@@ -173,9 +172,6 @@ struct BookDetailView: View {
 
     private func ensureLoaded() {
         bookStore.setBook(book)
-        if outlineStore.loadedBookId != book.id {
-            Task { await outlineStore.load(bookId: book.id) }
-        }
     }
 
     private func deleteBook() {
@@ -185,7 +181,6 @@ struct BookDetailView: View {
             chaptersStore.reset()
             charactersStore.reset()
             timelineStore.reset()
-            outlineStore.reset()
             appStore.closeBook() // pops back to the shelf
         }
     }
@@ -193,19 +188,20 @@ struct BookDetailView: View {
 
 // MARK: - Segment model (== MacRightPanelTab labels + 章节)
 
-/// The 6 horizontally-scrolling segments of the iOS book-detail screen. Labels
-/// are **identical** to `MacRightPanelTab` (角色 / 大纲 / 时间线 / 梗概 / 设定),
+/// The 5 horizontally-scrolling segments of the iOS book-detail screen. Labels
+/// are **identical** to `MacRightPanelTab` (角色 / 时间线 / 梗概 / 设定),
 /// with 章节 prepended (macOS has a separate chapter sidebar; iOS folds it into
 /// the first segment). The legacy `RightPanelView`'s 角色卡 / 摘要 / 世界设定
 /// naming is deliberately NOT reused (it is the deprecated命名).
+///
+/// v1.3.0 (JJ) P6 — 大纲 case removed (whole outline module deleted).
 enum IOSBookTab: String, CaseIterable, Identifiable {
-    case chapters, characters, outline, timeline, summaries, settings
+    case chapters, characters, timeline, summaries, settings
     var id: String { rawValue }
     var label: String {
         switch self {
         case .chapters: return "章节"
         case .characters: return "角色"
-        case .outline: return "大纲"
         case .timeline: return "时间线"
         case .summaries: return "梗概"
         case .settings: return "设定"

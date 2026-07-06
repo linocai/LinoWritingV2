@@ -94,6 +94,26 @@ def test_write_rate_limit_per_token_isolated(client):
         )
 
 
+def test_write_rate_limit_appliesTo_characterParseEndpoint(client, auth_headers):
+    """v1.3.0 (II) P2 — POST /books/{id}/characters/parse is LLM-spending
+    and must share the tight 30/minute budget, not the 600/minute default.
+    We don't care about the actual response status (likely 502 with no
+    ProviderKey configured) — only that the 31st call gets 429 first."""
+    book = client.post(
+        "/api/v1/books",
+        headers=auth_headers,
+        json={"title": "速率测试-角色解析"},
+    ).json()
+    path = f"/api/v1/books/{book['id']}/characters/parse"
+
+    for _ in range(30):
+        client.post(path, headers=auth_headers, json={"raw_text": "占位文本"})
+
+    response = client.post(path, headers=auth_headers, json={"raw_text": "占位文本"})
+    assert response.status_code == 429
+    assert response.headers.get("Retry-After") == "60"
+
+
 def test_read_rate_limit_higher(client, auth_headers):
     """GET /chapters/{id} sits on the 600/minute default budget — 31
     consecutive reads must all succeed (or 404 for synthetic id, but

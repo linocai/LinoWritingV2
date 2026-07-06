@@ -12,7 +12,8 @@ Design (§5.T.2):
   the author's own client.
 - Limits:
   - **Write endpoints** (LLM-spending): 30 / minute. Allow-list below
-    matches §5.T.2 verbatim — ``/chapters/{id}/expand|write|import|finalize``.
+    matches §5.T.2 verbatim — ``/chapters/{id}/expand|write|import|finalize``,
+    plus (v1.3.0 II P2) ``/books/{id}/characters/parse``.
   - **All other endpoints**: 600 / minute.
 - 429 envelope: we let slowapi raise :class:`RateLimitExceeded`, catch it
   in a FastAPI exception handler, and re-emit our standard AppError
@@ -80,19 +81,25 @@ def _bearer_key(request: Request) -> str:
 def _is_write_endpoint(request: Request) -> bool:
     """Return True for the LLM-spending POST routes that get the tight
     30/min budget. Matches §5.T.2 exactly: only the four chapter actions
-    that call out to an LLM provider or finalize an irreversible write.
+    that call out to an LLM provider or finalize an irreversible write —
+    plus (v1.3.0 II P2) ``POST /books/{id}/characters/parse``, the
+    character-card LLM-parse endpoint (also LLM-spending).
     """
     if request.method != "POST":
         return False
     path = request.url.path
-    if not path.startswith("/api/v1/chapters/"):
-        return False
-    # ``/api/v1/chapters/{id}/<action>`` → action segment is the last one.
-    parts = path.rstrip("/").split("/")
-    if len(parts) < 6:
-        return False
-    action = parts[-1]
-    return action in {"expand", "write", "import", "finalize"}
+    if path.startswith("/api/v1/chapters/"):
+        # ``/api/v1/chapters/{id}/<action>`` → action segment is the last one.
+        parts = path.rstrip("/").split("/")
+        if len(parts) < 6:
+            return False
+        action = parts[-1]
+        return action in {"expand", "write", "import", "finalize"}
+    if path.startswith("/api/v1/books/"):
+        # ``/api/v1/books/{id}/characters/parse``.
+        parts = path.rstrip("/").split("/")
+        return len(parts) == 7 and parts[-2] == "characters" and parts[-1] == "parse"
+    return False
 
 
 def _retry_after_seconds(limit_string: str) -> int:

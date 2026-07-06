@@ -6,7 +6,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.book import Book
-from app.models.book_outline import BookOutline
 from app.models.chapter import Chapter
 from app.models.character import Character
 from app.models.timeline_event import TimelineEvent
@@ -23,17 +22,19 @@ RECENT_SUMMARIES_COUNT = 2
 
 
 def build_expander_context(db: Session, book: Book, chapter: Chapter) -> dict[str, Any]:
-    # v1.0.0 EE Phase 2 (§4.1) — the Expander's "four inputs", assembled
-    # just-in-time so it can locate where the story is and emit this chapter's
-    # directive:
+    # v1.3.0 (II/JJ) P4 — 去大纲化: the Expander's job is now "read already-
+    # finished chapter summaries + the author's this-chapter narrative,
+    # structure it + check continuity + distill a directive" (no more whole-
+    # book outline input). Assembled just-in-time from:
     #   ① persona — injected as the system prompt (not here), DB-stored.
-    #   ② outline — the WHOLE ~5000 字 plain-prose ``book_outlines.raw_text``,
-    #      injected verbatim (the static forward-looking plan; never per-chapter
-    #      pre-sliced — P4 红线). ``None`` when the author hasn't ingested one.
-    #   ③ relevant memory slice — involved cards + their recent timeline (via
+    #   ② relevant memory slice — involved cards + their recent timeline (via
     #      the existing ``characters_involved`` selection, NOT dump-all — P3) +
-    #      ``recent_summaries``. Dynamic, written back by the Extractor.
-    #   ④ author intent — ``chapter.user_prompt``.
+    #      ``recent_summaries`` (已完成章梗概, dynamic, written back by the
+    #      Extractor). This is what continuity-checking is now grounded in
+    #      (replaces the old whole-outline read).
+    #   ③ author intent — ``chapter.user_prompt`` (now a full narrative
+    #      paragraph describing what happens this chapter, not a one-liner —
+    #      see P7's Step1 copy change; the key/shape here is unchanged).
     # ``all_characters`` (brief, with frozen_fields + author_notes) is kept so
     # the Expander can still pick characters_involved / infer focus_traits
     # (§5.L.4) even on the first pass when the involved set is still empty.
@@ -65,9 +66,7 @@ def build_expander_context(db: Session, book: Book, chapter: Chapter) -> dict[st
             "title": chapter.title,
             "user_prompt": chapter.user_prompt,
         },
-        # ② whole outline, verbatim (no per-chapter slicing).
-        "outline": _book_outline_text(db, book.id),
-        # ③ relevant memory slice: involved cards + their recent timeline.
+        # relevant memory slice: involved cards + their recent timeline.
         "involved_characters": [
             _character_full(character, include_author_notes=True) for character in involved
         ],
@@ -155,18 +154,6 @@ def build_extractor_context(db: Session, book: Book, chapter: Chapter) -> dict[s
 
 def _book_characters(db: Session, book_id: str) -> list[Character]:
     return list(db.scalars(select(Character).where(Character.book_id == book_id).order_by(Character.created_at)).all())
-
-
-def _book_outline_text(db: Session, book_id: str) -> str | None:
-    """Return the book's whole outline prose (``book_outlines.raw_text``).
-
-    v1.0.0 EE Phase 2 (§4.1 input ②) — read verbatim, never sliced. ``None``
-    when the author hasn't ingested an outline (or the row exists but is empty).
-    """
-    outline = db.scalar(select(BookOutline).where(BookOutline.book_id == book_id))
-    if outline is None:
-        return None
-    return outline.raw_text
 
 
 def _recent_finalized(

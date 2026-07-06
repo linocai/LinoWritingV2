@@ -76,6 +76,25 @@ public final class CharactersStore: ObservableObject {
         }
     }
 
+    /// v1.3.0 (II) P2 — "导入人物卡" LLM parse. Calls
+    /// `POST /books/{id}/characters/parse` with the pasted prose, merges the
+    /// newly-landed characters into `characters`, and returns them so the
+    /// sheet can show a summary / dismiss. Returns `nil` on failure (error
+    /// already published to `errorBus`); returns `[]` (non-nil) when the LLM
+    /// found no parseable characters — the sheet distinguishes the two so it
+    /// can show "解析失败" vs "未能从文本解析出角色".
+    public func importFromText(bookId: String, rawText: String) async -> [Character]? {
+        do {
+            let parsed = try await api.parseCharacters(bookId: bookId, rawText: rawText)
+            characters.append(contentsOf: parsed)
+            return parsed
+        } catch let error as AppError {
+            errorBus.publish(error); return nil
+        } catch {
+            errorBus.publish(.transport(error.localizedDescription)); return nil
+        }
+    }
+
     public func delete(_ character: Character) async {
         do {
             try await api.deleteCharacter(id: character.id)

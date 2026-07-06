@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 # v1.0.0 EE Phase 5 (archive/v1.0.0_plan.md §7-Phase 5) — link-up 联调 +
-# architecture-invariant verification.
+# architecture-invariant verification. Updated by v1.3.0 (II/JJ) P4/P8 去大纲化
+# (see PROJECT_PLAN §4.0 / §4 P4 / §4 P8): the whole-book outline input is gone;
+# the Expander now locates "where the story is" purely via ``recent_summaries``
+# (已完成章梗概) — the invariants below are rewritten accordingly.
 #
 # This is NOT the real 100-chapter LLM long run (that is a user-side, real-key,
 # real-device task per §D7). Here we drive the FULL HTTP chain end-to-end with
@@ -9,8 +12,8 @@ from __future__ import annotations
 # rolling, multi-chapter run — that the architecture red lines hold:
 #
 #   闭环 (closed loop):
-#     ingest outline (+ author initial cards) → create chapter →
-#     expand (优化师 just-in-time reads WHOLE outline + relevant memory, emits
+#     author imports initial cards → create chapter → expand (优化师
+#     just-in-time reads 已完成章梗概 recent_summaries + relevant memory, emits
 #     chapter_directive) → write (Writer uses directive + cards/timelines) →
 #     finalize (档案员 writes back structured memory) → next chapter, whose
 #     expander/writer context can read the PREVIOUS chapter's written-back
@@ -20,10 +23,10 @@ from __future__ import annotations
 #   不变量 (invariants), asserted across ≥3 chapters:
 #     INV-1  (P2) chapter N (N≥2) Writer/Expander context contains NONE of the
 #            previous chapters' draft_text — only relevant cards + timeline +
-#            the WHOLE outline. Memory IS the structured compression of "前文".
-#     INV-2  (P4) the Expander context carries the WHOLE outline raw_text and
-#            NO pre-sliced per-chapter 章纲 key — it locates itself purely by
-#            memory (no position pointer).
+#            recent_summaries. Memory IS the structured compression of "前文".
+#     INV-2  (P4) the Expander context carries NO ``outline`` key and NO
+#            pre-sliced per-chapter 章纲 key — it locates itself purely by
+#            memory (recent_summaries, no position pointer).
 #     INV-3  (P1) the directive leaks no card content; the Writer reads 方向
 #            (directive) and 知识 (cards/timeline) on two distinct lines.
 #     INV-4  (P3) under multiple chapters the Context Pack selects only the
@@ -44,10 +47,6 @@ from app.llm.base import (
 )
 from app.main import app
 from tests.conftest import MockLLMClient
-
-# A realistic ~5000-字 plain-prose outline (whole-thing injected verbatim).
-# Built from a distinctive sentinel so we can assert it arrives unsliced.
-_OUTLINE = "【全书大纲】" + ("雨城三部曲，从林夕追查妹妹失踪写到揭开旧案真相。" * 60)
 
 # Directive prose (STEERING) — carries no card field name / author_notes.
 _DIRECTIVE = (
@@ -158,20 +157,15 @@ class _RecordingExtractorLLM(MockLLMClient):
 # --------------------------------------------------------------------------
 
 
-def _seed_book_with_outline_and_card(client, auth_headers) -> tuple[dict, dict]:
+def _seed_book_with_card(client, auth_headers) -> tuple[dict, dict]:
     book = client.post(
         "/api/v1/books",
         headers=auth_headers,
         json={"title": "雨城三部曲", "cover_color": "#111111", "style_directive": "克制"},
     ).json()
-    # Author imports the outline (no LLM, always succeeds).
-    r = client.post(
-        f"/api/v1/books/{book['id']}/outline/ingest",
-        headers=auth_headers,
-        json={"raw_text": _OUTLINE},
-    )
-    assert r.status_code == 200, r.text
-    # Author imports the initial character card (NOT generated from the outline).
+    # Author imports the initial character card (no outline module anymore —
+    # v1.3.0 JJ P4/P5 deleted it; the Expander now locates itself via
+    # recent_summaries instead of a whole-book outline).
     character = client.post(
         f"/api/v1/books/{book['id']}/characters",
         headers=auth_headers,
@@ -240,7 +234,7 @@ def test_end_to_end_three_chapter_closed_loop_holds_all_invariants(client, auth_
     app.dependency_overrides[get_writer_llm_client] = lambda: writer_llm
     app.dependency_overrides[get_extractor_llm_client] = lambda: extractor_llm
     try:
-        book, character = _seed_book_with_outline_and_card(client, auth_headers)
+        book, character = _seed_book_with_card(client, auth_headers)
 
         chapters = [_run_chapter(client, auth_headers, book["id"], i) for i in (1, 2, 3)]
     finally:
@@ -256,10 +250,10 @@ def test_end_to_end_three_chapter_closed_loop_holds_all_invariants(client, auth_
 
     char_id = character["id"]
 
-    # ----- INV-2 (P4): every Expander context has the WHOLE outline raw_text and
-    #       NO pre-sliced per-chapter 章纲 key. ------------------------------------
+    # ----- INV-2 (P4): every Expander context has NO ``outline`` key (whole-book
+    #       outline input deleted) and NO pre-sliced per-chapter 章纲 key. --------
     for ctx in expander_llm.contexts:
-        assert ctx["outline"] == _OUTLINE  # whole, verbatim — not sliced
+        assert "outline" not in ctx
         for banned in ("outline_slice", "chapter_outline", "arc_beats", "presliced_outline"):
             assert banned not in ctx
         # No position pointer key smuggled in.
@@ -396,7 +390,8 @@ def test_memory_rolls_forward_expander_locates_by_memory_not_pointer(client, aut
     memory, no position pointer' claim (P4): at expand time the Expander locates
     "where the story is" purely from structured memory (recent_summaries of
     finalized chapters), with NO per-chapter outline cursor/pointer field, and
-    the WHOLE outline is the only forward-looking plan it reads."""
+    NO whole-book outline input at all (deleted with the outline module —
+    v1.3.0 JJ P4/P5/P8)."""
     expander_llm = _RecordingExpanderLLM()
     writer_llm = _RecordingWriterLLM()
     extractor_llm = _RecordingExtractorLLM()
@@ -404,7 +399,7 @@ def test_memory_rolls_forward_expander_locates_by_memory_not_pointer(client, aut
     app.dependency_overrides[get_writer_llm_client] = lambda: writer_llm
     app.dependency_overrides[get_extractor_llm_client] = lambda: extractor_llm
     try:
-        book, character = _seed_book_with_outline_and_card(client, auth_headers)
+        book, character = _seed_book_with_card(client, auth_headers)
         _run_chapter(client, auth_headers, book["id"], 1)
         _run_chapter(client, auth_headers, book["id"], 2)
     finally:
@@ -416,13 +411,13 @@ def test_memory_rolls_forward_expander_locates_by_memory_not_pointer(client, aut
     # The story progressed: chapter 1's write-back (recent_summaries) is visible
     # to chapter 2's 优化师 — this is how it knows "已发生哪些节拍". At expand
     # time the chapter has no structured_prompt yet, so involved_characters is
-    # empty by design (§4.1) — the locating signal is recent_summaries + the
-    # whole outline, NOT a pre-populated involved slice.
+    # empty by design (§4.1) — the locating signal is recent_summaries alone,
+    # NOT a pre-populated involved slice.
     summaries = ch2_ctx.get("recent_summaries", [])
     assert any("第1章摘要" in (s.get("summary") or "") for s in summaries)
     assert ch2_ctx["involved_characters"] == []  # not yet expanded — by design
-    # The WHOLE outline is the forward-looking plan (P4).
-    assert ch2_ctx["outline"] == _OUTLINE
+    # No whole-book outline input at all (P4: deleted with the outline module).
+    assert "outline" not in ch2_ctx
     # No position-pointer / cursor field anywhere — locating is implicit (P4).
     for banned in (
         "current_position",

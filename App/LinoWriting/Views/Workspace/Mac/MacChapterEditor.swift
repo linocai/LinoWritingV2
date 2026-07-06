@@ -6,7 +6,8 @@ import SwiftUI
 /// Handoff `LinoWriting.dc.html` 工作台 CENTER. Toolbar (章号 + StatusBadge +
 /// 章名; trailing status-driven actions) over a glass-card flow (max 720,
 /// centred):
-///   ① 一句话 — `user_prompt` + "优化师 · 生成本章指令" (`expand`, force when
+///   ① 本章剧情 — `user_prompt` (a full prose account of what happens this
+///      chapter, v1.3.0 JJ P7) + "优化师 · 生成本章指令" (`expand`, force when
 ///      prompt_ready).
 ///   ② 本章创作指令 (HERO) — accent-bordered Songti box bound to
 ///      `structured_prompt.chapter_directive`; below, "结构要点 · 供 Writer 参考"
@@ -134,7 +135,7 @@ struct MacChapterEditor: View {
             ScrollView {
                 VStack(spacing: 18) {
                     // v1.2.0 (HH) P4: a finalized chapter only shows 正文 (stage3)
-                    // — steps ①一句话 and ②创作指令 are no longer relevant once the
+                    // — steps ①本章剧情 and ②创作指令 are no longer relevant once the
                     // chapter is done, and `hasStructured` returns true for
                     // `.finalized` so stage2 used to still render here.
                     if !isFinalized(chapter) {
@@ -171,15 +172,15 @@ struct MacChapterEditor: View {
         return 0
     }
 
-    // MARK: ① 一句话
+    // MARK: ① 本章剧情
 
     private func stage1(_ chapter: Chapter) -> some View {
         stageCard {
-            stageHeader(number: "1", title: "一句话 · 这章想发生什么")
+            stageHeader(number: "1", title: "本章剧情 · 把这章发生的事完整写出来")
             LWTextArea(
                 text: $promptDraft,
-                placeholder: "用一句话写下这一章想发生什么…",
-                minHeight: 78,
+                placeholder: "把这一章要发生的事完整写下来（场景、人物、冲突、结局…）",
+                minHeight: 220,
                 font: .system(size: 14.5)
             )
             .focused($promptFocused)
