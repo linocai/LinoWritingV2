@@ -5,6 +5,7 @@ from app.models.chapter import Chapter
 from app.models.character import Character
 from app.services.context_pack import (
     RECENT_FULLTEXT_COUNT,
+    RECENT_SUMMARY_COUNT,
     STYLE_SAMPLES_CHAPTER_COUNT,
     STYLE_SAMPLES_CHARS_PER_SIDE,
     _recent_finalized,
@@ -73,12 +74,13 @@ def test_style_samples_mechanism_returns_latest_n_finalized_chapters(db_session)
         )
     db_session.commit()
 
-    _, _, samples = _recent_finalized(
+    _, _, _, samples = _recent_finalized(
         db_session,
         book.id,
         5,
         fulltext_limit=0,
         style_samples_limit=STYLE_SAMPLES_CHAPTER_COUNT,
+        summary_limit=RECENT_SUMMARY_COUNT,
     )
     assert len(samples) == STYLE_SAMPLES_CHAPTER_COUNT == 2
     # Latest two: chapters 3 and 4, returned in ascending order (oldest first).
@@ -115,12 +117,13 @@ def test_style_samples_mechanism_treats_imported_and_agent_chapters_alike(db_ses
     )
     db_session.commit()
 
-    _, _, samples = _recent_finalized(
+    _, _, _, samples = _recent_finalized(
         db_session,
         book.id,
         3,
         fulltext_limit=0,
         style_samples_limit=STYLE_SAMPLES_CHAPTER_COUNT,
+        summary_limit=RECENT_SUMMARY_COUNT,
     )
     assert [s["chapter_index"] for s in samples] == [1, 2]
     # Imported chapter's text is present in samples — proves source filter is absent.
@@ -145,12 +148,13 @@ def test_style_samples_mechanism_short_chapter_head_holds_full_tail_empty(db_ses
     )
     db_session.commit()
 
-    _, _, samples = _recent_finalized(
+    _, _, _, samples = _recent_finalized(
         db_session,
         book.id,
         2,
         fulltext_limit=0,
         style_samples_limit=STYLE_SAMPLES_CHAPTER_COUNT,
+        summary_limit=RECENT_SUMMARY_COUNT,
     )
     assert len(samples) == 1
     assert samples[0]["head"] == short_text
@@ -172,12 +176,13 @@ def test_style_samples_mechanism_returns_fewer_than_n_when_not_enough(db_session
     )
     db_session.commit()
 
-    _, _, samples = _recent_finalized(
+    _, _, _, samples = _recent_finalized(
         db_session,
         book.id,
         2,
         fulltext_limit=0,
         style_samples_limit=STYLE_SAMPLES_CHAPTER_COUNT,
+        summary_limit=RECENT_SUMMARY_COUNT,
     )
     assert len(samples) == 1
 
@@ -299,5 +304,8 @@ def test_recent_fulltext_bounded_at_recent_fulltext_count_regardless_of_total_ch
     ctx = build_writer_context(db_session, book, current)
     assert len(ctx["recent_fulltext"]) == RECENT_FULLTEXT_COUNT == 3
     assert [c["index"] for c in ctx["recent_fulltext"]] == [5, 6, 7]
-    # Older chapters (1-4) show up as summary-only, unbounded.
+    # Older chapters (1-4) show up as summary-only — well under
+    # RECENT_SUMMARY_COUNT=30, so nothing spills into recent_headlines yet
+    # (v1.3.2 LL P3 third tier).
     assert [s["index"] for s in ctx["recent_summaries"]] == [1, 2, 3, 4]
+    assert ctx["recent_headlines"] == []

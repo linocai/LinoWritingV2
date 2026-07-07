@@ -1,16 +1,20 @@
-"""Tests for v1.2.0 (HH) P7 — thinking-model support (SSE `thinking` frames).
+"""Thinking-model support (SSE ``thinking`` frames), adapted for v1.3.2 (LL) P1
+writing-as-a-job.
 
-Contract (PROJECT_PLAN.md §4.0 / §4.1 P7):
-  - `complete_stream` yields typed `StreamChunk(kind, text)` — `"token"` for
-    final-answer content, `"thinking"` for chain-of-thought/reasoning deltas.
-  - `_write_stream` forwards `thinking` chunks as `event: thinking` SSE
-    frames (`{"text": ...}`), and they must NEVER land in `parts`/`chars`/
-    `draft_text` — only `token` chunks do.
-  - A model that only ever emits `content` (no `reasoning_content`) must
-    produce zero `thinking` frames — pure regression, unaffected behaviour.
+Contract:
+  - ``complete_stream`` yields typed ``StreamChunk`` — ``"token"`` for final
+    prose, ``"thinking"`` for chain-of-thought.
+  - The **worker** never lets ``thinking`` text into ``buffer`` / ``chars`` /
+    ``draft_text`` — only ``token`` chunks accumulate.
+  - The **tail** (``_stream_job``) forwards a transient ``thinking`` frame when
+    the job's thinking indicator advances (coalescing under contention — it's a
+    process hint, not a replayable log; ``WriteJob`` deliberately holds no
+    thinking buffer, plan §4 🟡3①).
 """
 from __future__ import annotations
 
+import threading
+import time
 from collections.abc import Iterator
 from typing import Any
 
@@ -18,7 +22,8 @@ from app.llm.base import StreamChunk
 from app.models.book import Book
 from app.models.chapter import Chapter
 from app.models.character import Character
-from app.routers.chapters import _write_stream
+from app.routers.chapters import _stream_job
+from app.services.write_jobs import WriteJob, _mark_terminal, write_registry
 from tests.conftest import MockLLMClient
 
 
@@ -49,8 +54,7 @@ def _make_chapter(db_session, *, status: str = "writing") -> Chapter:
 
 
 class _ThinkingThenTokenLLM(MockLLMClient):
-    """Emits interleaved thinking + token chunks, mirroring a reasoning
-    model that thinks first then writes the final answer."""
+    """Emits interleaved thinking + token chunks, mirroring a reasoning model."""
 
     def complete_stream(self, *, system: str, user: str, **kwargs: Any) -> Iterator[StreamChunk]:
         yield StreamChunk(kind="thinking", text="让我想想这一章该怎么写。")
@@ -60,90 +64,78 @@ class _ThinkingThenTokenLLM(MockLLMClient):
 
 
 class _PureTokenLLM(MockLLMClient):
-    """A model that never emits reasoning_content — regression baseline."""
-
     def complete_stream(self, *, system: str, user: str, **kwargs: Any) -> Iterator[StreamChunk]:
         yield StreamChunk(kind="token", text="没有思考过程的")
         yield StreamChunk(kind="token", text="普通模型。")
 
 
-def test_thinking_chunks_forwarded_as_sse_frames_and_excluded_from_draft(db_session):
-    chapter = _make_chapter(db_session)
-
-    gen = _write_stream(
-        db_session,
-        chapter.id,
-        previous_status="prompt_ready",
-        context={},
-        llm=_ThinkingThenTokenLLM(),
-        writer_persona="测试 Writer 人格",
+def _run_worker(db_session, chapter, llm) -> WriteJob:
+    job = write_registry.reserve(
+        chapter.id, previous_status="prompt_ready", context={}, llm=llm, writer_persona="测试 Writer 人格"
     )
-    events = list(gen)
+    write_registry.launch(job, db_session.get_bind())
+    job.thread.join(timeout=5)
+    return job
 
-    thinking_events = [e for e in events if e.startswith("event: thinking")]
-    assert len(thinking_events) == 2
-    assert "让我想想这一章该怎么写。" in thinking_events[0]
-    assert "主角应该先发现线索。" in thinking_events[1]
 
-    # done event must still fire, and draft_text must contain ONLY the
-    # token chunks — thinking text must never leak into the saved draft.
-    assert any(e.startswith("event: done") for e in events)
+def test_worker_excludes_thinking_from_draft_and_chars(db_session):
+    chapter = _make_chapter(db_session)
+    job = _run_worker(db_session, chapter, _ThinkingThenTokenLLM())
+
+    assert job.phase == "done"
+    # Only token text accumulated into buffer/chars.
+    assert "".join(job.buffer) == "清晨的雾还没散。"
+    assert job.chars == len("清晨的雾还没散。")
+    # thinking text must never leak into the saved draft.
     db_session.refresh(chapter)
     assert chapter.draft_text == "清晨的雾还没散。"
-    assert "想想" not in chapter.draft_text
-    assert "线索" not in chapter.draft_text
+    assert "想想" not in (chapter.draft_text or "")
+    assert "线索" not in (chapter.draft_text or "")
     assert chapter.status == "draft_ready"
 
 
-def test_thinking_chunks_not_counted_toward_progress_chars(db_session):
-    """`progress` events report `chars` — must only count token text, never
-    thinking text (otherwise the frontend word-count display would include
-    reasoning tokens the user never sees as prose)."""
+def test_pure_content_model_never_bumps_thinking(db_session):
     chapter = _make_chapter(db_session)
-
-    gen = _write_stream(
-        db_session,
-        chapter.id,
-        previous_status="prompt_ready",
-        context={},
-        llm=_ThinkingThenTokenLLM(),
-        writer_persona="测试 Writer 人格",
-    )
-    events = list(gen)
-
-    progress_events = [e for e in events if e.startswith("event: progress")]
-    # Two token chunks: "清晨的雾" (4 chars) then "清晨的雾还没散。" (8 chars).
-    assert '"chars": 4' in progress_events[0]
-    assert '"chars": 8' in progress_events[1]
-
-
-def test_pure_content_model_emits_zero_thinking_frames(db_session):
-    """Regression: a model with no reasoning_content must produce exactly
-    the pre-P7 behaviour — only token/progress/done, no thinking frames."""
-    chapter = _make_chapter(db_session)
-
-    gen = _write_stream(
-        db_session,
-        chapter.id,
-        previous_status="prompt_ready",
-        context={},
-        llm=_PureTokenLLM(),
-        writer_persona="测试 Writer 人格",
-    )
-    events = list(gen)
-
-    thinking_events = [e for e in events if e.startswith("event: thinking")]
-    assert thinking_events == []
-
+    job = _run_worker(db_session, chapter, _PureTokenLLM())
+    assert job.phase == "done"
+    assert job.thinking_epoch == 0  # no thinking chunks → indicator never moved
     db_session.refresh(chapter)
     assert chapter.draft_text == "没有思考过程的普通模型。"
     assert chapter.status == "draft_ready"
 
 
+def test_stream_job_forwards_thinking_frame_live():
+    """The tail forwards a transient ``thinking`` frame when the indicator
+    advances, kept separate from ``token``/``progress``."""
+    job = WriteJob("cid", "prompt_ready", {}, MockLLMClient(), "persona")
+
+    def feeder():
+        time.sleep(0.02)
+        with job.condition:
+            job.latest_thinking = "模型正在思考…"
+            job.thinking_epoch += 1
+            job.condition.notify_all()
+        time.sleep(0.01)
+        with job.condition:
+            job.buffer.append("正文")
+            job.chars += len("正文")
+            job.condition.notify_all()
+        time.sleep(0.01)
+        _mark_terminal(job, phase="done", done_chapter={"id": "cid", "status": "draft_ready"})
+
+    threading.Thread(target=feeder, daemon=True).start()
+    frames = "".join(_stream_job(job, send_started=True, send_snapshot=False))
+
+    assert "event: thinking" in frames
+    assert "模型正在思考" in frames
+    assert "event: token" in frames
+    assert "event: done" in frames
+
+
 def test_openai_compatible_forwards_reasoning_content_as_thinking_chunk():
-    """Unit-level check on `OpenAICompatibleClient._stream`'s delta parsing:
-    a chunk carrying `reasoning_content` yields a `thinking` StreamChunk,
-    separate from any `content` in the same or a later chunk."""
+    """Unit-level check on ``OpenAICompatibleClient._stream``'s delta parsing:
+    a chunk carrying ``reasoning_content`` yields a ``thinking`` StreamChunk,
+    separate from any ``content`` in the same or a later chunk."""
     from unittest.mock import patch
 
     from app.llm.openai_compatible import OpenAICompatibleClient

@@ -6,12 +6,18 @@ from __future__ import annotations
 # the Expander now locates "where the story is" purely via ``recent_summaries``
 # (已完成章梗概) — the invariants below are rewritten accordingly.
 #
-# v1.3.1 (KK) P7 — 记忆分层两层: INV-1/INV-1b are REWRITTEN (not deleted) to
-# lock the new two-tier memory contract instead of the old "zero prior prose,
-# ever" rule. The nearest RECENT_FULLTEXT_COUNT (3) finalized chapters now
-# legitimately carry FULL draft_text (``recent_fulltext``) to both Expander
-# and Writer; anything older is summary-only (``recent_summaries``, no upper
-# bound). See INV-1'/INV-1b' below for the new wording.
+# v1.3.1 (KK) P7 — 记忆分层两层: INV-1/INV-1b were rewritten to lock a two-tier
+# memory contract (bounded fulltext + unbounded summary) instead of the old
+# "zero prior prose, ever" rule.
+#
+# v1.3.2 (LL) P3 — 记忆第三层「一句话大事记」: INV-1'/INV-1b' are further
+# rewritten (not deleted) into INV-1'' to lock the new THREE-tier contract.
+# The nearest RECENT_FULLTEXT_COUNT (3) finalized chapters carry FULL
+# draft_text (``recent_fulltext``); the next ``RECENT_SUMMARY_COUNT`` older
+# chapters carry FULL summary (``recent_summaries``, now also bounded —
+# monkeypatched small in this test so the run doesn't need 30+ chapters to
+# reach the third tier); anything older still is a mechanically-distilled
+# one-line ``headline`` (``recent_headlines``). See INV-1'' below.
 #
 # This is NOT the real 100-chapter LLM long run (that is a user-side, real-key,
 # real-device task per §D7). Here we drive the FULL HTTP chain end-to-end with
@@ -29,18 +35,24 @@ from __future__ import annotations
 #
 #   不变量 (invariants), asserted across ≥5 chapters (the closed loop below
 #   runs 5; INV-4's decoy-character check extends it to a 6th):
-#     INV-1' (P7, was P2) the FULLTEXT channel (``recent_fulltext``) is
-#            bounded at exactly RECENT_FULLTEXT_COUNT (3) chapters and does
-#            NOT grow with total chapter count; any chapter older than that
-#            window reaches Expander/Writer ONLY as ``summary`` (structured
-#            compression), never as full prose. This replaces the old
-#            "zero prior draft_text, ever" rule — bounded recent-window
-#            fulltext is now an intentional, locked-size channel.
-#     INV-1b' (P7, was P2 at scale) when the fulltext window is hit (at
-#            least one chapter lands in ``recent_fulltext``), the Writer's
-#            OTHER prior-prose channel — ``style_samples`` — is empty
-#            (``[]``), so the same chapters are never double-fed as both
-#            recent_fulltext and style_samples.
+#     INV-1'' (P3, was INV-1'/INV-1b' at P7) THREE-tier memory, each tier
+#            exclusive and bounded except the last:
+#            · the FULLTEXT channel (``recent_fulltext``) is bounded at
+#              exactly RECENT_FULLTEXT_COUNT (3) chapters and does NOT grow
+#              with total chapter count;
+#            · the FULL-SUMMARY channel (``recent_summaries``) is bounded at
+#              exactly the (monkeypatched-small, for this test) summary limit
+#              — also does NOT grow past that bound (was unbounded pre-P3);
+#            · any chapter older than BOTH windows reaches Expander/Writer
+#              ONLY as a one-line ``headline`` (``recent_headlines``), never
+#              as full prose or full summary — and every chapter strictly
+#              older than the current one falls into EXACTLY ONE of the three
+#              tiers (no gaps, no double-counting).
+#            Also (was INV-1b'): when the fulltext window is hit (at least
+#            one chapter lands in ``recent_fulltext``), the Writer's OTHER
+#            prior-prose channel — ``style_samples`` — is empty (``[]``), so
+#            the same chapters are never double-fed as both recent_fulltext
+#            and style_samples.
 #     INV-2  (P4) the Expander context carries NO ``outline`` key and NO
 #            pre-sliced per-chapter 章纲 key — it locates itself purely by
 #            memory (recent_summaries, no position pointer).
@@ -107,13 +119,15 @@ class _RecordingExpanderLLM(MockLLMClient):
 # chapters — NOT the full bodies, and NOT growing with chapter count. This is
 # why P2 holds at chapter 100. We mirror the constants here to assert the bound.
 #
-# v1.3.1 (KK) P7: RECENT_FULLTEXT_COUNT mirrors the two-tier memory window —
-# INV-1'/INV-1b' below assert it stays bounded regardless of total chapter
-# count (the new "记忆分层两层" invariant, replacing the old zero-fulltext rule).
+# v1.3.2 (LL) P3: RECENT_FULLTEXT_COUNT mirrors the three-tier memory window —
+# INV-1'' below asserts it (and the summary tier) stay bounded regardless of
+# total chapter count (replacing the v1.3.1 KK P7 two-tier INV-1'/INV-1b').
 from app.services.context_pack import (  # noqa: E402
+    HEADLINE_MAX_CHARS,
     RECENT_FULLTEXT_COUNT,
     STYLE_SAMPLES_CHAPTER_COUNT,
     STYLE_SAMPLES_CHARS_PER_SIDE,
+    _distill_headline,
 )
 
 # A unique marker per chapter, buried in the MIDDLE of a long body so it falls
@@ -261,7 +275,18 @@ def _run_chapter(client, auth_headers, book_id: str, index_hint: int) -> dict:
 # --------------------------------------------------------------------------
 
 
-def test_end_to_end_three_chapter_closed_loop_holds_all_invariants(client, auth_headers):
+def test_end_to_end_three_chapter_closed_loop_holds_all_invariants(client, auth_headers, monkeypatch):
+    # v1.3.2 (LL) P3 审后教训 (KK 🟡4 复现风险): monkeypatch the full-summary
+    # tier down to a tiny limit so this run's chapter count (5 + the INV-4
+    # decoy chapter = 6) is enough to genuinely PENETRATE all three memory
+    # tiers — fulltext (3) + full-summary (this patched value) + headline
+    # (everything older still) — instead of relying on a `continue` no-op
+    # that never actually reaches the headline branch. Production default
+    # (RECENT_SUMMARY_COUNT=30, author-locked, PROJECT_PLAN §4 已决议 #3) is
+    # untouched; only this test's constant is shrunk.
+    _TEST_SUMMARY_LIMIT = 1
+    monkeypatch.setattr("app.services.context_pack.RECENT_SUMMARY_COUNT", _TEST_SUMMARY_LIMIT)
+
     expander_llm = _RecordingExpanderLLM()
     writer_llm = _RecordingWriterLLM()
     extractor_llm = _RecordingExtractorLLM()
@@ -296,40 +321,60 @@ def test_end_to_end_three_chapter_closed_loop_holds_all_invariants(client, auth_
         serialized = json.dumps(ctx, ensure_ascii=False, default=str)
         assert "outline_slice" not in serialized
 
-    # ----- INV-1' (P7, was P2): chapter N (N≥2) Expander/Writer context's
-    #       FULLTEXT channel (``recent_fulltext``) is bounded at exactly
-    #       RECENT_FULLTEXT_COUNT (3) chapters and does NOT grow with total
-    #       chapter count; any chapter older than that window reaches the
-    #       agents ONLY as summary (never re-fed full prose). This replaces
-    #       the old "zero prior draft_text, ever" rule — a bounded recent
-    #       window of full prose is now an intentional, locked-size channel.
-    for n in (2, 3, 4, 5):
+    # ----- INV-1'' (P3, was INV-1'/INV-1b' at P7): chapter N (N≥2)
+    #       Expander/Writer context's three memory tiers are each bounded
+    #       (except the last) and mutually exclusive — every chapter strictly
+    #       older than N falls into EXACTLY ONE of fulltext / full-summary /
+    #       headline, never zero, never more than one, and never re-fed as
+    #       full body/summary outside its own tier.
+    def _assert_three_tier_invariants(n: int) -> None:
         exp_ctx = expander_llm.contexts[n - 1]
         wri_payload = json.loads(writer_llm.users[n - 1].split("\n\n")[0])
 
-        # Fulltext channel bounded at RECENT_FULLTEXT_COUNT, never more.
         exp_fulltext = exp_ctx.get("recent_fulltext", [])
         wri_fulltext = wri_payload.get("recent_fulltext", [])
+        exp_summaries = exp_ctx.get("recent_summaries", [])
+        wri_summaries = wri_payload.get("recent_summaries", [])
+        exp_headlines = exp_ctx.get("recent_headlines", [])
+        wri_headlines = wri_payload.get("recent_headlines", [])
+
+        # Fulltext bounded at RECENT_FULLTEXT_COUNT; full-summary bounded at
+        # the (test-patched) summary limit — neither grows past its bound.
         assert len(exp_fulltext) <= RECENT_FULLTEXT_COUNT, f"ch{n} expander fulltext window exceeded bound"
         assert len(wri_fulltext) <= RECENT_FULLTEXT_COUNT, f"ch{n} writer fulltext window exceeded bound"
+        assert len(exp_summaries) <= _TEST_SUMMARY_LIMIT, f"ch{n} expander summary window exceeded bound"
+        assert len(wri_summaries) <= _TEST_SUMMARY_LIMIT, f"ch{n} writer summary window exceeded bound"
 
-        # Every chapter STRICTLY older than the fulltext window must appear
-        # ONLY as summary, never as re-fed full body (the mid-body marker,
-        # which sits outside the bounded head/tail style window too, proves
-        # no full-body leak for those older chapters). At n=5, chapters 1-4
-        # are finalized but the window (size 3) only fits {2,3,4} — chapter 1
-        # is finally OUTSIDE the window, so this branch is genuinely
-        # exercised here, not just a `continue` no-op like at n=2..4 (where
-        # every prior chapter still fit inside the window).
         fulltext_indices = {c["index"] for c in exp_fulltext}
+        summary_indices = {s["index"] for s in exp_summaries}
+        headline_indices = {h["index"] for h in exp_headlines}
+        assert fulltext_indices == {c["index"] for c in wri_fulltext}, f"ch{n} expander/writer fulltext disagree"
+        assert summary_indices == {s["index"] for s in wri_summaries}, f"ch{n} expander/writer summary disagree"
+        assert headline_indices == {h["index"] for h in wri_headlines}, f"ch{n} expander/writer headline disagree"
+
+        serialized_exp = json.dumps(exp_ctx, ensure_ascii=False, default=str)
+        wri_user = writer_llm.users[n - 1]
         for earlier in range(1, n):
-            if earlier in fulltext_indices:
-                continue  # inside the legitimate bounded window — expected.
+            in_fulltext = earlier in fulltext_indices
+            in_summary = earlier in summary_indices
+            in_headline = earlier in headline_indices
+            assert in_fulltext or in_summary or in_headline, (
+                f"ch{n}: ch{earlier} missing from all three memory tiers"
+            )
+            assert sum([in_fulltext, in_summary, in_headline]) == 1, (
+                f"ch{n}: ch{earlier} double-counted across memory tiers"
+            )
+            if in_fulltext:
+                continue  # inside the legitimate bounded full-prose window — expected.
+            # summary or headline tier — the mid-body marker (sits outside the
+            # bounded head/tail style window too) must never leak, proving no
+            # full-body re-feed for chapters outside the fulltext window.
             marker = f"【正文核心_{earlier}_MIDMARKER】"
-            serialized_exp = json.dumps(exp_ctx, ensure_ascii=False, default=str)
-            wri_user = writer_llm.users[n - 1]
             assert marker not in serialized_exp, f"ch{n} expander ctx leaked ch{earlier} full body outside window"
             assert marker not in wri_user, f"ch{n} writer ctx leaked ch{earlier} full body outside window"
+
+    for n in (2, 3, 4, 5):
+        _assert_three_tier_invariants(n)
 
     # Positive (memory rolls — the optimizer locates itself via memory, P4):
     # chapter 2/3/4/5's Expander sees the PRIOR chapter's write-back via
@@ -358,10 +403,10 @@ def test_end_to_end_three_chapter_closed_loop_holds_all_invariants(client, auth_
         card_status = payload["characters"][0]["live_fields"]["current_status"]
         assert card_status == f"走到第{n - 1}章末", f"ch{n} writer card not rolled forward"
 
-    # INV-1b' (P7, was P2 at scale): when the fulltext window is hit (at
-    # least one chapter lands in recent_fulltext), the Writer's OTHER
-    # prior-prose channel — style_samples — must be EMPTY, so the same
-    # chapters are never double-fed as both recent_fulltext and
+    # INV-1'' anti-duplication half (was INV-1b' at P7): when the fulltext
+    # window is hit (at least one chapter lands in recent_fulltext), the
+    # Writer's OTHER prior-prose channel — style_samples — must be EMPTY, so
+    # the same chapters are never double-fed as both recent_fulltext and
     # style_samples (anti-duplication rule). By chapter 5, the fulltext
     # window (size 3) covers only the 3 most recent finalized chapters
     # (2,3,4) and chapter 1 has rolled OUT into summary-only — the window is
@@ -421,6 +466,30 @@ def test_end_to_end_three_chapter_closed_loop_holds_all_invariants(client, auth_
     last_exp_ctx = expander_llm.contexts[-1]
     assert decoy["id"] not in [c["id"] for c in last_exp_ctx["involved_characters"]]
     assert decoy["id"] in [c["id"] for c in last_exp_ctx["all_characters"]]
+
+    # ----- INV-1'' headline tier, genuinely penetrated (审后教训, KK 🟡4):
+    #       by chapter 6 (6 finalized chapters exist for THIS context: 1-5),
+    #       the fulltext window (3) covers {3,4,5}, the (test-patched)
+    #       full-summary window (1) covers {2}, and chapter 1 is finally
+    #       older than BOTH — it must appear ONLY in recent_headlines, never
+    #       in recent_fulltext or recent_summaries. This is not a
+    #       `continue`-shaped no-op: the assertions below actively require a
+    #       non-empty headline entry to exist and be well-formed.
+    _assert_three_tier_invariants(6)
+    last_headlines = last_exp_ctx.get("recent_headlines", [])
+    assert len(last_headlines) >= 1, "expected the headline tier to have been reached by chapter 6"
+    assert [h["index"] for h in last_headlines] == [1], "ch1 should be the sole headline-tier entry at ch6"
+    ch1_summary = chapters[0]["summary"]  # chapters[0] is chapter index 1's finalized dict
+    ch1_headline = last_headlines[0]["headline"]
+    # Red line ("不发明情节"): the headline is exactly the mechanical
+    # distillation of the Extractor's own summary — never fresh content.
+    assert ch1_headline == _distill_headline(ch1_summary)
+    assert len(ch1_headline) <= HEADLINE_MAX_CHARS + 1
+    stripped = ch1_headline[:-1] if ch1_headline.endswith("…") else ch1_headline
+    assert ch1_summary.startswith(stripped), "headline must be a literal prefix of its source summary"
+    # And the mid-body marker (buried deep in ch1's full draft_text) must
+    # never leak via the headline — it's derived from summary, not the body.
+    assert "【正文核心_1_MIDMARKER】" not in ch1_headline
 
     # ----- INV-5 (P2): the timeline is append-only — all 6 chapters' events
     #       coexist; chapter N's extraction never wiped chapter N-1's. -----------
@@ -491,6 +560,7 @@ def test_memory_rolls_forward_expander_locates_by_memory_not_pointer(client, aut
     fulltext = ch2_ctx.get("recent_fulltext", [])
     assert any(c.get("index") == 1 for c in fulltext), "ch2 expander did not see ch1 via recent_fulltext"
     assert ch2_ctx.get("recent_summaries", []) == []  # ch1 is inside the fulltext window, not the summary tail.
+    assert ch2_ctx.get("recent_headlines", []) == []  # a fortiori — nothing has aged past the summary tier either.
     assert ch2_ctx["involved_characters"] == []  # not yet expanded — by design
     # No whole-book outline input at all (P4: deleted with the outline module).
     assert "outline" not in ch2_ctx

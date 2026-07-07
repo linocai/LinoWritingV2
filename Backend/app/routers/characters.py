@@ -4,6 +4,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db import get_db
@@ -81,9 +82,27 @@ def parse_characters(
     try:
         created = land_parsed_characters(db, book_id, raw_items)
         db.commit()
-    except Exception:
+    except IntegrityError:
+        # v1.3.2 (LL) P4 — DB-level conflict (e.g. a concurrent book delete
+        # racing this commit) must still surface as 409. Bare re-raise (after
+        # rollback) so it reaches the SAME global ``handle_integrity_error``
+        # handler (app/errors.py) that already turns any un-caught
+        # IntegrityError into a 409 — this carve-out sits BEFORE the blanket
+        # 502 below so a legitimate DB constraint conflict is never miscoded
+        # as an upstream LLM failure. Preserves the exact pre-existing
+        # Integrity→409 behaviour (this is what the old bare
+        # ``except Exception: db.rollback(); raise`` already did for this
+        # exception type; only OTHER exceptions change behaviour below).
         db.rollback()
         raise
+    except Exception as exc:
+        # v1.3.2 (LL) P4 — anything else exploding while landing the parsed
+        # characters (ORM bugs, unexpected shape, etc.) is an unexpected 落库
+        # failure, not a validation error — align its status code with the
+        # v1.3.0 upstream-failure contract (502) instead of falling through
+        # to a bare, un-actionable 500.
+        db.rollback()
+        raise i18n_upstream("llm_generic", retryable=False, detail=str(exc)) from exc
     for character in created:
         db.refresh(character)
     return {"items": [CharacterRead.model_validate(character) for character in created]}

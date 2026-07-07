@@ -281,12 +281,14 @@ struct IOSCharactersSection: View {
 
     @ViewBuilder
     private func addFieldButton(kind: FieldKind, onAdd: @escaping (String, String) -> Void) -> some View {
-        IOSAddFieldRow(placeholder: "＋ 字段", onAdd: onAdd)
+        // v1.3.2 (LL) P5 — 双加号 fix: drop the full-width "＋" text prefix,
+        // keep only the SF Symbol "plus" icon rendered by IOSAddFieldRow.
+        IOSAddFieldRow(placeholder: "字段", onAdd: onAdd)
     }
 
     @ViewBuilder
     private func addNoteButton(onAdd: @escaping (String, String) -> Void) -> some View {
-        IOSAddFieldRow(placeholder: "＋ 笔记", onAdd: onAdd)
+        IOSAddFieldRow(placeholder: "笔记", onAdd: onAdd)
     }
 
     // MARK: - Helpers
@@ -574,8 +576,10 @@ private struct IOSCardHeadField: View {
 // MARK: - "+ 字段 / + 笔记" add row
 
 /// v1.3.0 (II) P1 — section-tail add control shared by 固定设定/动态字段/作者笔记.
-/// Collapsed = dashed "＋ 字段" pill; tapped = key+value input pair; key
-/// trimmed-non-empty is required to submit.
+/// Collapsed = dashed "+ 字段" pill (the leading "+" is the SF Symbol icon —
+/// ``placeholder`` itself carries no "＋" prefix, v1.3.2 LL P5 双加号 fix);
+/// tapped = key+value input pair; key trimmed-non-empty is required to
+/// submit.
 private struct IOSAddFieldRow: View {
     let placeholder: String
     let onAdd: (String, String) -> Void

@@ -17,7 +17,7 @@ import SwiftUI
 ///      Status-driven footer: draft_ready → finalize; finalized → 阅读模式 /
 ///      重新提取 / 重新打开编辑, plus the green 本章梗概 block above.
 ///
-/// SSE write reuses `ChapterEditorStore.startWriting` / `cancelStream`. Status
+/// SSE write reuses `ChapterEditorStore.startWriting` / `stopWriting`. Status
 /// button visibility follows the backend state machine strictly. macOS-only.
 struct MacChapterEditor: View {
     let book: Book
@@ -85,6 +85,11 @@ struct MacChapterEditor: View {
         .onChange(of: chapter?.title ?? "") { _, new in if !titleFocused { titleDraft = new } }
         .onChange(of: chapter?.userPrompt ?? "") { _, new in if !promptFocused { promptDraft = new } }
         .onChange(of: chapter?.structuredPrompt?.chapterDirective ?? "") { _, new in if !directiveFocused { directiveDraft = new } }
+        // v1.3.2 (LL) P2 — reattach to a still-running write when the window
+        // becomes active again (parity with iOS scenePhase recovery). Wrapped
+        // in its own ViewModifier so the scenePhase `onChange` inference stays
+        // off this already-at-the-cliff body expression (see the P6 note below).
+        .modifier(ReattachOnScenePhaseActive { chapterEditorStore.handleScenePhaseActive() })
         // v1.3.1 (KK) P6 — the additional Step2-field onChange observers are
         // split into a second modifier chain (`stage2FieldSyncModifiers`)
         // rather than appended directly here: chaining ~10 `.onChange`/
@@ -420,7 +425,7 @@ struct MacChapterEditor: View {
                 HStack(spacing: 10) {
                     if chapterEditorStore.isStreaming {
                         LWDangerTintButton(title: "停止生成", systemImage: "stop.fill") {
-                            chapterEditorStore.cancelStream()
+                            chapterEditorStore.stopWriting()
                         }
                     } else {
                         LWPrimaryButton(
@@ -976,6 +981,20 @@ struct MacChapterEditor: View {
 
 private extension String {
     var nonEmpty: String? { isEmpty ? nil : self }
+}
+
+/// v1.3.2 (LL) P2 — fires `onActive` whenever the app returns to the
+/// foreground. Kept as its own modifier so the `scenePhase` `onChange`
+/// inference doesn't add to `MacChapterEditor.body`'s already-at-the-cliff
+/// type-check budget.
+private struct ReattachOnScenePhaseActive: ViewModifier {
+    @Environment(\.scenePhase) private var scenePhase
+    let onActive: () -> Void
+    func body(content: Content) -> some View {
+        content.onChange(of: scenePhase) { _, phase in
+            if phase == .active { onActive() }
+        }
+    }
 }
 
 /// v1.3.1 (KK) P6 — carries the Step2 field `.onChange` observers that would

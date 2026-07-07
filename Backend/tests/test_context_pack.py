@@ -14,13 +14,15 @@ from app.services.context_pack import (
 
 
 def test_context_pack_filters_characters_and_limits_summaries(db_session):
-    """v1.3.1 (KK) P7: these 3 finalized chapters have NO draft_text (empty
+    """v1.3.2 (LL) P3: these 3 finalized chapters have NO draft_text (empty
     body), so none of them can land in ``recent_fulltext`` — they all fall
-    through to ``recent_summaries`` (which is unbounded for anything older
-    than the fulltext window, and the fulltext window here is empty since
-    there's no prose to carry). See
+    through to ``recent_summaries`` (well under ``RECENT_SUMMARY_COUNT=30``,
+    so none spill further into ``recent_headlines`` either), and the
+    fulltext window here is empty since there's no prose to carry. See
     ``test_recent_fulltext_and_summaries_split_by_window`` below for the
-    two-tier split when draft_text IS present."""
+    fulltext/summary split when draft_text IS present, and
+    ``test_recent_finalized_three_tier_split_with_small_summary_limit`` for
+    genuine three-tier coverage including headlines."""
     book = Book(title="长夜", world_setting="雨城", style_directive="克制")
     db_session.add(book)
     db_session.flush()
@@ -56,6 +58,10 @@ def test_context_pack_filters_characters_and_limits_summaries(db_session):
     expander = build_expander_context(db_session, book, chapter4)
     assert expander["recent_fulltext"] == []
     assert [item["index"] for item in expander["recent_summaries"]] == [1, 2, 3]
+    # v1.3.2 (LL) P3: 3 chapters is well under RECENT_SUMMARY_COUNT=30, so
+    # nothing spills into the third (headline) tier yet — the key is still
+    # present (wired through) but empty.
+    assert expander["recent_headlines"] == []
     assert {item["id"] for item in expander["all_characters"]} == {c1.id, c2.id}
 
     writer = build_writer_context(db_session, book, chapter4)
@@ -65,9 +71,11 @@ def test_context_pack_filters_characters_and_limits_summaries(db_session):
 
 
 def test_recent_fulltext_and_summaries_split_by_window(db_session):
-    """v1.3.1 (KK) P7 — the two-tier split: with draft_text present, the
-    nearest RECENT_FULLTEXT_COUNT (3) finalized chapters land in
-    recent_fulltext (full draft_text), everything older is summary-only."""
+    """v1.3.1 (KK) P7 / v1.3.2 (LL) P3 — the fulltext/summary split: with
+    draft_text present, the nearest RECENT_FULLTEXT_COUNT (3) finalized
+    chapters land in recent_fulltext (full draft_text), everything older is
+    summary-only here (well under RECENT_SUMMARY_COUNT=30, so nothing spills
+    into recent_headlines yet)."""
     from app.services.context_pack import RECENT_FULLTEXT_COUNT
 
     book = Book(title="长夜", world_setting="雨城", style_directive="克制")
@@ -103,10 +111,12 @@ def test_recent_fulltext_and_summaries_split_by_window(db_session):
     assert [c["index"] for c in expander["recent_fulltext"]] == [3, 4, 5]
     assert all(c["draft_text"] for c in expander["recent_fulltext"])
     assert [s["index"] for s in expander["recent_summaries"]] == [1, 2]
+    assert expander["recent_headlines"] == []  # well under RECENT_SUMMARY_COUNT
 
     writer = build_writer_context(db_session, book, current)
     assert [c["index"] for c in writer["recent_fulltext"]] == [3, 4, 5]
     assert [s["index"] for s in writer["recent_summaries"]] == [1, 2]
+    assert writer["recent_headlines"] == []
     # style_samples zeroed — the fulltext window already carries these chapters.
     assert writer["style_samples"] == []
 
@@ -243,6 +253,7 @@ def test_writer_context_fulltext_and_style_window_share_one_bounded_query(db_ses
     # anti-duplication rule since the fulltext window hit).
     assert [c["index"] for c in ctx["recent_fulltext"]] == [1, 2]
     assert ctx["recent_summaries"] == []
+    assert ctx["recent_headlines"] == []
     assert ctx["style_samples"] == []
 
     # At most 2 chapter-only SELECTs (bounded window + unbounded tail) — never
@@ -286,30 +297,87 @@ def test_merged_query_respects_different_limits(db_session):
     db_session.add(current)
     db_session.commit()
 
-    from app.services.context_pack import _recent_finalized
+    from app.services.context_pack import RECENT_SUMMARY_COUNT, _recent_finalized
 
     # fulltext=2, samples=4 → shared window fetches 4, fulltext trims to 2;
-    # everything outside the 4-row window (chapters 1) becomes the unbounded
-    # summaries tail.
-    fulltext, summaries, samples = _recent_finalized(
-        db_session, book.id, 6, fulltext_limit=2, style_samples_limit=4
+    # everything outside the 4-row window (chapter 1) becomes the summary
+    # tier (well under RECENT_SUMMARY_COUNT here, so nothing spills into
+    # recent_headlines — see test_context_pack.py's three-tier test below
+    # for headline coverage).
+    fulltext, summaries, headlines, samples = _recent_finalized(
+        db_session, book.id, 6, fulltext_limit=2, style_samples_limit=4, summary_limit=RECENT_SUMMARY_COUNT
     )
     assert len(fulltext) == 2
     assert [c["index"] for c in fulltext] == [4, 5]
     assert len(samples) == 4
     assert [s["chapter_index"] for s in samples] == [2, 3, 4, 5]
     assert [s["index"] for s in summaries] == [1]
+    assert headlines == []
 
     # Reverse skew: fulltext=3, samples=1 → shared window fetches 3.
-    fulltext, summaries, samples = _recent_finalized(
-        db_session, book.id, 6, fulltext_limit=3, style_samples_limit=1
+    fulltext, summaries, headlines, samples = _recent_finalized(
+        db_session, book.id, 6, fulltext_limit=3, style_samples_limit=1, summary_limit=RECENT_SUMMARY_COUNT
     )
     assert [c["index"] for c in fulltext] == [3, 4, 5]
     assert [s["chapter_index"] for s in samples] == [5]
     assert [s["index"] for s in summaries] == [1, 2]
+    assert headlines == []
 
     # Both zero → empty + no DB hit (we don't assert the latter explicitly).
-    fulltext, summaries, samples = _recent_finalized(
-        db_session, book.id, 6, fulltext_limit=0, style_samples_limit=0
+    fulltext, summaries, headlines, samples = _recent_finalized(
+        db_session, book.id, 6, fulltext_limit=0, style_samples_limit=0, summary_limit=RECENT_SUMMARY_COUNT
     )
-    assert fulltext == [] and summaries == [] and samples == []
+    assert fulltext == [] and summaries == [] and headlines == [] and samples == []
+
+
+def test_recent_finalized_three_tier_split_with_small_summary_limit(db_session):
+    """v1.3.2 (LL) P3 — unit-level, deterministic coverage of all three tiers
+    in one call: directly invoke ``_recent_finalized`` with a small
+    ``summary_limit`` (bypassing the production ``RECENT_SUMMARY_COUNT=30``
+    default) so a handful of chapters is enough to exercise fulltext +
+    full-summary + headline simultaneously, per PROJECT_PLAN §4 P3's mandate
+    to cover this at the unit layer with small limits (not just monkeypatched
+    e2e)."""
+    from app.services.context_pack import HEADLINE_MAX_CHARS, _recent_finalized
+
+    book = Book(title="长夜")
+    db_session.add(book)
+    db_session.flush()
+    # 6 finalized chapters, each with both draft_text and a summary long
+    # enough to require real distillation (no terminator within 40 chars) so
+    # the headline fallback branch (truncate + "…") is exercised. Formula is
+    # deterministic per index so the expected headline can be computed
+    # locally, without a DB round-trip.
+    summaries_by_index: dict[int, str] = {
+        i: f"无终止符的长摘要文本片段{i}" * 5 for i in range(1, 7)
+    }
+    for i in range(1, 7):
+        db_session.add(
+            Chapter(
+                book_id=book.id,
+                index=i,
+                user_prompt=f"第{i}章",
+                draft_text=f"第{i}章正文。" * 20,
+                summary=summaries_by_index[i],
+                status="finalized",
+            )
+        )
+    current = Chapter(book_id=book.id, index=7, user_prompt="当前", status="prompt_ready")
+    db_session.add(current)
+    db_session.commit()
+
+    # fulltext=2, summary_limit=2 → nearest 2 (5,6) fulltext; next 2 (3,4)
+    # full summary; remaining older (1,2) fall to headline.
+    fulltext, summaries, headlines, _ = _recent_finalized(
+        db_session, book.id, 7, fulltext_limit=2, style_samples_limit=0, summary_limit=2
+    )
+    assert [c["index"] for c in fulltext] == [5, 6]
+    assert [s["index"] for s in summaries] == [3, 4]
+    assert [h["index"] for h in headlines] == [1, 2]
+    for h in headlines:
+        assert h["headline"].endswith("…")
+        stripped = h["headline"][:-1]
+        # red line: after stripping the trailing "…", the headline is a
+        # literal prefix substring of the summary it was distilled from.
+        assert summaries_by_index[h["index"]].startswith(stripped)
+        assert len(h["headline"]) <= HEADLINE_MAX_CHARS + 1

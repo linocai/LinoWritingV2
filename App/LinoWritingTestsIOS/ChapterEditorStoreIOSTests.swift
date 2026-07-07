@@ -126,10 +126,11 @@ final class ChapterEditorStoreIOSTests: XCTestCase {
         )
     }
 
-    /// Cancelling mid-stream (`cancelStream`) is one of the exit paths the
-    /// plan calls out explicitly (alongside `.done`/`.failed`) — confirm the
-    /// state-source-driven fix covers it too, not just the happy path.
-    func test_cancelStream_restoresIdleTimer() async {
+    /// v1.3.2 (LL) P2 — "停止生成" (`stopWriting`) is the exit path the plan
+    /// calls out (replacing the old `cancelStream`). Confirm the state-source-
+    /// driven idle-timer fix covers it: once `writingState` leaves `.streaming`
+    /// (after the async cancel round-trip settles), the idle timer is restored.
+    func test_stopWriting_restoresIdleTimer() async {
         let mock = MockAPIClient()
         let bus = ErrorBus()
         let book = try! await mock.createBook(BookCreateRequest(title: "B", coverColor: nil))
@@ -148,12 +149,23 @@ final class ChapterEditorStoreIOSTests: XCTestCase {
         // already happened by the time this call returns.
         XCTAssertTrue(UIApplication.shared.isIdleTimerDisabled)
 
-        editor.cancelStream()
+        editor.stopWriting()  // detaches + async POST /write/cancel → settles to .idle
+        // Poll until writingState leaves .streaming (bounded so a regression
+        // fails fast instead of hanging).
+        for _ in 0..<400 {
+            if case .streaming = editor.writingState {
+                try? await Task.sleep(nanoseconds: 5_000_000)
+            } else {
+                break
+            }
+        }
 
-        XCTAssertEqual(editor.writingState, .idle)
+        if case .streaming = editor.writingState {
+            XCTFail("stopWriting must leave the .streaming state")
+        }
         XCTAssertFalse(
             UIApplication.shared.isIdleTimerDisabled,
-            "idle timer must be re-enabled after a user-initiated cancel"
+            "idle timer must be re-enabled once writingState leaves .streaming"
         )
     }
 }

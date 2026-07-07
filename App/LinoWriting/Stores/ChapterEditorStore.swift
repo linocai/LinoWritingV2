@@ -22,7 +22,7 @@ public final class ChapterEditorStore: ObservableObject {
             #if os(iOS)
             // v1.3.1 (KK) P5 — iOS screen-sleep-during-streaming fix
             // (治标). Structural, state-source-driven rather than
-            // point-naming every exit (`.done`/`.failed`/`cancelStream`
+            // point-naming every exit (`.done`/`.failed`/`stopWriting`
             // each separately, which is easy to miss — see plan-critic
             // 🔵#6): every `writingState` mutation runs through this one
             // `didSet`, and `updateStreamingSideEffects` edge-detects the
@@ -88,6 +88,14 @@ public final class ChapterEditorStore: ObservableObject {
     private let api: APIClientProtocol
     private let errorBus: ErrorBus
     private var streamTask: Task<Void, Never>?
+    /// v1.3.2 (LL) P2 审后修复 #3: true while a `startWriting`/`reattachWriting`
+    /// stream task is actively running. Distinct from `writingState == .streaming`
+    /// because `refreshAfterIncompleteStream` can leave a "zombie" `.streaming`
+    /// after its task has ended — and a completed `Task` stays referenced, so
+    /// `streamTask != nil` can't tell active from finished. scenePhase recovery
+    /// keys off THIS so a zombie streaming self-heals (re-enabling the iOS idle
+    /// timer that would otherwise stay disabled forever).
+    private var streamTaskActive = false
 
     #if os(iOS)
     /// v1.3.1 (KK) P5 — the UIKit background task token for the current
@@ -110,7 +118,7 @@ public final class ChapterEditorStore: ObservableObject {
     /// once per transition — never per-token. This is the single source of
     /// truth the plan calls for (plan-critic 🔵#6), replacing the
     /// easy-to-miss alternative of point-naming `.done`/`.failed`/
-    /// `cancelStream` separately.
+    /// `stopWriting` separately.
     private func updateStreamingSideEffects(oldValue: WritingState, newValue: WritingState) {
         let wasStreaming: Bool = { if case .streaming = oldValue { return true }; return false }()
         let isStreamingNow: Bool = { if case .streaming = newValue { return true }; return false }()
@@ -214,6 +222,13 @@ public final class ChapterEditorStore: ObservableObject {
         do {
             let chapter = try await api.getChapter(id: chapterId)
             self.chapter = chapter
+            // v1.3.2 (LL) P2 — a chapter loaded in `writing` status has (or had)
+            // a backend write job running independently of any client. Auto-
+            // reattach to resume the live token view / reconcile the outcome
+            // (or surface 强制重置 if the worker was lost to a restart).
+            if chapter.status == .writing {
+                reattachWriting()
+            }
         } catch let error as AppError {
             errorBus.publish(error)
             self.chapter = nil
@@ -236,9 +251,11 @@ public final class ChapterEditorStore: ObservableObject {
     /// the calling async function via its own `defer` and represents
     /// "network in flight", not per-chapter state.
     private func resetAllPublishedToIdle() {
-        // Tear down any in-flight SSE stream first so its task doesn't
-        // race to flip `writingState` back to .streaming after we clear it.
-        cancelStream()
+        // v1.3.2 (LL) P2 — tear down only the LOCAL stream task; the backend
+        // write job (if any) keeps running. Switching chapters / tearing down
+        // the workspace must NOT cancel an in-flight write (the whole point of
+        // writing-as-a-job). `writingState` is set to `.idle` explicitly below.
+        detach()
         chapter = nil
         writingState = .idle
         thinkingBuffer = ""
@@ -298,90 +315,106 @@ public final class ChapterEditorStore: ObservableObject {
         return nil
     }
 
+    /// v1.3.2 (LL) P2 — outcome of consuming one write/reattach SSE stream.
+    private enum StreamStep { case cont, settled }
+    private enum ReattachOutcome { case settled, transientFailure }
+
+    /// Apply a single SSE event to the published state. Shared by
+    /// `startWriting` and `reattachWriting`. Returns `.settled` once the stream
+    /// has reached a terminal state (done / error / stranded / no-active).
+    private func applyWriteEvent(_ event: SSEEvent, onDone: (@MainActor (Chapter) -> Void)?) -> StreamStep {
+        switch event {
+        case .started:
+            return .cont
+        case .snapshot(let buffer, let chars):
+            // Reattach only: rebuild the buffer from the backend's replay before
+            // tailing. Never carries thinking text.
+            writingState = .streaming(buffer: buffer, chars: chars)
+            return .cont
+        case .token(let text):
+            if case .streaming(var buf, let chars) = writingState {
+                buf += text
+                writingState = .streaming(buffer: buf, chars: chars + text.count)
+            } else {
+                writingState = .streaming(buffer: text, chars: text.count)
+            }
+            return .cont
+        case .thinking(let text):
+            // v1.2.0 (HH) P7: accumulate into the separate thinkingBuffer —
+            // never touches writingState's draft buffer/chars.
+            thinkingBuffer += text
+            return .cont
+        case .progress(let chars):
+            if case .streaming(let buf, _) = writingState {
+                writingState = .streaming(buffer: buf, chars: chars)
+            }
+            return .cont
+        case .done(let chapter):
+            self.chapter = chapter
+            writingState = .done
+            onDone?(chapter)
+            return .settled
+        case .error(let appError):
+            writingState = .failed(appError)
+            errorBus.publish(appError)
+            return .settled
+        case .reattachStranded:
+            // The DB row is stuck in `writing` but the worker was lost (server
+            // restart). Point the user at the 强制重置 escape hatch.
+            let e = AppError.conflict("写作进程已丢失（可能因服务重启），请对本章「强制重置」后重试")
+            writingState = .failed(e)
+            errorBus.publish(e)
+            return .settled
+        case .reattachNoActive:
+            // Nothing is being written — silently drop to idle, NO Toast.
+            if case .streaming = writingState { writingState = .idle }
+            return .settled
+        case .other:
+            return .cont
+        }
+    }
+
     /// Kick off SSE writing. Caller stays alive via the task held in `streamTask`.
     public func startWriting(onDone: (@MainActor (Chapter) -> Void)? = nil) {
         guard let chapter else { return }
-        cancelStream()
+        detach()
         writingState = .streaming(buffer: "", chars: 0)
         thinkingBuffer = ""
 
+        streamTaskActive = true
         streamTask = Task { [weak self] in
             guard let self else { return }
+            defer { self.streamTaskActive = false }
             do {
                 for try await event in self.api.writeStream(chapterId: chapter.id) {
                     if Task.isCancelled { return }
-                    switch event {
-                    case .started:
-                        continue
-                    case .token(let text):
-                        if case .streaming(var buf, let chars) = self.writingState {
-                            buf += text
-                            self.writingState = .streaming(buffer: buf, chars: chars + text.count)
-                        } else {
-                            self.writingState = .streaming(buffer: text, chars: text.count)
-                        }
-                    case .thinking(let text):
-                        // v1.2.0 (HH) P7: accumulate into the separate
-                        // thinkingBuffer — never touches writingState's
-                        // draft buffer/chars, so reasoning text can't leak
-                        // into the saved chapter or the word count.
-                        self.thinkingBuffer += text
-                    case .progress(let chars):
-                        if case .streaming(let buf, _) = self.writingState {
-                            self.writingState = .streaming(buffer: buf, chars: chars)
-                        }
-                    case .done(let chapter):
-                        self.chapter = chapter
-                        self.writingState = .done
-                        onDone?(chapter)
-                        return
-                    case .error(let appError):
-                        self.writingState = .failed(appError)
-                        self.errorBus.publish(appError)
-                        return
-                    case .other:
-                        continue
-                    }
+                    if case .settled = self.applyWriteEvent(event, onDone: onDone) { return }
                 }
-                // Stream ended without an explicit done — if we have a chapter, refresh it.
+                // Stream ended without an explicit terminal — treat as a drop.
                 if case .streaming = self.writingState {
-                    await self.refreshAfterIncompleteStream(
+                    await self.handleStreamDrop(
                         originalError: .upstream("写作中断，可点重新生成", retryable: true),
                         onDone: onDone
                     )
                 }
             } catch let error as AppError {
-                // v0.8 Phase U-2 (§5.U.5): SSE 弱网断流不自动重连(会丢已收 token);
-                // 落到 .failed 状态由 toolbar 让用户主动决定重新生成 / 取消。
-                //
-                // v1.2.0 (HH) P5 (致命 1, plan-critic 拦下): a real disconnect
-                // (URLSession timeout / dropped connection) throws here rather
-                // than ending the loop gracefully, so `refreshAfterIncompleteStream`
-                // (wired to the graceful "stream ended without done" path above)
-                // never used to run for this case — the backend's P5 partial-draft
-                // save (previous_status == prompt_ready → draft_ready) went
-                // undiscovered until the author manually reopened the chapter.
-                // If we were mid-stream and the failure isn't a user-initiated
-                // cancel, do the same GET-and-reconcile the graceful path does
-                // before giving up: the backend may have salvaged a partial
-                // draft, and `refreshAfterIncompleteStream` already knows how to
-                // promote that to `.done` (or fall back to `.failed` if the GET
-                // itself fails or the chapter still shows no usable draft).
+                // v1.3.2 (LL) P2 (🔴1): a real disconnect (URLSession timeout /
+                // dropped connection) throws here. The backend job is (very
+                // likely) STILL running — do not declare failure. Reattach first
+                // (bounded), then reconcile. A user-initiated cancel is the one
+                // exception (handled by `stopWriting`; `.cancelled` short-circuits).
                 let wasStreaming: Bool = { if case .streaming = self.writingState { return true }; return false }()
                 if wasStreaming, error != .cancelled {
-                    await self.refreshAfterIncompleteStream(originalError: error, onDone: onDone)
+                    await self.handleStreamDrop(originalError: error, onDone: onDone)
                 } else {
                     self.writingState = .failed(error)
                     if error != .cancelled { self.errorBus.publish(error) }
                 }
             } catch {
-                // v0.8 Phase U-2 (§5.U.5): 同上,transport 层断开 = 提示 + Stop 状态,不重连。
-                // v1.2.0 (HH) P5: same reconcile-before-giving-up as above for
-                // non-AppError transport failures.
                 let wasStreaming: Bool = { if case .streaming = self.writingState { return true }; return false }()
                 let mapped = AppError.transport(error.localizedDescription)
                 if wasStreaming {
-                    await self.refreshAfterIncompleteStream(originalError: mapped, onDone: onDone)
+                    await self.handleStreamDrop(originalError: mapped, onDone: onDone)
                 } else {
                     self.writingState = .failed(mapped)
                     self.errorBus.publish(mapped)
@@ -390,24 +423,101 @@ public final class ChapterEditorStore: ObservableObject {
         }
     }
 
-    /// GET-and-reconcile after a stream ended without an explicit `.done`.
+    /// v1.3.2 (LL) P2 (🔴1) — a start stream ended/threw mid-write without a
+    /// terminal frame. Because the backend job keeps running independently of
+    /// the connection, do NOT declare failure: first reattach (bounded retries),
+    /// and only if every attempt fails do a final GET-and-reconcile.
+    private func handleStreamDrop(
+        originalError: AppError,
+        onDone: (@MainActor (Chapter) -> Void)?
+    ) async {
+        let outcome = await reattachLoop(maxAttempts: 3, onDone: onDone)
+        if case .transientFailure = outcome {
+            await refreshAfterIncompleteStream(originalError: originalError, onDone: onDone)
+        }
+    }
+
+    /// v1.3.2 (LL) P2 — reattach to a backend write that outlived our local
+    /// stream (chapter switch, phone sleep, transient disconnect). Runs the
+    /// bounded reattach→reconcile machine on its own `streamTask`.
+    public func reattachWriting(onDone: (@MainActor (Chapter) -> Void)? = nil) {
+        guard chapter != nil else { return }
+        detach()
+        // Show streaming while reattaching (also re-arms the iOS idle-timer
+        // guard via `writingState.didSet`).
+        writingState = .streaming(buffer: "", chars: 0)
+        thinkingBuffer = ""
+        streamTaskActive = true
+        streamTask = Task { [weak self] in
+            guard let self else { return }
+            defer { self.streamTaskActive = false }
+            let outcome = await self.reattachLoop(maxAttempts: 3, onDone: onDone)
+            if case .transientFailure = outcome {
+                await self.refreshAfterIncompleteStream(
+                    originalError: .upstream("写作连接中断，可点重新生成", retryable: true),
+                    onDone: onDone
+                )
+            }
+        }
+    }
+
+    /// Reattach with bounded retries. `.settled` = reached a definite state
+    /// (done / error / stranded / no-active / user-cancel); `.transientFailure`
+    /// = every attempt's stream dropped before a terminal (network still bad).
+    private func reattachLoop(
+        maxAttempts: Int,
+        onDone: (@MainActor (Chapter) -> Void)?
+    ) async -> ReattachOutcome {
+        guard chapter != nil else { return .settled }
+        for attempt in 0..<maxAttempts {
+            if Task.isCancelled { return .settled }
+            if case .settled = await consumeReattachOnce(onDone: onDone) { return .settled }
+            if attempt < maxAttempts - 1 {
+                try? await Task.sleep(nanoseconds: 400_000_000)  // 0.4s backoff
+            }
+        }
+        return .transientFailure
+    }
+
+    private func consumeReattachOnce(onDone: (@MainActor (Chapter) -> Void)?) async -> ReattachOutcome {
+        guard let chapter else { return .settled }
+        do {
+            for try await event in api.reattachWriteStream(chapterId: chapter.id) {
+                if Task.isCancelled { return .settled }
+                if case .settled = applyWriteEvent(event, onDone: onDone) { return .settled }
+            }
+            // Stream ended without a terminal (dropped mid-tail) → transient.
+            return .transientFailure
+        } catch let error as AppError {
+            return error == .cancelled ? .settled : .transientFailure
+        } catch {
+            return .transientFailure
+        }
+    }
+
+    /// v1.3.2 (LL) P2 — the app returned to the foreground. If the chapter is
+    /// mid-write server-side but no stream task is actively watching, reattach to
+    /// resume the live view (this is the "手机息屏 5 分钟回来" recovery path).
     ///
-    /// v1.2.0 (HH) P5 (🔴#1, reviewer 抓出): this used to promote to `.done`
-    /// unconditionally on any successful GET, regardless of whether the
-    /// backend actually salvaged a usable draft. That silently swallowed
-    /// real failures (e.g. a pre-stream 401/409/429/5xx thrown before any
-    /// token arrived — `writingState` is already `.streaming` at that point,
-    /// see `startWriting`'s `wasStreaming` check) — the chapter would still
-    /// show `prompt_ready`/no draft, yet the store reported `.done` with no
-    /// Toast. The GET-failure branch also failed to publish to `errorBus`,
-    /// making the .failed transition invisible (Views only pattern-match
-    /// `.streaming`; ErrorBus Toast is the only failure-visibility channel).
+    /// 审后修复 #3: the judge is `streamTaskActive`, NOT `if case .streaming`. A
+    /// `refreshAfterIncompleteStream` that ended on a still-`writing` backend
+    /// leaves a "zombie" `.streaming` with no live task; keying off the flag
+    /// self-heals it here (and re-enables the iOS idle timer, since the fresh
+    /// reattach task eventually settles to a non-streaming state).
+    public func handleScenePhaseActive() {
+        guard let chapter, chapter.status == .writing else { return }
+        if streamTaskActive { return }  // a task is already watching
+        reattachWriting()
+    }
+
+    /// GET-and-reconcile after every reattach attempt failed.
     ///
-    /// Contract (plan §4.1 P5): GET succeeds AND `status == .draftReady` AND
-    /// `draftText` is non-empty → `.done`. Otherwise (GET fails, or GET
-    /// succeeds but the chapter still shows no usable draft) → maintain
-    /// `.failed(originalError)` and publish `originalError` so the failure
-    /// is visible.
+    /// v1.3.2 (LL) P2 (🔴1): reached only after reattach retries are exhausted.
+    /// Contract: GET succeeds AND `status == .draftReady` AND non-empty draft →
+    /// `.done`. If the GET shows `status == .writing`, the backend is genuinely
+    /// still writing — this is NOT a failure: leave the (streaming) state
+    /// untouched, publish nothing, and let the next load/scenePhase reattach
+    /// recover the live view. Otherwise → `.failed(originalError)` + publish.
     private func refreshAfterIncompleteStream(
         originalError: AppError,
         onDone: (@MainActor (Chapter) -> Void)?
@@ -423,6 +533,15 @@ public final class ChapterEditorStore: ObservableObject {
             if refreshed.status == .draftReady, let draft = refreshed.draftText, !draft.isEmpty {
                 self.writingState = .done
                 onDone?(refreshed)
+            } else if refreshed.status == .writing {
+                // Backend is still writing — do NOT declare failure. Keep the
+                // streaming state we already have; recovery comes from the next
+                // load()/scenePhase reattach. No Toast.
+                if case .streaming = self.writingState {
+                    // leave as-is (preserve any partial buffer + the stop button)
+                } else {
+                    self.writingState = .streaming(buffer: "", chars: 0)
+                }
             } else {
                 self.writingState = .failed(originalError)
                 self.errorBus.publish(originalError)
@@ -433,11 +552,57 @@ public final class ChapterEditorStore: ObservableObject {
         }
     }
 
-    public func cancelStream() {
+    /// v1.3.2 (LL) P2 — tear down only the LOCAL SSE stream task. The backend
+    /// write job (if any) keeps running: leaving/switching chapters or the app
+    /// backgrounding must NOT cancel a write. Callers set `writingState`
+    /// themselves (this does not touch it, unlike the old `cancelStream`).
+    public func detach() {
         streamTask?.cancel()
         streamTask = nil
-        if case .streaming = writingState {
-            writingState = .idle
+        streamTaskActive = false
+    }
+
+    /// v1.3.2 (LL) P2 — explicit "停止生成": the ONLY path that actually stops a
+    /// backend write. Cancels via `POST /write/cancel`, detaches the local
+    /// stream, and reconciles the returned row (still `writing` if the worker
+    /// didn't wind down inside the server's bounded wait → keep reattaching).
+    ///
+    /// 审后修复 #2: this cancel round-trip runs on an orphan `Task` NOT held in
+    /// `streamTask` (so a later `reattachWriting`'s `detach` doesn't self-cancel
+    /// it). That means a chapter switch can't cancel it either — so before
+    /// applying ANY result we re-check the still-open chapter matches the one we
+    /// cancelled, and discard otherwise. Without this guard a late cancel
+    /// response could overwrite the newly-opened chapter or (still-writing path)
+    /// detach the new chapter's live stream and pour the old chapter's tokens
+    /// onto the current screen.
+    public func stopWriting() {
+        guard let chapter else { detach(); writingState = .idle; return }
+        let chapterId = chapter.id
+        detach()  // stop consuming locally; the buffer stays visible until we hear back
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let updated = try await self.api.cancelWrite(chapterId: chapterId)
+                guard self.chapter?.id == chapterId else { return }  // switched away → discard
+                self.chapter = updated
+                if updated.status == .writing {
+                    // Worker didn't finish inside the server's wait window —
+                    // keep reconciling by reattaching to catch the terminal.
+                    self.reattachWriting()
+                } else {
+                    // draft_ready (partial salvaged) / prompt_ready (nothing to
+                    // save) / etc. — settled.
+                    self.writingState = .idle
+                }
+            } catch let error as AppError {
+                guard self.chapter?.id == chapterId else { return }
+                if error != .cancelled { self.errorBus.publish(error) }
+                self.writingState = .idle
+            } catch {
+                guard self.chapter?.id == chapterId else { return }
+                self.errorBus.publish(.transport(error.localizedDescription))
+                self.writingState = .idle
+            }
         }
     }
 

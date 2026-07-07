@@ -40,6 +40,16 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # suite) doesn't stack duplicate filters.
     install_access_log_redaction()
 
+    # v1.3.2 (LL) P1 (🔵2): the in-process WriteJobRegistry (writing-as-a-job)
+    # is only correct under a SINGLE uvicorn worker. A second process would have
+    # its own empty registry and reattach/cancel would silently miss live jobs.
+    # This is a hard deploy constraint — also recorded in the systemd unit,
+    # deploy/README, and hz_info.md. Log it once at startup as a tripwire.
+    logger.info(
+        "write-jobs registry active — REQUIRES a single uvicorn worker "
+        "(never add --workers / switch to multi-process gunicorn)"
+    )
+
     try:
         with SessionLocal() as session:
             migrate_env_provider_key(session, get_settings())
@@ -50,7 +60,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app() -> FastAPI:
     settings = get_settings()
-    app = FastAPI(title="Lino Writing v2 Backend", version="1.3.1", lifespan=_lifespan)
+    app = FastAPI(title="Lino Writing v2 Backend", version="1.3.2", lifespan=_lifespan)
     # NB: LLM client is no longer instantiated at startup. Each request that
     # needs LLM access now calls ``build_llm_client(db)`` via the
     # ``get_llm_client`` dependency, which reads the active ``ProviderKey``

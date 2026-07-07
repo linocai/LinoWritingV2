@@ -25,12 +25,12 @@ final class ChapterEditorStorePartialDraftTests: XCTestCase {
         return chapter
     }
 
-    /// The disconnect scenario: stream yields tokens then throws a
-    /// transport-level error (not a graceful `.error` SSE frame). Backend
-    /// GET now returns `draft_ready` + non-empty draft_text (mirrors the
-    /// backend's P5 partial save) — the store must reconcile to `.done`,
-    /// not fall to `.failed`.
-    func test_startWriting_transportDisconnectMidStream_reconcilesToDoneWhenBackendSavedPartialDraft() async {
+    /// v1.3.2 (LL) P2 — the disconnect scenario: stream yields tokens then
+    /// throws a transport-level error. Under writing-as-a-job the store must
+    /// NOT fail: it reattaches, and the reattach stream replays the backend's
+    /// saved draft and completes with `.done`. (Default MockAPIClient reattach
+    /// returns a snapshot + done{current chapter}.)
+    func test_startWriting_transportDisconnectMidStream_reattachesToDone() async {
         let mock = MockAPIClient()
         let bus = ErrorBus()
         let chapter = await makeChapterReadyToWrite(mock)
@@ -39,7 +39,7 @@ final class ChapterEditorStorePartialDraftTests: XCTestCase {
             tokens: ["半", "截", "正文"],
             error: AppError.transport("Connection lost")
         )
-        // Simulate the backend's P5 save: GET now returns the partial draft.
+        // Simulate the backend's conservative save: the row is now draft_ready.
         if let idx = mock.chapters.firstIndex(where: { $0.id == chapter.id }) {
             mock.chapters[idx].status = .draftReady
             mock.chapters[idx].draftText = "半截正文"
@@ -49,21 +49,23 @@ final class ChapterEditorStorePartialDraftTests: XCTestCase {
         await store.load(chapterId: chapter.id)
 
         store.startWriting()
-        // Poll until the streamTask's catch clause + refresh finish.
         await waitUntilSettled(store)
 
         XCTAssertEqual(
             store.writingState, .done,
-            "backend saved a partial draft (draft_ready) — the store must reconcile to .done, not .failed"
+            "the store must reattach and reconcile to .done, not fall to .failed"
         )
         XCTAssertEqual(store.chapter?.status, .draftReady)
         XCTAssertEqual(store.chapter?.draftText, "半截正文")
+        // A transport disconnect must never surface a failure Toast (負例硬验收).
+        XCTAssertNil(bus.current, "a mid-stream disconnect must not publish a failure Toast")
+        XCTAssertTrue(mock.calls.contains("reattachWriteStream"), "must attempt reattach on disconnect")
     }
 
     /// If the GET-after-disconnect itself fails (or the chapter still shows
     /// no usable draft), `refreshAfterIncompleteStream` falls back to
     /// `.failed` — the store must not silently mask a real failure.
-    func test_startWriting_transportDisconnect_getFails_fallsBackToFailed() async {
+    func test_startWriting_transportDisconnect_reattachAndGetFail_fallsBackToFailed() async {
         let mock = MockAPIClient()
         let bus = ErrorBus()
         let chapter = await makeChapterReadyToWrite(mock)
@@ -72,20 +74,23 @@ final class ChapterEditorStorePartialDraftTests: XCTestCase {
             tokens: ["半", "截"],
             error: AppError.transport("Connection lost")
         )
+        // Every reattach attempt drops (transient) → exhausts → falls to the
+        // final GET-reconcile, which we also make fail.
+        mock.onReattachThrowAfterEvents = (events: [], error: AppError.transport("reattach down"))
 
         let store = ChapterEditorStore(api: mock, errorBus: bus)
         await store.load(chapterId: chapter.id)
 
         store.startWriting()
-        // After the write stream throws, make the follow-up GET fail too.
+        // Make the follow-up reconcile GET fail too.
         mock.errorToThrow = .server("backend 暂时不可用")
 
         await waitUntilSettled(store)
 
         if case .failed = store.writingState {
-            // Expected.
+            // Expected: reattach exhausted + GET failed → .failed.
         } else {
-            XCTFail("expected .failed when the reconcile GET also fails, got \(store.writingState)")
+            XCTFail("expected .failed when reattach exhausts and the reconcile GET fails, got \(store.writingState)")
         }
     }
 
@@ -104,8 +109,10 @@ final class ChapterEditorStorePartialDraftTests: XCTestCase {
 
         let originalError = AppError.transport("Connection lost")
         mock.onWriteThrowAfterTokens = (tokens: ["半"], error: originalError)
-        // Deliberately do NOT flip the chapter to draft_ready / set draftText —
-        // the GET below will succeed but return a chapter with no usable draft.
+        // Every reattach drops (transient) so we fall to the final GET-reconcile.
+        mock.onReattachThrowAfterEvents = (events: [], error: AppError.transport("reattach down"))
+        // Deliberately leave the chapter at prompt_ready with no draftText —
+        // the GET below succeeds but returns a chapter with no usable draft.
 
         let store = ChapterEditorStore(api: mock, errorBus: bus)
         await store.load(chapterId: chapter.id)
@@ -173,7 +180,7 @@ final class ChapterEditorStorePartialDraftTests: XCTestCase {
     /// Polls `store.writingState` off `.streaming` with a hard cap so a
     /// regression that leaves the state machine stuck fails fast instead of
     /// hanging the test run indefinitely.
-    private func waitUntilSettled(_ store: ChapterEditorStore, maxAttempts: Int = 400) async {
+    private func waitUntilSettled(_ store: ChapterEditorStore, maxAttempts: Int = 800) async {
         var attempts = 0
         while isStillStreaming(store.writingState), attempts < maxAttempts {
             try? await Task.sleep(nanoseconds: 5_000_000)

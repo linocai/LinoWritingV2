@@ -137,6 +137,26 @@ def clear_all_llm_overrides() -> None:
         app.dependency_overrides.pop(dep, None)
 
 
+@pytest.fixture(autouse=True)
+def _clean_write_registry() -> Iterator[None]:
+    """v1.3.2 (LL) P1: the WriteJobRegistry is a process-global singleton.
+    Clear it before each test (chapter_ids are per-test unique, but terminal
+    jobs would otherwise linger) and, after, cancel + drop any job a test left
+    behind so its daemon worker thread exits promptly instead of racing the
+    next test's dropped tables."""
+    from app.services.write_jobs import write_registry
+
+    write_registry.clear()
+    yield
+    jobs = list(write_registry._jobs.values())
+    for job in jobs:
+        job.cancel_event.set()
+    for job in jobs:
+        if job.thread is not None:
+            job.thread.join(timeout=2.0)
+    write_registry.clear()
+
+
 @pytest.fixture()
 def session_factory() -> Iterator[sessionmaker[Session]]:
     # v0.8 S-1: same engine URL the conftest reads at import time. When the

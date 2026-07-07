@@ -1,18 +1,22 @@
-"""Tests for the SSE producer cancel hook (§5.P.1 D).
+"""Tests for the LLM-level SSE cancel chain (§5.P.1 D — mechanism reused by
+v1.3.2 (LL) P1 writing-as-a-job, only the *trigger* moved to an explicit
+``POST /write/cancel``).
 
-These exercise three layers of the cancel chain:
+These exercise the layers that stay identical after the P1 refactor:
 
 1. ``OpenAICompatibleClient._stream`` honours a pre-set ``cancel_event``
    (unit, no real HTTP — we mock httpx.stream to feed canned SSE lines).
-2. The producer thread in ``_write_stream`` stops enqueueing tokens once
-   the consumer goes away, and the chapter status is restored to its
-   previous state instead of stranding at ``writing``.
-3. End-to-end: when a client closes the SSE response early, the daemon
-   thread does NOT keep running indefinitely.
+2. ``WriterAgent.stream`` plumbs ``cancel_event`` into the LLM client.
 
-The cancel mechanism matters because without it every user-cancelled
-write keeps the upstream LLM connection open, burning tokens (and money)
-until the model naturally finishes.
+The cancel mechanism matters because without it a user-cancelled write keeps
+the upstream LLM connection open, burning tokens (and money) until the model
+naturally finishes. The *worker/registry* side (a cancel now goes through the
+``WriteJob`` + ``POST /write/cancel``, and — critically — a client disconnect
+NO LONGER cancels) is covered in ``test_write_jobs.py``.
+
+``_FakeHttpxStream`` / ``_provider_key`` / ``_ControlledStreamLLM`` below are
+shared helpers imported by ``test_stream_timeout.py`` / ``test_thinking_stream.py``
+/ ``test_partial_draft_save.py`` — keep them here.
 """
 from __future__ import annotations
 
@@ -162,161 +166,9 @@ def test_writer_agent_forwards_cancel_event_to_llm():
     assert llm.considered == []  # Never even started the loop.
 
 
-def test_write_stream_generator_finally_signals_cancel(db_session):
-    """Closing the generator mid-stream must set the cancel event so the
-    producer thread (and, transitively, the LLM client) stops.
-
-    We can't rely on starlette/TestClient to faithfully simulate a
-    client disconnect inside an in-process ASGI test — the response
-    body is buffered and the generator runs to completion before
-    iter_bytes ever sees a chunk. So we drive ``_write_stream``
-    directly: yield a couple of events, then call ``.close()`` on the
-    generator (this is exactly what FastAPI does when the underlying
-    client disconnects). After the close, the producer must observe
-    the cancel signal and exit.
-    """
-    from app.routers.chapters import _write_stream
-    from app.models.book import Book
-    from app.models.chapter import Chapter
-    from app.models.character import Character
-
-    book = Book(title="Cancel Gen", cover_color="#000000")
-    db_session.add(book)
-    db_session.flush()
-    db_session.add(
-        Character(
-            book_id=book.id,
-            name="测",
-            role="主角",
-            frozen_fields={"core_traits": "冷静"},
-            live_fields={"current_status": "等待"},
-        )
-    )
-    # v1.2.0 (HH) P5: previous_status is "draft_ready" with a pre-existing
-    # complete draft — the conservative partial-draft policy says a
-    # disconnected *regenerate* attempt must never overwrite that draft, so
-    # `chapter.status`/`draft_text` staying exactly as seeded here is the
-    # right assertion for "the finally block restored the previous state"
-    # under the new policy (see test_partial_draft_save.py for the
-    # prompt_ready → draft_ready save-on-disconnect case this test used to
-    # incidentally exercise).
-    original_draft = "这是断连前已经完成的旧稿。"
-    chapter = Chapter(
-        book_id=book.id,
-        index=1,
-        title="第一章",
-        user_prompt="短一点。",
-        status="writing",
-        draft_text=original_draft,
-    )
-    db_session.add(chapter)
-    db_session.commit()
-    db_session.refresh(chapter)
-
-    slow_llm = _ControlledStreamLLM(n_tokens=30, per_token_sleep=0.03)
-    gen = _write_stream(
-        db_session,
-        chapter.id,
-        previous_status="draft_ready",
-        context={},
-        llm=slow_llm,
-        writer_persona="测试 Writer 人格",
-    )
-
-    # Pull a few SSE chunks. We need at least the "started" event and
-    # one "token" event to prove the stream is live.
-    chunks: list[str] = []
-    for chunk in gen:
-        chunks.append(chunk)
-        if len(chunks) >= 3:
-            break
-
-    # Now simulate FastAPI's behaviour on client disconnect: close the
-    # generator. This invokes the finally block, sets cancel_event,
-    # and lets the producer thread bail out.
-    gen.close()
-
-    # Wait long enough for the producer to notice (each iteration
-    # sleeps 30ms before re-checking cancel).
-    time.sleep(0.4)
-
-    db_session.refresh(chapter)
-    # The finally block must restore the previous status, and (P5
-    # conservative policy) must not overwrite the pre-existing draft with
-    # the half-finished regenerate attempt.
-    assert chapter.status == "draft_ready"
-    assert chapter.draft_text == original_draft
-    # And the LLM must have stopped well short of its 30-token budget.
-    # Slack: a couple of tokens may already be in flight when cancel
-    # fires; what matters is it didn't run to completion.
-    assert len(slow_llm.considered) < 30
-
-
-def test_producer_thread_exits_after_cancel(db_session):
-    """The daemon thread must not outlive the cancelled stream.
-
-    Drives ``_write_stream`` directly (same reason as the previous
-    test: TestClient can't faithfully simulate an in-process
-    disconnect). Counts non-main threads before and after, and
-    asserts no new ones survived past the cancel.
-    """
-    from app.routers.chapters import _write_stream
-    from app.models.book import Book
-    from app.models.chapter import Chapter
-    from app.models.character import Character
-
-    book = Book(title="Thread Gen", cover_color="#000000")
-    db_session.add(book)
-    db_session.flush()
-    db_session.add(
-        Character(
-            book_id=book.id,
-            name="测2",
-            role="主角",
-            frozen_fields={"core_traits": "冷静"},
-            live_fields={"current_status": "等待"},
-        )
-    )
-    chapter = Chapter(
-        book_id=book.id,
-        index=1,
-        title="第一章",
-        user_prompt="短一点。",
-        status="writing",
-    )
-    db_session.add(chapter)
-    db_session.commit()
-    db_session.refresh(chapter)
-
-    threads_before = {t.ident for t in threading.enumerate()}
-
-    slow_llm = _ControlledStreamLLM(n_tokens=50, per_token_sleep=0.05)
-    gen = _write_stream(
-        db_session,
-        chapter.id,
-        previous_status="prompt_ready",
-        context={},
-        llm=slow_llm,
-        writer_persona="测试 Writer 人格",
-    )
-
-    chunks = []
-    for chunk in gen:
-        chunks.append(chunk)
-        if len(chunks) >= 3:
-            break
-    gen.close()
-
-    # Wait for the producer to notice cancel (sleeps 50ms per token
-    # before checking) — 1s of slack is plenty.
-    time.sleep(1.0)
-
-    new_threads = [
-        t
-        for t in threading.enumerate()
-        if t.ident not in threads_before and t.is_alive()
-    ]
-    leaked = [t for t in new_threads if t.daemon]
-    assert not leaked, (
-        f"Producer thread leaked after cancel: {[t.name for t in leaked]}"
-    )
+# NOTE (v1.3.2 LL P1): the two pre-v1.3.2 tests here — closing the request
+# generator *cancels* the producer, and the daemon thread exits on disconnect —
+# encoded the exact behaviour this version deliberately REVERSES. A client
+# disconnect no longer cancels the write; the worker runs on. The worker/
+# registry/cancel semantics (including "disconnect does NOT set cancel_event")
+# now live in ``test_write_jobs.py``.

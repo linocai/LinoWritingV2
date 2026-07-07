@@ -186,6 +186,29 @@ run ssh "$HZ" "$REMOTE_CMD"
 ok
 
 # ─── 3. reload service ──────────────────────────────────
+# v1.3.2 (LL) P1 (🔵3): writing-as-a-job keeps in-flight writes in *process
+# memory* (single-worker WriteJobRegistry). A restart drops any write that is
+# mid-generation right now — its daemon thread dies with the process. That's an
+# accepted deploy-window loss (author decision, PROJECT_PLAN §4 已决议 #1), but
+# surface how many chapters are currently `writing` so the operator can wait for
+# a quiet moment. Read-only SELECT via the linowriting DB role; never prints secrets.
+step "remote: check for in-flight writes (status='writing') before restart"
+if [ "$DRY_RUN" -eq 1 ]; then
+    echo "${C_DIM}    [dry-run] ssh $HZ 'sudo -u linowriting psql -tAc \"SELECT count(*) FROM chapters WHERE status='\\''writing'\\''\"'${C_RST}"
+else
+    WRITING_COUNT=$(ssh "$HZ" "sudo -u linowriting psql -d linowriting -tAc \"SELECT count(*) FROM chapters WHERE status='writing'\"" 2>/dev/null | tr -d '[:space:]')
+    if ! echo "$WRITING_COUNT" | grep -qE '^[0-9]+$'; then
+        # 审后修复 #7: query failed / returned non-numeric — show "?" (unknown),
+        # never a misleading "0" that would read as "no in-flight writes".
+        echo "${C_DIM}    ⚠ 无法确认进行中的写作数（查询失败，计数=?）；请手动确认后再重启（Ctrl-C 中止）。5 秒后继续…${C_RST}"
+        sleep 5
+    elif [ "$WRITING_COUNT" != "0" ]; then
+        echo "${C_DIM}    ⚠ $WRITING_COUNT 章正处于 writing 状态；重启会丢弃这些进行中的写作（内存 job 随进程退出）。${C_RST}"
+        echo "${C_DIM}      若不想丢，可等这些写作完成后再部署（Ctrl-C 中止）。5 秒后继续…${C_RST}"
+        sleep 5
+    fi
+fi
+
 step "remote: systemctl reload-or-restart $SERVICE"
 run ssh "$HZ" "sudo systemctl reload-or-restart $SERVICE"
 ok

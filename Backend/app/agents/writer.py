@@ -64,10 +64,15 @@ structured_prompt.must_not_happen 中的事件、元素和信息一字不提。
 利用 timelines 保持角色连续性，尤其是角色知道什么、不知道什么、目标和状态。
 风格遵循 style_directive。
 
-# recent_fulltext（最近几章原文）
+# 三层记忆：recent_fulltext / recent_summaries / recent_headlines
 recent_fulltext 是最近几章已完成章节的原文全文，用于承接情节连贯性、核对细节
 不冲突，并作为文风参照（用词、句式、节奏）。**不要照搬其中的情节、人物对白或
 具体场景**，只用于承接与参考，不逐字复述。
+recent_summaries 是再往前一段已完成章节的完整梗概，用于知道"最近发生过什么"。
+recent_headlines 是更早所有章节的一句话大事记（每章一行），用于长程连续性——
+只是提醒"很久以前发生过这件事"，不是可展开的细节来源。
+三者都只用于承接与核对，**不要逐字复述其中内容**，也不要因为 recent_headlines
+简短就编造它没写的细节。
 
 若 user 消息中附带「# 参考前文文风」段落，同样只学习这些原文片段的用词、句式、
 节奏，不要照搬其中的情节、人物对白或具体场景。

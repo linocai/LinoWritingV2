@@ -55,6 +55,17 @@ public final class MockAPIClient: APIClientProtocol, @unchecked Sendable {
     /// P5 catch-branch fix (`refreshAfterIncompleteStream`) targets.
     public var onWriteThrowAfterTokens: (tokens: [String], error: Error)?
 
+    /// v1.3.2 (LL) P2 — pluggable reattach (`GET /write/stream`) events. Set to
+    /// script snapshot/token/done/error/stranded/no-active outcomes.
+    public var onReattach: ((String) -> [SSEEvent])?
+    /// v1.3.2 (LL) P2 — reattach stream that yields events then throws (a
+    /// transient mid-tail disconnect), so the store's bounded-retry loop can be
+    /// exercised.
+    public var onReattachThrowAfterEvents: (events: [SSEEvent], error: Error)?
+    /// v1.3.2 (LL) P2 — pluggable `POST /write/cancel` result. Defaults to
+    /// flipping the chapter to draft_ready (conservative-save shape) when unset.
+    public var onCancelWrite: ((String) throws -> Chapter)?
+
     /// Captures the last `importChapter` payload so tests can assert that the
     /// Swift-side encoding (e.g. `runExtractor` → `run_extractor`) survived.
     public var lastImportPayload: ChapterImportRequest?
@@ -412,13 +423,72 @@ public final class MockAPIClient: APIClientProtocol, @unchecked Sendable {
                 for event in events {
                     continuation.yield(event)
                     if case .done = event { break }
-                    if case .error(let e) = event {
-                        continuation.finish(throwing: e); return
-                    }
+                    // v1.3.2 (LL) P2 审后修复 #4: a terminal `.error` frame
+                    // finishes the stream *gracefully* (mirrors the real
+                    // SSEClient) — it's a definitive outcome the store handles
+                    // via `applyWriteEvent(.error)`, not a transport throw.
+                    if case .error = event { continuation.finish(); return }
                 }
                 continuation.finish()
             }
         }
+    }
+
+    public func reattachWriteStream(chapterId: String) -> AsyncThrowingStream<SSEEvent, Error> {
+        recordCall("reattachWriteStream")
+        if let hook = onReattachThrowAfterEvents {
+            return AsyncThrowingStream { continuation in
+                Task {
+                    for event in hook.events { continuation.yield(event) }
+                    continuation.finish(throwing: hook.error)
+                }
+            }
+        }
+        let events: [SSEEvent]
+        if let onReattach {
+            events = onReattach(chapterId)
+        } else if let idx = chapters.firstIndex(where: { $0.id == chapterId }) {
+            // Default: replay a snapshot then complete with the current chapter.
+            let c = chapters[idx]
+            events = [
+                .started(chapterId: chapterId),
+                .snapshot(buffer: c.draftText ?? "", chars: (c.draftText ?? "").count),
+                .done(chapter: c),
+            ]
+        } else {
+            events = [.reattachNoActive]
+        }
+        return AsyncThrowingStream { continuation in
+            Task {
+                for event in events {
+                    continuation.yield(event)
+                    if case .done = event { break }
+                    // 审后修复 #4 — graceful finish on terminal `.error` (see writeStream).
+                    if case .error = event { continuation.finish(); return }
+                }
+                continuation.finish()
+            }
+        }
+    }
+
+    /// v1.3.2 (LL) P2 审后修复 #2 — optional delay so a test can keep the cancel
+    /// round-trip in flight while it switches chapters (cross-chapter guard test).
+    public var cancelWriteDelayNanos: UInt64 = 0
+
+    public func cancelWrite(chapterId: String) async throws -> Chapter {
+        recordCall("cancelWrite")
+        if cancelWriteDelayNanos > 0 { try? await Task.sleep(nanoseconds: cancelWriteDelayNanos) }
+        try maybeThrow()
+        if let onCancelWrite { return try onCancelWrite(chapterId) }
+        guard let idx = chapters.firstIndex(where: { $0.id == chapterId }) else {
+            throw AppError.notFound("chapter")
+        }
+        var c = chapters[idx]
+        // Default conservative-save shape: land whatever draft exists as draft_ready.
+        c.status = .draftReady
+        c.updatedAt = Date()
+        chapters[idx] = c
+        return c
     }
 
     public func finalize(chapterId: String) async throws -> FinalizeResult {

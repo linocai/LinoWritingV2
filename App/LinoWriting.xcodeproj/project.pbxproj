@@ -14,6 +14,7 @@
 		0587824124C19C7E0503966C /* IOSNewBookSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAAD20ABBC10FE6DA153CF85 /* IOSNewBookSheet.swift */; };
 		068F4C674D0B986567BE48BF /* MacExportSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF77F61CA807A9728E0365E7 /* MacExportSheet.swift */; };
 		08518DD3F25AE22EEBB8D67F /* InlineEditableTags.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12E0898A481E7BE65AB535C4 /* InlineEditableTags.swift */; };
+		09F9C140F9F9E9C102DAE674 /* ChapterEditorStoreReattachTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADCF072ADE52E4E7CCDEE242 /* ChapterEditorStoreReattachTests.swift */; };
 		0A392C3880068742F8629C9E /* MacLogsSettingsSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AD2E22A44C94887EB2164B8 /* MacLogsSettingsSection.swift */; };
 		0ADBCA32557F5EB5C6A91A4A /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D79F224D6511D626D52377E /* APIClient.swift */; };
 		0D43ECC2848733887E24DDF0 /* ExportFormat.swift in Sources */ = {isa = PBXBuildFile; fileRef = E465C3D7893A74D5806DB97A /* ExportFormat.swift */; };
@@ -241,6 +242,7 @@
 		A9045653BE603E3F6D51FFBD /* APIClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClientTests.swift; sourceTree = "<group>"; };
 		AAE4AE9176A031910CED0DC6 /* LWMetrics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LWMetrics.swift; sourceTree = "<group>"; };
 		AAF182D970E4170BD60E2C5B /* IOSBookshelfView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSBookshelfView.swift; sourceTree = "<group>"; };
+		ADCF072ADE52E4E7CCDEE242 /* ChapterEditorStoreReattachTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChapterEditorStoreReattachTests.swift; sourceTree = "<group>"; };
 		AF097B90043258DA067B33D7 /* SSEClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSEClientTests.swift; sourceTree = "<group>"; };
 		B1DE2A4E13CECED664214DD6 /* PlatformAliases.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformAliases.swift; sourceTree = "<group>"; };
 		B6D025FDE2776B5B9B5012D5 /* LWFont.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LWFont.swift; sourceTree = "<group>"; };
@@ -345,6 +347,7 @@
 				A9045653BE603E3F6D51FFBD /* APIClientTests.swift */,
 				A1C1E4DA441F543FD625F726 /* AppStoreBannerTests.swift */,
 				8808B993A148FD14273E4A52 /* ChapterEditorStorePartialDraftTests.swift */,
+				ADCF072ADE52E4E7CCDEE242 /* ChapterEditorStoreReattachTests.swift */,
 				DEB10166F920ADCE13814BCE /* ChapterEditorStoreResetTests.swift */,
 				43871483E703D8F17242298E /* ChapterEditorStoreThinkingTests.swift */,
 				5EAB02FBFEE9D9708E8C2A1C /* ChapterExtractTests.swift */,
@@ -850,6 +853,7 @@
 				9364CC51BCC9830A740561F6 /* AgentLogStoreTests.swift in Sources */,
 				78BDB4BC5AAF690D3890CD18 /* AppStoreBannerTests.swift in Sources */,
 				33C1AE1A411FC8CB322F679A /* ChapterEditorStorePartialDraftTests.swift in Sources */,
+				09F9C140F9F9E9C102DAE674 /* ChapterEditorStoreReattachTests.swift in Sources */,
 				5EDFBBAA897E8C62323311ED /* ChapterEditorStoreResetTests.swift in Sources */,
 				DF6B00D800ABCB18E7401A90 /* ChapterEditorStoreThinkingTests.swift in Sources */,
 				5F079BF4EBBC7DCB807B1607 /* ChapterExtractTests.swift in Sources */,
@@ -964,7 +968,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 1.3.1;
+				MARKETING_VERSION = 1.3.2;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -1027,7 +1031,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 1.3.1;
+				MARKETING_VERSION = 1.3.2;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";

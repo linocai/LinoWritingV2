@@ -20,7 +20,7 @@ import SwiftUI
 ///     本章梗概 block. Footer: draft_ready→完成 `POST .../finalize`;
 ///     finalized→提取角色/时间线 `POST .../extract` + 重新打开 `POST .../reopen`.
 ///
-/// SSE reuses `ChapterEditorStore.startWriting` / `cancelStream` / `writingState`
+/// SSE reuses `ChapterEditorStore.startWriting` / `stopWriting` / `writingState`
 /// (same store macOS `MacChapterEditor` drives); status-driven button visibility
 /// follows the backend state machine strictly; a `ScrollViewReader` auto-scrolls
 /// the growing draft into view while streaming. Inline edits commit on blur
@@ -85,6 +85,10 @@ struct IOSChapterEditPlaceholder: View {
         .onChange(of: chapter?.userPrompt ?? "") { _, new in if !promptFocused { promptDraft = new } }
         .onChange(of: chapter?.structuredPrompt?.chapterDirective ?? "") { _, new in if !directiveFocused { directiveDraft = new } }
         .onChange(of: chapter?.title ?? "") { _, new in if !titleFocused { titleDraft = new } }
+        // v1.3.2 (LL) P2 — returning to the foreground reattaches to a write
+        // that kept running while the phone slept (the "息屏 5 分钟回来" path).
+        // Wrapped in its own modifier to keep scenePhase inference off this body.
+        .modifier(ReattachOnScenePhaseActiveIOS { chapterEditorStore.handleScenePhaseActive() })
         // v1.3.1 (KK) P6 — the Step2-field onChange observers are split into
         // a second modifier chain (see `MacChapterEditor`'s identical fix
         // and its doc comment) — chaining this many `.onChange`/`.sheet`/
@@ -499,8 +503,8 @@ struct IOSChapterEditPlaceholder: View {
             if showWriteButton(chapter) {
                 HStack(spacing: 10) {
                     if chapterEditorStore.isStreaming {
-                        Button { chapterEditorStore.cancelStream() } label: {
-                            Text("取消写作")
+                        Button { chapterEditorStore.stopWriting() } label: {
+                            Text("停止生成")
                                 .font(.system(size: 14, weight: .semibold))
                                 .foregroundStyle(LWColor.danger)
                                 .frame(height: 46).padding(.horizontal, 18)
@@ -1034,6 +1038,19 @@ struct IOSChapterEditPlaceholder: View {
         if let firstId = preferred, timelineStore.characterId != firstId {
             timelineStore.setCharacter(firstId)
             Task { await timelineStore.loadInitial() }
+        }
+    }
+}
+
+/// v1.3.2 (LL) P2 — iOS twin of `ReattachOnScenePhaseActive`: fires `onActive`
+/// on foreground return (the 息屏回来 reattach path), kept off the body's
+/// type-check budget.
+private struct ReattachOnScenePhaseActiveIOS: ViewModifier {
+    @Environment(\.scenePhase) private var scenePhase
+    let onActive: () -> Void
+    func body(content: Content) -> some View {
+        content.onChange(of: scenePhase) { _, phase in
+            if phase == .active { onActive() }
         }
     }
 }

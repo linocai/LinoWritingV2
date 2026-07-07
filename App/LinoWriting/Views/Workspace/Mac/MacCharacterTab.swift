@@ -261,12 +261,16 @@ struct MacCharacterTab: View {
 
     @ViewBuilder
     private func addFieldButton(kind: FieldKind, onAdd: @escaping (String, String) -> Void) -> some View {
-        MacAddFieldRow(placeholder: kind == .frozen ? "＋ 字段" : "＋ 字段", onAdd: onAdd)
+        // v1.3.2 (LL) P5 — both branches used to render the identical string
+        // (a dead ternary); collapsed to one literal. ``kind`` stays in the
+        // signature since both call sites (固定设定/动态字段) still need to
+        // pass it for a future frozen-vs-live distinction.
+        MacAddFieldRow(placeholder: "字段", onAdd: onAdd)
     }
 
     @ViewBuilder
     private func addNoteButton(onAdd: @escaping (String, String) -> Void) -> some View {
-        MacAddFieldRow(placeholder: "＋ 笔记", onAdd: onAdd)
+        MacAddFieldRow(placeholder: "笔记", onAdd: onAdd)
     }
 
     // MARK: - New char sheet
@@ -517,9 +521,10 @@ private struct MacCardHeadField: View {
 // MARK: - "+ 字段 / + 笔记" add row
 
 /// v1.3.0 (II) P1 — section-tail add control shared by 固定设定/动态字段/作者笔记.
-/// Collapsed = dashed "＋ 字段" pill; tapped = key+value input pair; key
-/// trimmed-non-empty is required to submit (mirrors the create-character
-/// name-required gate).
+/// Collapsed = dashed "+ 字段" pill (the leading "+" is the SF Symbol icon —
+/// ``placeholder`` itself carries no "＋" prefix, v1.3.2 LL P5 双加号 fix);
+/// tapped = key+value input pair; key trimmed-non-empty is required to
+/// submit (mirrors the create-character name-required gate).
 private struct MacAddFieldRow: View {
     let placeholder: String
     let onAdd: (String, String) -> Void

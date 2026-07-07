@@ -11,6 +11,12 @@ User=linowriting
 Group=linowriting
 WorkingDirectory=/opt/linowriting
 EnvironmentFile=/opt/linowriting/.env
+# HARD CONSTRAINT (v1.3.2 LL P1, 写作作业化): SINGLE uvicorn worker only.
+# The in-process WriteJobRegistry (a running write survives client disconnect
+# and is reattachable/cancellable across requests) lives in process memory.
+# NEVER add `--workers N` or switch to a multi-process gunicorn — a second
+# process gets its own empty registry and reattach/cancel silently miss the
+# live job. Also recorded in deploy/README.md, hz_info.md, and app startup log.
 ExecStart=/opt/linowriting/.venv/bin/uvicorn app.main:app \
     --host 127.0.0.1 --port 8787 \
     --timeout-keep-alive 75 \

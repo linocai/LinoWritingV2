@@ -31,6 +31,8 @@ _TEMPLATES: dict[tuple[str, str], str] = {
     ),
     # --- Chapter extract (v0.9.3 §5.DI) ---
     ("conflict", "no_draft_to_extract"): "本章没有正文可提取",
+    # --- Chapter write jobs (v1.3.2 LL P1, 写作作业化) ---
+    ("conflict", "chapter_write_in_progress"): "本章正在写作中，请等待当前生成完成或先停止生成",
     # --- Chapter / Book lookups ---
     ("not_found", "book"): "书籍不存在，可能已被删除",
     ("not_found", "chapter"): "章节不存在，可能已被删除",

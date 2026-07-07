@@ -300,3 +300,53 @@ def test_parse_characters_noActiveLlmKey_502(client, auth_headers):
     body = response.json()
     assert body["error"]["kind"] == "upstream"
     assert body["error"]["details"]["code"] == "no_active_llm_key"
+
+
+# v1.3.2 (LL) P4 — 落库异常状态码对齐: land_parsed_characters exploding during
+# the commit transaction must 502 (not the bare 500 the old blanket
+# ``except Exception: db.rollback(); raise`` produced), UNLESS it's an
+# IntegrityError, which keeps the pre-existing 409 behaviour (carve-out
+# BEFORE the blanket 502 — see routers/characters.py).
+def test_parse_characters_landingRaisesGenericException_502(client, auth_headers, monkeypatch):
+    import app.routers.characters as characters_router
+
+    def _boom(db, book_id, items):
+        raise RuntimeError("落库炸了")
+
+    monkeypatch.setattr(characters_router, "land_parsed_characters", _boom)
+    book_id = _make_book(client, auth_headers)
+    _override_extractor(_StubExtractorLLM(result={"characters": [{"name": "林夕"}]}))
+
+    response = client.post(
+        f"/api/v1/books/{book_id}/characters/parse",
+        headers=auth_headers,
+        json={"raw_text": "林夕，一名角色"},
+    )
+    assert response.status_code == 502
+    assert response.json()["error"]["kind"] == "upstream"
+
+    # And the failed landing was actually rolled back — no character/book
+    # left in a half-committed state, no leaked internal exception text
+    # required for the assertion above to hold.
+    list_response = client.get(f"/api/v1/books/{book_id}/characters", headers=auth_headers)
+    assert list_response.json()["items"] == []
+
+
+def test_parse_characters_landingRaisesIntegrityError_409(client, auth_headers, monkeypatch):
+    import app.routers.characters as characters_router
+    from sqlalchemy.exc import IntegrityError
+
+    def _boom(db, book_id, items):
+        raise IntegrityError("INSERT INTO characters ...", {}, Exception("dup key"))
+
+    monkeypatch.setattr(characters_router, "land_parsed_characters", _boom)
+    book_id = _make_book(client, auth_headers)
+    _override_extractor(_StubExtractorLLM(result={"characters": [{"name": "林夕"}]}))
+
+    response = client.post(
+        f"/api/v1/books/{book_id}/characters/parse",
+        headers=auth_headers,
+        json={"raw_text": "林夕，一名角色"},
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["kind"] == "conflict"

@@ -200,14 +200,27 @@ def test_expander_operational_rules_forbid_copying_cards_into_directive():
     assert "author_notes" in rules
 
 
-def test_expander_operational_rules_describe_two_tier_memory_input():
-    """v1.3.1 (KK) P7: the OPERATIONAL_RULES input description must mention
-    both memory tiers — recent_fulltext (最近 3 章原文) and recent_summaries
-    (更早章梗概) — so a future edit can't silently regress the description
-    back to the old summaries-only wording."""
+def test_expander_operational_rules_describe_three_tier_memory_input():
+    """v1.3.2 (LL) P3: the OPERATIONAL_RULES input description must mention
+    all three memory tiers — recent_fulltext (最近 3 章原文), recent_summaries
+    (再往前章梗概), and recent_headlines (更早一句话大事记) — so a future edit
+    can't silently regress the description back to the old
+    two-tier/summaries-only wording."""
     rules = PromptExpanderAgent.OPERATIONAL_RULES
     assert "recent_fulltext" in rules
     assert "recent_summaries" in rules
+    assert "recent_headlines" in rules
+
+
+def test_writer_operational_rules_describe_three_tier_memory_input():
+    """v1.3.2 (LL) P3: same keyword-regression guard as the Expander's, on
+    the Writer side — the Writer's OPERATIONAL_RULES must also mention all
+    three memory tiers so a future edit can't silently drop the
+    recent_summaries/recent_headlines description."""
+    rules = WriterAgent.OPERATIONAL_RULES
+    assert "recent_fulltext" in rules
+    assert "recent_summaries" in rules
+    assert "recent_headlines" in rules
 
 
 # --------------------------------------------------------------------------
@@ -293,6 +306,9 @@ def test_expander_context_carries_recent_summaries(db_session):
     ctx = build_expander_context(db_session, book, current)
     assert ctx["recent_summaries"] == [{"index": prior.index, "summary": prior.summary}]
     assert ctx["recent_fulltext"] == []
+    # v1.3.2 (LL) P3: 1 chapter is well under RECENT_SUMMARY_COUNT=30, so
+    # nothing spills into the third (headline) tier yet.
+    assert ctx["recent_headlines"] == []
 
 
 def test_expander_context_has_no_per_chapter_presliced_outline(db_session):
@@ -323,10 +339,11 @@ def test_expander_context_relevant_memory_selected_by_characters_involved(db_ses
 
 def test_expander_context_first_pass_empty_involved_slice(db_session):
     """Before the first expand, characters_involved is empty → the relevant
-    slice is empty, but ``recent_summaries``/``recent_fulltext`` (both empty,
-    no prior chapters here — v1.3.1 KK P7 two-tier memory, no regression on
-    the first chapter's empty window) and the all_characters pool are still
-    present so the Expander can pick characters and infer focus_traits."""
+    slice is empty, but ``recent_summaries``/``recent_fulltext``/
+    ``recent_headlines`` (all empty, no prior chapters here — v1.3.2 LL P3
+    three-tier memory, no regression on the first chapter's empty window)
+    and the all_characters pool are still present so the Expander can pick
+    characters and infer focus_traits."""
     book = Book(title="新书")
     db_session.add(book)
     db_session.flush()
@@ -341,5 +358,6 @@ def test_expander_context_first_pass_empty_involved_slice(db_session):
     assert ctx["involved_timelines"] == {}
     assert ctx["recent_summaries"] == []
     assert ctx["recent_fulltext"] == []
+    assert ctx["recent_headlines"] == []
     assert "outline" not in ctx
     assert {c["id"] for c in ctx["all_characters"]} == {char.id}

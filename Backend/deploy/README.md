@@ -8,7 +8,9 @@
 
 | 文件 | 用途 | S-3 部署到 HZ 的位置 |
 |---|---|---|
-| `linowriting-api.service` | systemd unit；uvicorn 单 worker，监听 `127.0.0.1:8787`，依赖 `postgresql@16-main.service`。`EnvironmentFile=/opt/linowriting/.env` | `/etc/systemd/system/linowriting-api.service`（root 拥有，0644） |
+| `linowriting-api.service` | systemd unit；uvicorn **单 worker（硬约束，永不得加 `--workers`）**，监听 `127.0.0.1:8787`，依赖 `postgresql@16-main.service`。`EnvironmentFile=/opt/linowriting/.env` | `/etc/systemd/system/linowriting-api.service`（root 拥有，0644） |
+
+> ⚠️ **单 worker 硬约束（v1.3.2 LL P1，写作作业化）**：写作任务在进程内内存态注册表（`app/services/write_jobs.py` 的 `WriteJobRegistry`）里，一次写作在客户端断开后仍继续跑、并可跨请求重附着/取消。**systemd unit 永不得加 `--workers N` 或换多进程 gunicorn**——第二个进程有自己的空注册表，重附着/取消会静默错过 live job。启动 log 会打印一行提醒；`hz_info.md` 同步记死。部署重启会丢弃当时正在写作的内存 job（daemon 线程随进程退出），属预期部署窗口——`deploy-hz.sh` 重启前会查 `status='writing'` 的章数并提示。
 | `nginx-linowriting.conf` | Nginx site；`lw.linotsai.top` HTTP→HTTPS + 443 反代 `127.0.0.1:8787`；SSE 友好（`proxy_buffering off` / 120s timeout） | `/etc/nginx/sites-available/linowriting`（root，0644）+ `sites-enabled/linowriting` symlink |
 | `deploy-hz.sh` | 本地 → HZ 日常发版：rsync 代码 → 原子切换 → venv + `pip install -e .` → `alembic upgrade head` → `systemctl reload-or-restart`。支持 `--dry-run` | 留在 repo `Backend/deploy/` 下；从作者 mac 本地执行 |
 

@@ -12,8 +12,20 @@ public enum SSEEvent: Equatable, Sendable {
     /// silently ignore it (verified: `SSEParser.decode`'s `default` branch
     /// + `ChapterEditorStore`'s `.other: continue`).
     case thinking(text: String)
+    /// v1.3.2 (LL) P1 — reattach snapshot: the full final-prose buffer so far,
+    /// replayed once at the start of a `GET /write/stream` reattach so a
+    /// reconnecting client can rebuild its streaming buffer before tailing.
+    /// Never carries thinking text.
+    case snapshot(buffer: String, chars: Int)
     case done(chapter: Chapter)
     case error(AppError)
+    /// v1.3.2 (LL) P1 — reattach control signal: the DB row is stuck in
+    /// `writing` but no job exists in the (single-worker) registry, i.e. the
+    /// worker was lost to a process restart. The client should offer 强制重置.
+    case reattachStranded
+    /// v1.3.2 (LL) P1 — reattach control signal: nothing is being written for
+    /// this chapter. The client silently drops to idle (no Toast).
+    case reattachNoActive
     /// Catch-all for unknown event types so the stream can keep flowing.
     case other(name: String, data: String)
 }
@@ -97,12 +109,35 @@ public final class SSEParser {
             if let p = try? decoder.decode(P.self, from: jsonData) {
                 return .thinking(text: p.text)
             }
+        case "snapshot":
+            struct P: Decodable { let buffer: String; let chars: Int }
+            if let p = try? decoder.decode(P.self, from: jsonData) {
+                return .snapshot(buffer: p.buffer, chars: p.chars)
+            }
         case "done":
             struct P: Decodable { let chapter: Chapter }
             if let p = try? decoder.decode(P.self, from: jsonData) {
                 return .done(chapter: p.chapter)
             }
+            // v1.3.2 (LL) P2 审后修复 #5: `done{chapter:null}` — the backend
+            // worker completed but the chapter was deleted mid-write, so there's
+            // no row to hand back. Treat it like `no_active_write`: silently drop
+            // to idle, no generic failure Toast.
+            struct PNull: Decodable { let chapter: Chapter? }
+            if let pn = try? decoder.decode(PNull.self, from: jsonData), pn.chapter == nil {
+                return .reattachNoActive
+            }
         case "error":
+            // v1.3.2 (LL) P1 — reattach control signals carry a *top-level*
+            // `kind` (distinct from the real error envelope `{error:{kind,…}}`).
+            struct Control: Decodable { let kind: String }
+            if let ctrl = try? decoder.decode(Control.self, from: jsonData) {
+                switch ctrl.kind {
+                case "stranded_write": return .reattachStranded
+                case "no_active_write": return .reattachNoActive
+                default: break
+                }
+            }
             if let _ = try? decoder.decode(BackendErrorEnvelope.self, from: jsonData) {
                 return .error(ErrorMapping.map(status: 500, body: jsonData))
             }
@@ -169,9 +204,18 @@ public final class SSEClient: @unchecked Sendable {
                             if let event = parser.consume(line: line) {
                                 continuation.yield(event)
                                 if case .done = event { continuation.finish(); return }
-                                if case .error(let e) = event {
-                                    continuation.finish(throwing: e); return
-                                }
+                                // v1.3.2 (LL) P2 审后修复 #4: a terminal `error`
+                                // frame is a *definitive* outcome (the worker
+                                // failed / stranded), NOT a transport drop.
+                                // Deliver it as a normal `.error` event (the
+                                // store publishes the real upstream error via
+                                // `applyWriteEvent`) and finish the stream
+                                // GRACEFULLY. Throwing here would make the
+                                // reattach retry loop mistake a determinate
+                                // failure for a transient disconnect — burning
+                                // 3 retries and surfacing a generic
+                                // 「连接中断」 Toast instead of the real error.
+                                if case .error = event { continuation.finish(); return }
                             }
                         } else if byte == 0x0D {
                             // ignore CR; LF will trigger dispatch

@@ -32,6 +32,10 @@ public protocol APIClientProtocol: Sendable {
     // Flow actions
     func expand(chapterId: String, force: Bool) async throws -> Chapter
     func writeStream(chapterId: String) -> AsyncThrowingStream<SSEEvent, Error>
+    // v1.3.2 (LL) P1 — writing-as-a-job: reattach to an in-flight (or
+    // just-finished) write; explicitly cancel one.
+    func reattachWriteStream(chapterId: String) -> AsyncThrowingStream<SSEEvent, Error>
+    func cancelWrite(chapterId: String) async throws -> Chapter
     func finalize(chapterId: String) async throws -> FinalizeResult
     func reopen(chapterId: String) async throws -> Chapter
     func importChapter(id: String, payload: ChapterImportRequest) async throws -> ChapterImportResponse
@@ -369,6 +373,37 @@ public final class APIClient: APIClientProtocol, @unchecked Sendable {
             }
         }
         return sseClient.stream(request: request)
+    }
+
+    /// v1.3.2 (LL) P1 — `GET /chapters/{id}/write/stream`. Reattach SSE. Reuses
+    /// the SSE-tuned session; a client disconnect here only tears down the
+    /// subscription (the backend job keeps running).
+    public func reattachWriteStream(chapterId: String) -> AsyncThrowingStream<SSEEvent, Error> {
+        let request: URLRequest
+        do {
+            request = try makeRequest(
+                method: "GET",
+                path: "/api/v1/chapters/\(chapterId)/write/stream",
+                accept: "text/event-stream"
+            )
+        } catch {
+            return AsyncThrowingStream { continuation in
+                continuation.finish(throwing: error)
+            }
+        }
+        return sseClient.stream(request: request)
+    }
+
+    /// v1.3.2 (LL) P1 — `POST /chapters/{id}/write/cancel`. The only real "停止
+    /// 生成": sets the backend cancel signal and returns the (possibly still
+    /// `writing`) chapter row after a bounded wait.
+    public func cancelWrite(chapterId: String) async throws -> Chapter {
+        let req = try makeRequest(
+            method: "POST",
+            path: "/api/v1/chapters/\(chapterId)/write/cancel",
+            body: "{}".data(using: .utf8)
+        )
+        return try await send(req, as: Chapter.self)
     }
 
     public func finalize(chapterId: String) async throws -> FinalizeResult {
