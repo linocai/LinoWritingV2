@@ -199,3 +199,72 @@ def test_writer_user_message_carries_author_notes_when_present():
     assert "为妹妹复仇" in llm.last_user
     assert "focus_traits" in llm.last_user
     assert "谨慎" in llm.last_user
+
+
+def test_writer_system_prompt_declares_world_setting_hard_constraint():
+    """v1.3.3 快修 (作者实测报障): ``world_setting`` was fed to the Writer since
+    v1.0.0 (build_writer_context's first key) but neither the rules nor the
+    persona ever mentioned it — the model treated the author's worldview as
+    background noise and freely violated it. Locks a dedicated rules section
+    naming the key and its hard-constraint semantics."""
+    sp = WriterAgent.system_prompt
+    assert "world_setting" in sp
+    assert "硬约束" in sp
+    assert "不得违背" in sp
+    assert "不要编造" in sp or "不编造" in sp
+
+
+def test_writer_user_message_trailing_word_count_block_with_target():
+    """v1.3.3 快修: target_word_count buried inside the structured_prompt JSON
+    was ignored in practice (2500 requested → 4000+ delivered). The user
+    message now ends with an explicit「# 交稿要求」block carrying the concrete
+    number and the ±20% window."""
+    llm = _CapturingLLM()
+    context = {
+        "target_word_count": 2500,
+        "structured_prompt": {"chapter_goal": "推进", "target_word_count": 2500},
+        "characters": [],
+        "timelines": {},
+        "recent_summaries": [],
+    }
+    list(WriterAgent(llm).stream(context))
+    assert llm.last_user is not None
+    assert "# 交稿要求" in llm.last_user
+    assert "2500 字" in llm.last_user
+    assert "2000" in llm.last_user and "3000" in llm.last_user
+    # Trailing position: the block must come after the JSON blob.
+    assert llm.last_user.rstrip().endswith("抵达区间即完稿。")
+
+
+def test_writer_user_message_trailing_word_count_block_default_range():
+    """No target (or a junk value) → the trailing block still appears, carrying
+    the 2500–3500 default anchor instead of a computed window."""
+    llm = _CapturingLLM()
+    for junk in (None, 0, -100, True):
+        context = {
+            "target_word_count": junk,
+            "structured_prompt": {"chapter_goal": "推进"},
+            "characters": [],
+            "timelines": {},
+            "recent_summaries": [],
+        }
+        list(WriterAgent(llm).stream(context))
+        assert llm.last_user is not None
+        assert "# 交稿要求" in llm.last_user
+        assert "2500–3500 字" in llm.last_user
+
+
+def test_writer_user_message_word_count_block_falls_back_to_structured_prompt():
+    """Bare contexts (tests / internal callers) without the lifted top-level
+    key still resolve the target from structured_prompt."""
+    llm = _CapturingLLM()
+    context = {
+        "structured_prompt": {"chapter_goal": "推进", "target_word_count": 3000},
+        "characters": [],
+        "timelines": {},
+        "recent_summaries": [],
+    }
+    list(WriterAgent(llm).stream(context))
+    assert llm.last_user is not None
+    assert "3000 字" in llm.last_user
+    assert "2400" in llm.last_user and "3600" in llm.last_user

@@ -241,6 +241,11 @@ def build_writer_context(db: Session, book: Book, chapter: Chapter) -> dict[str,
         "style_directive": book.style_directive or "",
         # 方向 (steering) — the Expander's directive, its own line.
         "chapter_directive": chapter_directive,
+        # v1.3.3 快修 — 字数服从性: lifted out of structured_prompt as its own
+        # top-level key (same pattern as chapter_directive) so the Writer's
+        # trailing「# 交稿要求」block and the model's attention both read it
+        # without digging through the blueprint JSON.
+        "target_word_count": structured_prompt.get("target_word_count"),
         "structured_prompt": structured_prompt,
         # 知识 (knowledge) — Writer reads author_notes for backstage
         # understanding (§5.L.5); the system_prompt forbids narrating it

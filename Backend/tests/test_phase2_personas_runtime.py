@@ -223,6 +223,28 @@ def test_writer_operational_rules_describe_three_tier_memory_input():
     assert "recent_headlines" in rules
 
 
+def test_expander_operational_rules_reference_world_setting():
+    """v1.3.3 快修 (作者实测报障): the Expander context has carried
+    ``world_setting`` since v1.0.0 but the rules never named it — the
+    continuity check silently excluded the author's worldview. Locks the
+    input-list mention and the setting-conflict check."""
+    rules = PromptExpanderAgent.OPERATIONAL_RULES
+    assert "world_setting" in rules
+    assert "世界观" in rules
+
+
+def test_extractor_operational_rules_pin_summary_first_sentence_headline():
+    """v1.3.3 快修: recent_headlines (v1.3.2 LL P3) is mechanically the FIRST
+    SENTENCE of the extractor's summary — so the extractor must be told to
+    lead with the chapter's most important event, or the whole headline tier
+    inherits whatever filler sentence happens to come first."""
+    from app.agents.extractor import ExtractorAgent
+
+    rules = ExtractorAgent.OPERATIONAL_RULES
+    assert "第一句" in rules
+    assert "大事记" in rules
+
+
 # --------------------------------------------------------------------------
 # Gate 3 — 优化师 context (无 outline 键 / recent_summaries 在 / 相关记忆按
 # involved 选) — rewritten for v1.3.0 (II/JJ) P4 去大纲化 (P8, see
