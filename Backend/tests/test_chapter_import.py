@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 
 from app.llm.base import get_llm_client
+from app.llm.errors import LLMError
 from app.main import app
 from tests.conftest import MockLLMClient, override_all_llm_clients
 
@@ -236,6 +237,65 @@ def test_import_from_draft_ready_state(client, auth_headers, session_factory):
     assert body["chapter"]["status"] == "finalized"
     assert body["chapter"]["source"] == "imported"
     assert body["chapter"]["draft_text"].startswith("雨夜山洞")
+
+
+class FailingExtractorLLM(MockLLMClient):
+    """Extractor whose ``complete_json`` blows up — simulates an upstream LLM
+    failure during extraction on the import path (v1.3.1 KK P4 hard gate)."""
+
+    def complete_json(self, *, system: str, user: str, schema: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+        raise LLMError("extractor exploded", retryable=False)
+
+
+def test_import_run_extractor_true_llm_failure_keeps_chapter_finalized_and_draft_intact(
+    client, auth_headers
+):
+    """v1.3.1 (KK) P4 hard gate — locks the two-phase commit contract.
+
+    Pre-P4, ``run_extractor=true`` only ``db.flush()``'d the imported draft
+    before running the Extractor; a failure there ``db.rollback()``'d the
+    draft_text/title/source/finalized changes right along with the
+    extractor's own writes — the user's imported text was lost on a
+    transient LLM failure. Post-P4 the import (draft_text/title/source/
+    finalized) is committed in its own phase-one transaction BEFORE the
+    Extractor ever runs, so a failure in phase two can only roll back the
+    extractor's own uncommitted writes.
+
+    Asserts: chapter stays ``finalized``, draft_text/title/source survive
+    intact, and the endpoint surfaces an upstream (502) error — not a 200
+    with silently-dropped extraction, and not a chapter reverted to
+    draft/prompt_ready.
+    """
+    override_all_llm_clients(lambda: FailingExtractorLLM())
+
+    book, character = _seed_book_character(client, auth_headers)
+    chapter = _new_chapter(client, auth_headers, book["id"])
+    draft = "雨夜山洞里，林夕摸到一枚带血的铜钱，心头一沉。"
+
+    resp = client.post(
+        f"/api/v1/chapters/{chapter['id']}/import",
+        headers=auth_headers,
+        json={"draft_text": draft, "title": "两段式导入", "run_extractor": True},
+    )
+    # LLMError → i18n_upstream("llm_generic") → 502 upstream envelope.
+    assert resp.status_code == 502, resp.text
+    assert resp.json()["error"]["kind"] == "upstream"
+
+    # Chapter is still finalized with the full imported draft — phase one's
+    # commit was never touched by phase two's rollback.
+    after = client.get(f"/api/v1/chapters/{chapter['id']}", headers=auth_headers).json()
+    assert after["status"] == "finalized"
+    assert after["draft_text"] == draft
+    assert after["title"] == "两段式导入"
+    assert after["source"] == "imported"
+
+    # No extraction landed (extractor failed before writing anything).
+    timeline = client.get(
+        f"/api/v1/characters/{character['id']}/timeline", headers=auth_headers
+    ).json()
+    assert timeline["items"] == []
+    char_after = client.get(f"/api/v1/characters/{character['id']}", headers=auth_headers).json()
+    assert char_after["live_fields"]["current_status"] == "调查失踪案"
 
 
 def test_import_rejects_writing_state(client, auth_headers, session_factory):

@@ -13,12 +13,42 @@ from app.models.timeline_event import TimelineEvent
 # Style-sample knobs for WriterAgent's "参考前文文风" block.
 # Both agent-written and imported finalized chapters feed this — the goal is
 # pure stylistic reference, regardless of how the chapter was produced.
+#
+# v1.3.1 (KK) P7 审后修复 🔵1 (reviewer 抓出): this channel is currently
+# UNREACHABLE with a non-empty result in ``build_writer_context`` — NOT just
+# "a fallback for very-early books" as an earlier comment here incorrectly
+# claimed. ``_recent_finalized``'s ``fulltext_rows`` and ``style_rows`` are
+# both filtered from the SAME ``windowed_rows`` by the SAME condition
+# (``chapter.draft_text or ""`` truthy) — so ``style_rows`` non-empty implies
+# ``fulltext_rows`` non-empty too, which means ``build_writer_context``
+# always zeroes ``style_samples`` right back out (see the
+# ``if recent_fulltext: style_samples = []`` line below). This holds even for
+# a book's very first finalized chapter (1 chapter is enough to populate
+# ``recent_fulltext``, well under the ``RECENT_FULLTEXT_COUNT=3`` cap) — there
+# is no chapter count at which the fallback fires with non-empty output.
+# ``WriterAgent``'s "# 参考前文文风" block wording and
+# ``_render_style_samples_block`` are consequently dead in production too
+# (still reachable directly in unit tests that call ``_recent_finalized``
+# with ``fulltext_limit=0``, which is why they're kept rather than deleted).
+# Per PROJECT_PLAN §4 P7, "整体退场" (fully retiring the channel) was an
+# allowed option; this pass keeps the mechanism in place (plan-compliant,
+# behavior-preserving) and only corrects the comment to describe reality —
+# removing the dead code/mechanism outright is a slightly larger change than
+# a doc-only fix and is left as a follow-up if the team wants to formally
+# retire the channel rather than leave it inert.
 STYLE_SAMPLES_CHAPTER_COUNT = 2
 STYLE_SAMPLES_CHARS_PER_SIDE = 400
 
-# v0.7 §5.L — recent-summaries knob lives next to STYLE_SAMPLES_* so the
-# merged-query helper below has both inputs in one place.
-RECENT_SUMMARIES_COUNT = 2
+# v1.3.1 (KK) P7 — two-tier memory: the most recent ``RECENT_FULLTEXT_COUNT``
+# finalized chapters are fed to Expander/Writer as FULL ``draft_text`` (原文);
+# every finalized chapter older than that is fed as ``summary`` only, with NO
+# upper bound (replaces the old ``RECENT_SUMMARIES_COUNT=2`` cap — v0.7 §5.L).
+# New invariant (locked, see test_phase5_end_to_end.py INV-1'/INV-1b'): the
+# fulltext channel is bounded at exactly this constant regardless of total
+# chapter count; only summaries (~200 字 each) grow linearly, which is
+# acceptable up to ~300 chapters (see PROJECT_PLAN §4 P7 / Backlog §3.1 for
+# the super-long-form third memory tier, not built here).
+RECENT_FULLTEXT_COUNT = 3
 
 
 def build_expander_context(db: Session, book: Book, chapter: Chapter) -> dict[str, Any]:
@@ -38,11 +68,16 @@ def build_expander_context(db: Session, book: Book, chapter: Chapter) -> dict[st
     # ``all_characters`` (brief, with frozen_fields + author_notes) is kept so
     # the Expander can still pick characters_involved / infer focus_traits
     # (§5.L.4) even on the first pass when the involved set is still empty.
-    summaries, _ = _recent_finalized(
+    #
+    # v1.3.1 (KK) P7 — two-tier memory: the nearest ``RECENT_FULLTEXT_COUNT``
+    # finalized chapters are read as full ``draft_text`` (``recent_fulltext``);
+    # everything older is ``summary``-only (``recent_summaries``, no upper
+    # bound). The Expander's continuity check now grounds itself in both.
+    recent_fulltext, summaries, _ = _recent_finalized(
         db,
         book.id,
         chapter.index,
-        summaries_limit=RECENT_SUMMARIES_COUNT,
+        fulltext_limit=RECENT_FULLTEXT_COUNT,
         style_samples_limit=0,
     )
     structured_prompt = chapter.structured_prompt or {}
@@ -71,6 +106,9 @@ def build_expander_context(db: Session, book: Book, chapter: Chapter) -> dict[st
             _character_full(character, include_author_notes=True) for character in involved
         ],
         "involved_timelines": involved_timelines,
+        # 两层记忆 (P7): nearest RECENT_FULLTEXT_COUNT finalized chapters as full
+        # draft_text, everything older as summary-only (unbounded).
+        "recent_fulltext": recent_fulltext,
         "recent_summaries": summaries,
         "all_characters": [_character_brief(character) for character in characters],
     }
@@ -96,17 +134,42 @@ def build_writer_context(db: Session, book: Book, chapter: Chapter) -> dict[str,
     characters = _book_characters(db, book.id)
     selected = [character for character in characters if character.id in involved_ids]
     timelines = {character.id: _character_timeline(db, book.id, character.id, limit=15) for character in selected}
-    # Merged query (§5.L + audit J): summaries + style_samples used to fire
-    # two near-identical SELECTs against the chapters table; now they share
-    # one query and split in memory.
-    summaries, style_samples = _recent_finalized(
+    # Merged query (§5.L + audit J): fulltext/summaries + style_samples used to
+    # fire multiple near-identical SELECTs against the chapters table; now they
+    # share one query and split in memory.
+    #
+    # v1.3.1 (KK) P7 — two-tier memory: nearest RECENT_FULLTEXT_COUNT finalized
+    # chapters as full draft_text (``recent_fulltext``), older ones as
+    # summary-only (``recent_summaries``, unbounded). style_samples's own
+    # query still runs (see ``_recent_finalized``), but its result is
+    # unconditionally discarded below whenever ``recent_fulltext`` is
+    # non-empty — feeding the same chapters twice (once as fulltext, once as
+    # head/tail snippets) would be duplicate token spend for identical text.
+    #
+    # v1.3.1 (KK) P7 审后修复 🔵1 (reviewer 抓出): an earlier version of this
+    # comment described style_samples as "populated as a fallback for
+    # very-early books where the fulltext window is still empty" — that is
+    # FALSE. ``fulltext_rows``/``style_rows`` share the same source rows and
+    # the same non-empty-``draft_text`` filter (see ``_recent_finalized``), so
+    # ``style_samples`` can only be non-empty when ``recent_fulltext`` is ALSO
+    # non-empty — meaning the zero-out below fires unconditionally whenever
+    # there would be anything to zero. There is no chapter count (not even
+    # "1 finalized chapter, well under RECENT_FULLTEXT_COUNT=3") at which
+    # this fallback actually delivers a non-empty result to the Writer.
+    # ``style_samples`` is kept as a mechanism (plan allowed either retiring
+    # it entirely or keeping it inert; see STYLE_SAMPLES_CHAPTER_COUNT's
+    # docstring above for why outright removal is left as a follow-up) rather
+    # than a live code path.
+    recent_fulltext, summaries, style_samples = _recent_finalized(
         db,
         book.id,
         chapter.index,
-        summaries_limit=RECENT_SUMMARIES_COUNT,
+        fulltext_limit=RECENT_FULLTEXT_COUNT,
         style_samples_limit=STYLE_SAMPLES_CHAPTER_COUNT,
         chars_per_side=STYLE_SAMPLES_CHARS_PER_SIDE,
     )
+    if recent_fulltext:
+        style_samples = []
     # 方向 line: lift chapter_directive out so it's its own top-level input.
     # ``None`` (or empty/whitespace) means "no directive" — graceful degrade.
     raw_directive = structured_prompt.get("chapter_directive")
@@ -127,6 +190,9 @@ def build_writer_context(db: Session, book: Book, chapter: Chapter) -> dict[str,
         # would this character do here".
         "characters": [_character_full(character, include_author_notes=True) for character in selected],
         "timelines": timelines,
+        # 两层记忆 (P7): nearest RECENT_FULLTEXT_COUNT finalized chapters as full
+        # draft_text, everything older as summary-only (unbounded).
+        "recent_fulltext": recent_fulltext,
         "recent_summaries": summaries,
         "style_samples": style_samples,
     }
@@ -161,33 +227,47 @@ def _recent_finalized(
     book_id: str,
     before_index: int,
     *,
-    summaries_limit: int,
+    fulltext_limit: int,
     style_samples_limit: int,
     chars_per_side: int = STYLE_SAMPLES_CHARS_PER_SIDE,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """One SQL fetch for both ``recent_summaries`` and ``style_samples``.
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    """One SQL fetch for ``recent_fulltext``, ``recent_summaries``, AND
+    ``style_samples``.
 
-    Merged from the v0.6 pair ``_recent_summaries`` / ``_style_samples``
-    (§5.L + integration-audit item J). Their WHERE clauses overlapped almost
-    completely — same ``book_id`` / ``index < before_index`` / ``status =
-    'finalized'`` — so we issue one SELECT that orders by ``index DESC`` and
-    pulls ``max(summaries_limit, style_samples_limit)`` rows, then split in
-    memory.
+    v1.3.1 (KK) P7 — two-tier memory. Originally (§5.L + integration-audit
+    item J) this merged ``recent_summaries`` + ``style_samples`` into one
+    query; P7 folds the fulltext window in too since all three share the same
+    WHERE clause (``book_id`` / ``index < before_index`` / ``status =
+    'finalized'``), just ordered by ``index DESC``.
 
-    Returns ``(summaries, style_samples)`` already in ascending order
-    (oldest first) so callers don't need to ``reversed(...)``. Empty inputs
-    (limit 0) return an empty list without touching the DB if both limits
-    are 0.
+    Semantics:
+    - ``recent_fulltext``: the nearest ``fulltext_limit`` finalized chapters,
+      each carrying FULL ``draft_text`` — this is the bounded 原文 channel
+      (locked invariant: always ≤ ``fulltext_limit``, never grows with total
+      chapter count).
+    - ``recent_summaries``: every OTHER finalized chapter older than the
+      fulltext window, summary-only, with NO upper bound (may grow linearly
+      with total chapter count — accepted up to ~300 chapters, see
+      ``RECENT_FULLTEXT_COUNT``'s docstring).
+    - ``style_samples``: unchanged bounded head/tail snippet mechanism,
+      independent of the two above (callers zero it out when the fulltext
+      window already hit — see ``build_writer_context``).
 
-    Short-chapter style-samples rule preserved from the old helper: when
+    All three return in ascending order (oldest first) so callers don't need
+    to ``reversed(...)``. Short-chapter style-samples rule preserved: when
     ``len(draft_text) <= 2 * chars_per_side``, head holds the full text and
     tail collapses to ``''``.
     """
-    fetch_limit = max(summaries_limit, style_samples_limit)
-    if fetch_limit <= 0:
-        return [], []
+    style_fetch_limit = max(fulltext_limit, style_samples_limit)
+    if style_fetch_limit <= 0:
+        return [], [], []
 
-    rows = db.scalars(
+    # Two separate result sets are needed: the fulltext/style window is
+    # capped at ``style_fetch_limit`` rows, but ``recent_summaries`` must see
+    # EVERY older finalized chapter (no upper bound) — a single ``LIMIT``
+    # can't serve both. Fetch the bounded window first, then a second query
+    # for "everything older than that window" (summaries only, no LIMIT).
+    windowed_rows = db.scalars(
         select(Chapter)
         .where(
             Chapter.book_id == book_id,
@@ -195,16 +275,15 @@ def _recent_finalized(
             Chapter.status == "finalized",
         )
         .order_by(Chapter.index.desc())
-        .limit(fetch_limit)
+        .limit(style_fetch_limit)
     ).all()
 
-    # Slice + transform in memory so we don't burn extra round-trips.
-    summary_rows = [chapter for chapter in rows if chapter.summary is not None][:summaries_limit]
-    style_rows = [chapter for chapter in rows if (chapter.draft_text or "")][:style_samples_limit]
+    fulltext_rows = [chapter for chapter in windowed_rows if (chapter.draft_text or "")][:fulltext_limit]
+    style_rows = [chapter for chapter in windowed_rows if (chapter.draft_text or "")][:style_samples_limit]
 
-    summaries = [
-        {"index": chapter.index, "summary": chapter.summary}
-        for chapter in reversed(summary_rows)
+    recent_fulltext = [
+        {"index": chapter.index, "draft_text": chapter.draft_text}
+        for chapter in reversed(fulltext_rows)
     ]
 
     style_samples: list[dict[str, Any]] = []
@@ -220,7 +299,32 @@ def _recent_finalized(
             tail = text[-chars_per_side:]
         style_samples.append({"chapter_index": chapter.index, "head": head, "tail": tail})
 
-    return summaries, style_samples
+    # Summaries: every finalized chapter OLDER than the fulltext window (no
+    # upper bound). ``windowed_rows`` (ordered desc, capped at
+    # ``style_fetch_limit`` >= ``fulltext_limit``) already tells us the
+    # oldest index still inside the window — anything with a smaller index
+    # is "older than the window" and gets a fresh, unbounded query.
+    if fulltext_rows:
+        oldest_windowed_index = windowed_rows[-1].index
+        cutoff_index = min(oldest_windowed_index, before_index)
+    else:
+        cutoff_index = before_index
+    summary_rows = db.scalars(
+        select(Chapter)
+        .where(
+            Chapter.book_id == book_id,
+            Chapter.index < cutoff_index,
+            Chapter.status == "finalized",
+            Chapter.summary.isnot(None),
+        )
+        .order_by(Chapter.index.desc())
+    ).all()
+    summaries = [
+        {"index": chapter.index, "summary": chapter.summary}
+        for chapter in reversed(summary_rows)
+    ]
+
+    return recent_fulltext, summaries, style_samples
 
 
 def _character_timeline(db: Session, book_id: str, character_id: str, *, limit: int) -> list[dict[str, Any]]:

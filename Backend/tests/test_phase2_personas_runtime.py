@@ -200,6 +200,16 @@ def test_expander_operational_rules_forbid_copying_cards_into_directive():
     assert "author_notes" in rules
 
 
+def test_expander_operational_rules_describe_two_tier_memory_input():
+    """v1.3.1 (KK) P7: the OPERATIONAL_RULES input description must mention
+    both memory tiers — recent_fulltext (最近 3 章原文) and recent_summaries
+    (更早章梗概) — so a future edit can't silently regress the description
+    back to the old summaries-only wording."""
+    rules = PromptExpanderAgent.OPERATIONAL_RULES
+    assert "recent_fulltext" in rules
+    assert "recent_summaries" in rules
+
+
 # --------------------------------------------------------------------------
 # Gate 3 — 优化师 context (无 outline 键 / recent_summaries 在 / 相关记忆按
 # involved 选) — rewritten for v1.3.0 (II/JJ) P4 去大纲化 (P8, see
@@ -273,10 +283,16 @@ def test_expander_context_has_no_outline_key(db_session):
 
 def test_expander_context_carries_recent_summaries(db_session):
     """The new continuity-grounding input: already-finalized chapter summaries,
-    replacing the old whole-book outline read."""
+    replacing the old whole-book outline read.
+
+    v1.3.1 (KK) P7: ``prior`` here has no ``draft_text`` (only a ``summary``),
+    so it correctly falls to ``recent_summaries`` rather than the fulltext
+    window (``recent_fulltext`` requires non-empty draft_text) — locks that
+    a summary-only finalized chapter still surfaces via recent_summaries."""
     book, c1, c2, current, prior = _seed_memory_world(db_session)
     ctx = build_expander_context(db_session, book, current)
     assert ctx["recent_summaries"] == [{"index": prior.index, "summary": prior.summary}]
+    assert ctx["recent_fulltext"] == []
 
 
 def test_expander_context_has_no_per_chapter_presliced_outline(db_session):
@@ -307,9 +323,10 @@ def test_expander_context_relevant_memory_selected_by_characters_involved(db_ses
 
 def test_expander_context_first_pass_empty_involved_slice(db_session):
     """Before the first expand, characters_involved is empty → the relevant
-    slice is empty, but ``recent_summaries`` (empty, no prior chapters here)
-    and the all_characters pool are still present so the Expander can pick
-    characters and infer focus_traits."""
+    slice is empty, but ``recent_summaries``/``recent_fulltext`` (both empty,
+    no prior chapters here — v1.3.1 KK P7 two-tier memory, no regression on
+    the first chapter's empty window) and the all_characters pool are still
+    present so the Expander can pick characters and infer focus_traits."""
     book = Book(title="新书")
     db_session.add(book)
     db_session.flush()
@@ -323,5 +340,6 @@ def test_expander_context_first_pass_empty_involved_slice(db_session):
     assert ctx["involved_characters"] == []
     assert ctx["involved_timelines"] == {}
     assert ctx["recent_summaries"] == []
+    assert ctx["recent_fulltext"] == []
     assert "outline" not in ctx
     assert {c["id"] for c in ctx["all_characters"]} == {char.id}

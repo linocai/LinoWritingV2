@@ -27,6 +27,15 @@ from app.services.secret_redaction import redact_secrets
 # messages / agent_log rows. Anything longer is truncated. See §5.P.1 A.
 UPSTREAM_BODY_LIMIT = 256
 
+# v1.3.1 (KK) P3: default request timeout for the two non-streaming call
+# shapes (`complete` / `complete_json`), covering extract/expand/finalize/
+# import/parse. Was 60s — too tight for thinking-capable models on slow
+# relays; callers never pass an explicit `timeout` kwarg today, so bumping
+# this one default covers all of them in one place. The streaming path
+# (`complete_stream`) is untouched — it already runs on a separate
+# per-phase `httpx.Timeout` (read=180) unrelated to this constant.
+DEFAULT_NON_STREAM_TIMEOUT_SECONDS = 300
+
 
 def _sanitize_error_body(body: str) -> str:
     """Redact obvious secrets, then truncate.
@@ -64,7 +73,7 @@ class OpenAICompatibleClient:
 
     def complete(self, *, system: str, user: str, **kwargs: Any) -> str:
         payload = self._payload(system=system, user=user, stream=False, **kwargs)
-        data = self._post_json(payload, timeout=kwargs.get("timeout", 60))
+        data = self._post_json(payload, timeout=kwargs.get("timeout", DEFAULT_NON_STREAM_TIMEOUT_SECONDS))
         return _extract_content(data)
 
     def complete_json(self, *, system: str, user: str, schema: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
@@ -81,7 +90,7 @@ class OpenAICompatibleClient:
             stream=False,
             **kwargs,
         )
-        data = self._post_json(payload, timeout=kwargs.get("timeout", 60))
+        data = self._post_json(payload, timeout=kwargs.get("timeout", DEFAULT_NON_STREAM_TIMEOUT_SECONDS))
         content = _extract_content(data)
         try:
             parsed = json.loads(content)

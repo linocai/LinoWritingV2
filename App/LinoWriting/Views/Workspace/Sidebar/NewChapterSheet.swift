@@ -3,6 +3,12 @@ import SwiftUI
 public struct NewChapterSheet: View {
     @EnvironmentObject var chaptersStore: ChaptersStore
     @EnvironmentObject var chapterEditorStore: ChapterEditorStore
+    // v1.3.1 (KK) P4: `charactersStore` (right-panel highlight after an
+    // auto-extracting single-chapter import) and `environment` (direct
+    // `getChapter` re-fetch to distinguish "nothing landed" from "body
+    // committed, extractor failed" after a two-phase import error).
+    @EnvironmentObject var charactersStore: CharactersStore
+    @EnvironmentObject var environment: AppEnvironment
     @Environment(\.dismiss) private var dismiss
 
     /// Mode tab — v0.6.1 follow-up after A-2 user feedback: the
@@ -296,16 +302,27 @@ public struct NewChapterSheet: View {
             }
         }
 
-        // PROJECT_PLAN v0.9.3 §5.DI: import only saves the body (→ finalized,
-        // never touches the LLM, so it always succeeds barring transport
-        // errors). Extraction is now a separate manual step.
+        // v1.3.1 (KK) P4: single-chapter import now auto-runs the Extractor
+        // (author's decision — 推翻 v0.9.3 §5.DI's "import 只落正文,提取纯手动").
+        // Batch import still only lands the body per chapter (a串行 N-chapter
+        // batch ×300s extraction each isn't viable, and a partial-failure
+        // skeleton semantics would get confusing) — so the hint text differs
+        // by mode; the manual "提取角色/时间线" button still exists on both
+        // paths (finalized 态可重跑) for the batch case / re-runs.
         HStack(alignment: .top, spacing: 6) {
             Image(systemName: "info.circle")
                 .foregroundStyle(.secondary)
-            Text("导入只保存正文；之后可在工具栏点「提取角色/时间线」更新角色卡 / 时间线。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            if batchMode {
+                Text("批量导入只保存正文；导入后可逐章手动点「提取角色/时间线」更新角色卡 / 时间线。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text("导入后将自动提取角色 / 时间线；若解析失败，正文仍会保留，可在工具栏重新提取。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
@@ -479,32 +496,87 @@ public struct NewChapterSheet: View {
         guard let new = await chaptersStore.create(userPrompt: "", title: title) else { return }
 
         // Step 2: set it as the active editor target so importChapter's
-        // self.chapter check passes, then drive the import. Import is now
-        // decoupled from extraction (§5.DI) — always run_extractor=false, so
-        // this only ever fails at the transport layer (never an LLM error).
+        // self.chapter check passes, then drive the import.
+        // v1.3.1 (KK) P4: single-chapter import now runs the Extractor
+        // (author's decision — 推翻 v0.9.3 §5.DI "import 只落正文,提取纯手动").
+        // The backend's import endpoint is two-phase for this path: body +
+        // finalized status commit first, extraction is a second transaction
+        // that only rolls back its own output on LLM failure — the draft
+        // text is never lost even if extraction errors upstream.
         await chapterEditorStore.load(chapterId: new.id)
         let payload = ChapterImportRequest(
             draftText: trimmedDraft,
             title: title,
             summary: summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : summary,
-            runExtractor: false
+            runExtractor: true
         )
         if let result = await chapterEditorStore.importChapter(payload) {
             // Step 3: sync the sidebar list (the row we just appended is
             // still in draft state; the import response has it as
             // finalized / source=imported).
             chaptersStore.upsert(result.chapter)
+            charactersStore.markUpdated(result.updatedCharacterIds)
+            if !result.updatedCharacterIds.isEmpty {
+                await charactersStore.load(bookId: result.chapter.bookId)
+            }
             dismiss()
         } else {
-            // §5.DI robustness: the import failed (transport only now), so the
-            // step-1 skeleton is a stranded empty chapter. Delete it + clear
-            // the editor so the author isn't dumped into a blank new-chapter
-            // SOP with their pasted body lost. Keep the sheet open for retry
-            // (their `draftText` is still in the textarea).
-            await chaptersStore.delete(id: new.id)
-            chapterEditorStore.reset()
+            // v1.3.1 (KK) P4: with `runExtractor: true`, the backend's import
+            // endpoint is two-phase — body/title/source/finalized commits in
+            // its own transaction FIRST, then extraction runs in a second
+            // transaction whose failure only rolls back the extraction
+            // output (see PROJECT_PLAN §4 P4). So a thrown error here can now
+            // mean "body committed fine, but the Extractor round-trip failed
+            // upstream" — NOT just a transport failure before anything
+            // landed, unlike the old §5.DI-era single-phase
+            // always-run_extractor=false behavior this branch was written
+            // for. Re-GET the skeleton chapter to find out which case this
+            // is before deciding whether it's safe to delete it.
+            //
+            // v1.3.1 (KK) 审后修复 🟡#3: the original two-way check treated
+            // "GET failed" the same as "confirmed not landed" and deleted
+            // the chapter either way. But GET-failed ≠ not-landed — the
+            // import request may have reached the backend and committed
+            // phase-1 while the *response* (or this follow-up GET) was lost
+            // to a network blip; that combination would delete a
+            // finalized chapter with real prose in it. Three states now:
+            //   1. GET succeeds, confirmed finalized+non-empty → landed, keep.
+            //   2. GET succeeds, confirmed not finalized/empty → not landed, delete.
+            //   3. GET itself fails → unknown, don't delete either way.
+            do {
+                let reloaded = try await environment.apiClient.getChapter(id: new.id)
+                if reloaded.status == .finalized, !(reloaded.draftText ?? "").isEmpty {
+                    // State 1 — body committed; only the extractor step
+                    // failed upstream. Keep the now-finalized chapter, sync
+                    // the sidebar, and let the author retry extraction
+                    // manually from the editor.
+                    chaptersStore.upsert(reloaded)
+                    await chapterEditorStore.load(chapterId: new.id)
+                    dismiss()
+                } else {
+                    // State 2 — confirmed nothing usable landed. Safe to
+                    // delete + let the author retry with their pasted body
+                    // still in the textarea.
+                    await chaptersStore.delete(id: new.id)
+                    chapterEditorStore.reset()
+                }
+            } catch {
+                // State 3 — inconclusive. Do NOT delete (might be a
+                // finalized chapter with real prose we just can't see right
+                // now); do NOT silently keep editing either (the skeleton
+                // may or may not still be the "current" editor target).
+                // Surface a distinct notice so the author knows to check
+                // back rather than assuming the earlier upstream-error
+                // Toast was the whole story, and leave the sheet + the
+                // skeleton chapter alone for a manual follow-up.
+                environment.errorBus.publish(
+                    "无法确认这一章的导入结果（网络问题），请稍后在章节列表里确认状态，不要重复导入。",
+                    critical: false
+                )
+            }
         }
-        // On failure ErrorBus already published; keep sheet open for retry.
+        // On failure ErrorBus already published; keep sheet open for retry
+        // only in the "not landed" / "inconclusive" branches above.
     }
 
     /// Batch import path (v0.7 §5.O). Drives `ChaptersStore.batchCreateAndImport`,
@@ -524,9 +596,15 @@ public struct NewChapterSheet: View {
         batchProgress = (current: 0, total: chapters.count)
         batchFailures = []
 
-        // PROJECT_PLAN v0.9.3 §5.DI: batch import only lands the body
-        // (run_extractor=false). Extraction is a separate manual step, so
-        // there's no end-of-batch character-store refresh here anymore.
+        // v1.3.1 (KK) P4: batch import deliberately keeps `run_extractor:
+        // false` even though single-chapter import (`submitImport` above) now
+        // defaults to `true`. Reasons this stays manual for batch: a
+        //串行 N-chapter run at up to 300s/chapter for a thinking-model
+        // extraction isn't viable UX for large pastes, and mixing
+        // partial-extraction-failure semantics into the batch progress/
+        // failure-summary UI would get confusing. Extraction stays a
+        // separate manual per-chapter step (工具栏「提取角色/时间线」),
+        // so there's no end-of-batch character-store refresh here.
         let results = await chaptersStore.batchCreateAndImport(
             parsedChapters: chapters,
             runExtractor: false,

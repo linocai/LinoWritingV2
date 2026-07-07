@@ -14,6 +14,13 @@ from app.services.context_pack import (
 
 
 def test_context_pack_filters_characters_and_limits_summaries(db_session):
+    """v1.3.1 (KK) P7: these 3 finalized chapters have NO draft_text (empty
+    body), so none of them can land in ``recent_fulltext`` — they all fall
+    through to ``recent_summaries`` (which is unbounded for anything older
+    than the fulltext window, and the fulltext window here is empty since
+    there's no prose to carry). See
+    ``test_recent_fulltext_and_summaries_split_by_window`` below for the
+    two-tier split when draft_text IS present."""
     book = Book(title="长夜", world_setting="雨城", style_directive="克制")
     db_session.add(book)
     db_session.flush()
@@ -47,13 +54,61 @@ def test_context_pack_filters_characters_and_limits_summaries(db_session):
     db_session.commit()
 
     expander = build_expander_context(db_session, book, chapter4)
-    assert [item["index"] for item in expander["recent_summaries"]] == [2, 3]
+    assert expander["recent_fulltext"] == []
+    assert [item["index"] for item in expander["recent_summaries"]] == [1, 2, 3]
     assert {item["id"] for item in expander["all_characters"]} == {c1.id, c2.id}
 
     writer = build_writer_context(db_session, book, chapter4)
     assert [character["id"] for character in writer["characters"]] == [c1.id]
     assert list(writer["timelines"].keys()) == [c1.id]
     assert writer["timelines"][c1.id][0]["event_text"] == "发现旧信。"
+
+
+def test_recent_fulltext_and_summaries_split_by_window(db_session):
+    """v1.3.1 (KK) P7 — the two-tier split: with draft_text present, the
+    nearest RECENT_FULLTEXT_COUNT (3) finalized chapters land in
+    recent_fulltext (full draft_text), everything older is summary-only."""
+    from app.services.context_pack import RECENT_FULLTEXT_COUNT
+
+    book = Book(title="长夜", world_setting="雨城", style_directive="克制")
+    db_session.add(book)
+    db_session.flush()
+    c1 = Character(book_id=book.id, name="林夕", role="主角", frozen_fields={}, live_fields={})
+    db_session.add(c1)
+    db_session.flush()
+
+    for i in range(1, 6):  # 5 finalized chapters, all with draft_text.
+        db_session.add(
+            Chapter(
+                book_id=book.id,
+                index=i,
+                user_prompt=f"第{i}章",
+                draft_text=f"第{i}章正文。" * 50,
+                summary=f"第{i}章摘要",
+                status="finalized",
+            )
+        )
+    current = Chapter(
+        book_id=book.id,
+        index=6,
+        user_prompt="当前",
+        status="prompt_ready",
+        structured_prompt={"chapter_goal": "推进", "characters_involved": [c1.id]},
+    )
+    db_session.add(current)
+    db_session.commit()
+
+    expander = build_expander_context(db_session, book, current)
+    assert len(expander["recent_fulltext"]) == RECENT_FULLTEXT_COUNT == 3
+    assert [c["index"] for c in expander["recent_fulltext"]] == [3, 4, 5]
+    assert all(c["draft_text"] for c in expander["recent_fulltext"])
+    assert [s["index"] for s in expander["recent_summaries"]] == [1, 2]
+
+    writer = build_writer_context(db_session, book, current)
+    assert [c["index"] for c in writer["recent_fulltext"]] == [3, 4, 5]
+    assert [s["index"] for s in writer["recent_summaries"]] == [1, 2]
+    # style_samples zeroed — the fulltext window already carries these chapters.
+    assert writer["style_samples"] == []
 
 
 # ---- Phase L-2 (§5.L) — author_notes gating + merged query ----------------
@@ -149,13 +204,19 @@ def test_extractor_context_omits_author_notes(db_session):
     assert payload["live_fields"] == {"current_status": "山中"}
 
 
-def test_writer_context_merged_query_fires_once_for_summaries_and_samples(db_session):
-    """§5.L + audit J: ``_recent_summaries`` + ``_style_samples`` used to be
-    two SELECTs against the chapters table. After the merge they share one.
-
-    We count SELECTs against the ``chapters`` table during the call. The
-    merged helper should fire exactly one chapters SELECT; the timeline
-    join fires a separate one per character, which we account for.
+def test_writer_context_fulltext_and_style_window_share_one_bounded_query(db_session):
+    """§5.L + audit J merged the old ``_recent_summaries`` / ``_style_samples``
+    pair into one bounded-window SELECT. v1.3.1 (KK) P7 keeps that merge for
+    the bounded window (recent_fulltext + style_samples share one query), and
+    adds a SECOND, deliberately separate query for the unbounded
+    ``recent_summaries`` tail (everything older than the window) — a single
+    ``LIMIT``-based query structurally cannot serve both "bounded window" and
+    "no upper bound" at once. So the contract here is: at most 2 chapter-only
+    SELECTs total (bounded window + unbounded tail), never more; and the
+    2-chapter book of ``_seed_with_author_notes`` fits entirely inside the
+    fulltext window, so the unbounded tail is empty (0 results, but the query
+    still fires — see the follow-up test below for a body that only fires the
+    window query).
     """
     book, character, current = _seed_with_author_notes(db_session)
 
@@ -176,22 +237,29 @@ def test_writer_context_merged_query_fires_once_for_summaries_and_samples(db_ses
     finally:
         event.remove(bind, "before_cursor_execute", _capture)
 
-    # Sanity: results are correct.
-    assert [s["index"] for s in ctx["recent_summaries"]] == [1, 2]
-    assert [s["chapter_index"] for s in ctx["style_samples"]] == [1, 2]
+    # Both finalized chapters here fit inside the fulltext window
+    # (RECENT_FULLTEXT_COUNT=3 >= 2), so recent_fulltext carries both and
+    # recent_summaries/style_samples are empty (style_samples zeroed by the
+    # anti-duplication rule since the fulltext window hit).
+    assert [c["index"] for c in ctx["recent_fulltext"]] == [1, 2]
+    assert ctx["recent_summaries"] == []
+    assert ctx["style_samples"] == []
 
-    # Before merge: 2 chapter-only SELECTs (summaries + style_samples).
-    # After merge: 1 chapter-only SELECT.
+    # At most 2 chapter-only SELECTs (bounded window + unbounded tail) — never
+    # a 3rd, and never back to the pre-merge shape of 2 *bounded* SELECTs.
     chapter_only_selects = [s for s in chapter_selects if "join" not in s.split("from chapters")[1].split("where")[0]]
-    assert len(chapter_only_selects) == 1, (
-        f"expected one merged chapters SELECT, got {len(chapter_only_selects)}: "
-        f"{chapter_only_selects!r}"
+    assert len(chapter_only_selects) <= 2, (
+        f"expected at most 2 chapters SELECTs (bounded window + unbounded "
+        f"tail), got {len(chapter_only_selects)}: {chapter_only_selects!r}"
     )
 
 
 def test_merged_query_respects_different_limits(db_session):
-    """summaries_limit and style_samples_limit can diverge — fetch_limit
-    must be ``max(...)`` and each list trimmed independently."""
+    """v1.3.1 (KK) P7: ``fulltext_limit`` and ``style_samples_limit`` can
+    diverge — the bounded-window fetch must be ``max(...)`` of the two, and
+    each of ``recent_fulltext`` / ``style_samples`` trimmed independently
+    from that shared window. ``recent_summaries`` (unbounded tail, older than
+    the window) is verified separately since it no longer takes a limit."""
     book = Book(title="x")
     db_session.add(book)
     db_session.flush()
@@ -220,24 +288,28 @@ def test_merged_query_respects_different_limits(db_session):
 
     from app.services.context_pack import _recent_finalized
 
-    # summaries=2, samples=4 → fetch 4, summaries trims to 2.
-    summaries, samples = _recent_finalized(
-        db_session, book.id, 6, summaries_limit=2, style_samples_limit=4
+    # fulltext=2, samples=4 → shared window fetches 4, fulltext trims to 2;
+    # everything outside the 4-row window (chapters 1) becomes the unbounded
+    # summaries tail.
+    fulltext, summaries, samples = _recent_finalized(
+        db_session, book.id, 6, fulltext_limit=2, style_samples_limit=4
     )
-    assert len(summaries) == 2
-    assert [s["index"] for s in summaries] == [4, 5]
+    assert len(fulltext) == 2
+    assert [c["index"] for c in fulltext] == [4, 5]
     assert len(samples) == 4
     assert [s["chapter_index"] for s in samples] == [2, 3, 4, 5]
+    assert [s["index"] for s in summaries] == [1]
 
-    # Reverse skew: summaries=3, samples=1 → fetch 3.
-    summaries, samples = _recent_finalized(
-        db_session, book.id, 6, summaries_limit=3, style_samples_limit=1
+    # Reverse skew: fulltext=3, samples=1 → shared window fetches 3.
+    fulltext, summaries, samples = _recent_finalized(
+        db_session, book.id, 6, fulltext_limit=3, style_samples_limit=1
     )
-    assert [s["index"] for s in summaries] == [3, 4, 5]
+    assert [c["index"] for c in fulltext] == [3, 4, 5]
     assert [s["chapter_index"] for s in samples] == [5]
+    assert [s["index"] for s in summaries] == [1, 2]
 
     # Both zero → empty + no DB hit (we don't assert the latter explicitly).
-    summaries, samples = _recent_finalized(
-        db_session, book.id, 6, summaries_limit=0, style_samples_limit=0
+    fulltext, summaries, samples = _recent_finalized(
+        db_session, book.id, 6, fulltext_limit=0, style_samples_limit=0
     )
-    assert summaries == [] and samples == []
+    assert fulltext == [] and summaries == [] and samples == []

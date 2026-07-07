@@ -1,5 +1,8 @@
 import Foundation
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 /// Live state of the currently-open chapter, including the streaming buffer.
 @MainActor
@@ -14,7 +17,22 @@ public final class ChapterEditorStore: ObservableObject {
 
     @Published public private(set) var chapter: Chapter?
     @Published public private(set) var isLoading: Bool = false
-    @Published public private(set) var writingState: WritingState = .idle
+    @Published public private(set) var writingState: WritingState = .idle {
+        didSet {
+            #if os(iOS)
+            // v1.3.1 (KK) P5 — iOS screen-sleep-during-streaming fix
+            // (治标). Structural, state-source-driven rather than
+            // point-naming every exit (`.done`/`.failed`/`cancelStream`
+            // each separately, which is easy to miss — see plan-critic
+            // 🔵#6): every `writingState` mutation runs through this one
+            // `didSet`, and `updateStreamingSideEffects` edge-detects the
+            // streaming↔non-streaming boundary so the idle-timer/
+            // background-task toggle fires exactly once per transition,
+            // not on every token/progress buffer append while streaming.
+            updateStreamingSideEffects(oldValue: oldValue, newValue: writingState)
+            #endif
+        }
+    }
     /// v1.2.0 (HH) P7 — accumulated chain-of-thought text from `.thinking`
     /// SSE frames, kept separate from `writingState`'s draft buffer so the
     /// "模型思考中…" UI indicator never mixes with (or gets mistaken for)
@@ -71,10 +89,112 @@ public final class ChapterEditorStore: ObservableObject {
     private let errorBus: ErrorBus
     private var streamTask: Task<Void, Never>?
 
+    #if os(iOS)
+    /// v1.3.1 (KK) P5 — the UIKit background task token for the current
+    /// streaming write, if any. `.invalid` sentinel semantics are handled by
+    /// only ever calling `endBackgroundTask` when this is non-nil.
+    private var backgroundTaskId: UIBackgroundTaskIdentifier?
+    #endif
+
     public init(api: APIClientProtocol, errorBus: ErrorBus) {
         self.api = api
         self.errorBus = errorBus
     }
+
+    #if os(iOS)
+    // MARK: - iOS screen-sleep-during-streaming fix (v1.3.1 KK P5, 治标)
+
+    /// Edge-detects the streaming↔non-streaming boundary on every
+    /// `writingState` mutation (driven by the `didSet` above) and toggles
+    /// `UIApplication.isIdleTimerDisabled` + a UIKit background task exactly
+    /// once per transition — never per-token. This is the single source of
+    /// truth the plan calls for (plan-critic 🔵#6), replacing the
+    /// easy-to-miss alternative of point-naming `.done`/`.failed`/
+    /// `cancelStream` separately.
+    private func updateStreamingSideEffects(oldValue: WritingState, newValue: WritingState) {
+        let wasStreaming: Bool = { if case .streaming = oldValue { return true }; return false }()
+        let isStreamingNow: Bool = { if case .streaming = newValue { return true }; return false }()
+        guard wasStreaming != isStreamingNow else { return }
+        if isStreamingNow {
+            beginStreamingProtection()
+        } else {
+            endStreamingProtection()
+        }
+    }
+
+    /// Disables the idle timer (screen won't auto-sleep while the app is in
+    /// the foreground) and opens a UIKit background task so the SSE stream
+    /// gets roughly ~30s of grace to keep running after the user backgrounds
+    /// the app or the screen locks, instead of being suspended immediately.
+    /// This is 治标, not 治本 — see PROJECT_PLAN §4 P5 / Backlog "写作作业化".
+    private func beginStreamingProtection() {
+        UIApplication.shared.isIdleTimerDisabled = true
+        #if DEBUG
+        print("[P5] idle timer disabled (writing started)")
+        #endif
+        // Repeated `startWriting` before the previous stream's background
+        // task ended would otherwise leak a task token — end any stale one
+        // first (defensive; `updateStreamingSideEffects` normally already
+        // closed it via the non-streaming transition before a new stream
+        // can start, since `startWriting` always drives writingState through
+        // `.streaming` fresh, but this guards against any future call path
+        // that skips that).
+        endBackgroundTaskIfAny()
+
+        // v1.3.1 (KK) 审后修复 建议#4: Apple's documented contract for
+        // `beginBackgroundTask(expirationHandler:)` is "call
+        // `endBackgroundTask` **synchronously, within the handler**" — the
+        // previous version hopped through `Task { @MainActor in
+        // self.endBackgroundTaskIfAny() }`, deferring the actual end call to
+        // a later run-loop turn. That's both a deviation from the documented
+        // pattern and a narrow race: if a *new* stream starts in the window
+        // between the handler firing and the deferred Task actually running,
+        // `self.backgroundTaskId` would already hold the *new* task's id by
+        // the time the stale closure's `endBackgroundTaskIfAny()` runs,
+        // which would end the wrong (new) task.
+        //
+        // Fixed per the standard pattern: capture this specific `id` in a
+        // local `var` (assigned right after `beginBackgroundTask` returns)
+        // and call `endBackgroundTask(id)` directly inside the handler —
+        // `endBackgroundTask` itself is safe to call from any thread/queue
+        // per Apple's API contract, no actor hop needed. `self.backgroundTaskId`
+        // is only cleared here if it still matches (guards against clearing
+        // a newer id that superseded this one through the normal
+        // `endStreamingProtection` path already running first).
+        var capturedId: UIBackgroundTaskIdentifier = .invalid
+        capturedId = UIApplication.shared.beginBackgroundTask(withName: "LinoWriting.chapterWrite") { [weak self] in
+            UIApplication.shared.endBackgroundTask(capturedId)
+            #if DEBUG
+            print("[P5] background task expiration handler fired — ended id=\(capturedId) synchronously")
+            #endif
+            Task { @MainActor in
+                guard let self, self.backgroundTaskId == capturedId else { return }
+                self.backgroundTaskId = nil
+            }
+        }
+        backgroundTaskId = capturedId
+        #if DEBUG
+        print("[P5] background task begun, id=\(capturedId)")
+        #endif
+    }
+
+    private func endStreamingProtection() {
+        UIApplication.shared.isIdleTimerDisabled = false
+        #if DEBUG
+        print("[P5] idle timer re-enabled (writing ended)")
+        #endif
+        endBackgroundTaskIfAny()
+    }
+
+    private func endBackgroundTaskIfAny() {
+        guard let id = backgroundTaskId, id != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(id)
+        backgroundTaskId = nil
+        #if DEBUG
+        print("[P5] background task ended, id=\(id)")
+        #endif
+    }
+    #endif
 
     // MARK: Loading
 

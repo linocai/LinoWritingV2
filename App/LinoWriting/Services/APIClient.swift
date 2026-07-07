@@ -110,13 +110,23 @@ public final class APIClient: APIClientProtocol, @unchecked Sendable {
 
     // MARK: Request building
 
+    /// v1.3.1 (KK) P3 — slow endpoints (extract/expand/finalize/import/parse,
+    /// all backed by an LLM round-trip that can legitimately run past a
+    /// minute with a reasoning model) get a longer per-request timeout than
+    /// the default. `.shared`'s session-level timeout (60s) and the SSE
+    /// tuned session (120s/3600s, `SSEClient`) are both untouched — this is
+    /// strictly a per-`URLRequest` override for the handful of REST callers
+    /// listed below.
+    static let slowEndpointTimeout: TimeInterval = 300
+
     private func makeRequest(
         method: String,
         path: String,
         query: [URLQueryItem] = [],
         body: Data? = nil,
         contentType: String = "application/json; charset=utf-8",
-        accept: String = "application/json; charset=utf-8"
+        accept: String = "application/json; charset=utf-8",
+        timeout: TimeInterval? = nil
     ) throws -> URLRequest {
         guard let cfg = configProvider() else {
             throw AppError.unauthorized("尚未配置后端地址或 Token")
@@ -131,6 +141,9 @@ public final class APIClient: APIClientProtocol, @unchecked Sendable {
         if let body {
             req.httpBody = body
             req.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        }
+        if let timeout {
+            req.timeoutInterval = timeout
         }
         return req
     }
@@ -250,10 +263,12 @@ public final class APIClient: APIClientProtocol, @unchecked Sendable {
 
     // v1.3.0 (II) P2 — POST /books/{id}/characters/parse. Backend returns
     // `{"items": [CharacterRead, ...]}`, same envelope shape as listCharacters.
+    // v1.3.1 (KK) P3: LLM-backed parse, gets the slow-endpoint timeout.
     public func parseCharacters(bookId: String, rawText: String) async throws -> [Character] {
         let req = try makeRequest(method: "POST",
                                   path: "/api/v1/books/\(bookId)/characters/parse",
-                                  body: body(CharacterParseRequest(rawText: rawText)))
+                                  body: body(CharacterParseRequest(rawText: rawText)),
+                                  timeout: Self.slowEndpointTimeout)
         let resp: ListResponse<Character> = try await send(req, as: ListResponse<Character>.self)
         return resp.items
     }
@@ -330,10 +345,12 @@ public final class APIClient: APIClientProtocol, @unchecked Sendable {
 
     public func expand(chapterId: String, force: Bool = false) async throws -> Chapter {
         let q = force ? [URLQueryItem(name: "force", value: "true")] : []
+        // v1.3.1 (KK) P3: expander is an LLM round-trip — slow-endpoint timeout.
         let req = try makeRequest(method: "POST",
                                   path: "/api/v1/chapters/\(chapterId)/expand",
                                   query: q,
-                                  body: "{}".data(using: .utf8))
+                                  body: "{}".data(using: .utf8),
+                                  timeout: Self.slowEndpointTimeout)
         return try await send(req, as: Chapter.self)
     }
 
@@ -355,9 +372,12 @@ public final class APIClient: APIClientProtocol, @unchecked Sendable {
     }
 
     public func finalize(chapterId: String) async throws -> FinalizeResult {
+        // v1.3.1 (KK) P3: finalize runs the Extractor (archivist) — LLM
+        // round-trip, slow-endpoint timeout.
         let req = try makeRequest(method: "POST",
                                   path: "/api/v1/chapters/\(chapterId)/finalize",
-                                  body: "{}".data(using: .utf8))
+                                  body: "{}".data(using: .utf8),
+                                  timeout: Self.slowEndpointTimeout)
         return try await send(req, as: FinalizeResult.self)
     }
 
@@ -375,10 +395,15 @@ public final class APIClient: APIClientProtocol, @unchecked Sendable {
     /// error message from the body is preserved by `ErrorMapping` so the
     /// import sheet can surface it via `ErrorBus` without translating.
     public func importChapter(id: String, payload: ChapterImportRequest) async throws -> ChapterImportResponse {
+        // v1.3.1 (KK) P3/P4: single-chapter import now defaults to
+        // `run_extractor=true` (P4), making this an LLM-backed round-trip
+        // same as extract/expand/finalize — slow-endpoint timeout so a
+        // thinking-model extraction isn't cut off at 60s.
         let req = try makeRequest(
             method: "POST",
             path: "/api/v1/chapters/\(id)/import",
-            body: body(payload)
+            body: body(payload),
+            timeout: Self.slowEndpointTimeout
         )
         return try await send(req, as: ChapterImportResponse.self)
     }
@@ -400,10 +425,12 @@ public final class APIClient: APIClientProtocol, @unchecked Sendable {
     /// `finalized` but has empty `draft_text` (backend `no_draft_to_extract`).
     /// The message is preserved by `ErrorMapping` for the toolbar to surface.
     public func extractChapter(id: String) async throws -> ChapterImportResponse {
+        // v1.3.1 (KK) P3: manual re-extract is an LLM round-trip — slow-endpoint timeout.
         let req = try makeRequest(
             method: "POST",
             path: "/api/v1/chapters/\(id)/extract",
-            body: "{}".data(using: .utf8)
+            body: "{}".data(using: .utf8),
+            timeout: Self.slowEndpointTimeout
         )
         return try await send(req, as: ChapterImportResponse.self)
     }

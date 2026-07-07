@@ -516,9 +516,27 @@ def import_chapter(
             "added_event_ids": [],
         }
 
-    # run_extractor=True — reuse the same path finalize uses.
-    # Flush so context_pack sees the freshly-written draft_text.
-    db.flush()
+    # run_extractor=True — v1.3.1 (KK) P4: two-phase commit.
+    #
+    # Pre-P4 this branch only `db.flush()`'d before running the Extractor, so
+    # a failure below would `db.rollback()` the flushed-but-uncommitted
+    # draft_text/title/source/status="finalized" changes ABOVE right along
+    # with the extractor's own writes — losing the user's imported text on a
+    # transient LLM failure. That contradicted the "import lands the draft
+    # first, extraction is best-effort on top" intent (mirrors /finalize's
+    # sibling behavior only superficially — /finalize's chapter was already
+    # persisted as draft_ready in an earlier request).
+    #
+    # Fix: commit phase one (draft_text/title/summary/source/finalized) unconditionally
+    # first — same "commit now" shape as the `run_extractor=false` branch above
+    # — so the import itself can never be undone by an extractor hiccup. Phase
+    # two (extractor + apply + log) runs in its own transaction; on failure we
+    # only roll back the extractor's own uncommitted writes, never phase one.
+    chapter.status = "finalized"
+    chapter.updated_at = utc_now()
+    db.commit()
+    db.refresh(chapter)
+
     context = build_extractor_context(db, book, chapter)
     started = now_ms()
     try:
@@ -534,6 +552,9 @@ def import_chapter(
         )
         db.commit()
     except (LLMError, AppError, ValueError) as exc:
+        # Only the extractor's own (uncommitted) writes roll back here — the
+        # chapter's finalized draft_text/title/source from phase one was
+        # already committed above and is untouched by this rollback.
         db.rollback()
         log_agent_call(
             db,

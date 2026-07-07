@@ -16,6 +16,13 @@ public struct ImportChapterSheet: View {
 
     @EnvironmentObject var chapterEditorStore: ChapterEditorStore
     @EnvironmentObject var chaptersStore: ChaptersStore
+    // v1.3.1 (KK) P4: single-chapter import now auto-extracts — need the
+    // characters store to mirror `finalize()`'s right-panel highlight.
+    @EnvironmentObject var charactersStore: CharactersStore
+    // v1.3.1 (KK) 审后修复 🟡#2: need `environment` (for `apiClient.getChapter`
+    // + `errorBus`) to re-check chapter state after a two-phase import
+    // failure — see `submit()`'s failure branch.
+    @EnvironmentObject var environment: AppEnvironment
     @Environment(\.dismiss) private var dismiss
 
     @State private var draftText: String = ""
@@ -89,13 +96,14 @@ public struct ImportChapterSheet: View {
                             .lineLimit(2...4)
                     }
 
-                    // PROJECT_PLAN v0.9.3 §5.DI: import only saves the body
-                    // (never touches the LLM). Extraction is now a separate
-                    // manual step on the toolbar.
+                    // v1.3.1 (KK) P4: single-chapter import now auto-runs the
+                    // Extractor (推翻 v0.9.3 §5.DI「import 只落正文,提取纯手动」).
+                    // The manual "提取角色/时间线" toolbar button still exists
+                    // for re-runs / the finalized-态 case.
                     HStack(alignment: .top, spacing: 6) {
                         Image(systemName: "info.circle")
                             .foregroundStyle(.secondary)
-                        Text("导入只保存正文；之后可在工具栏点「提取角色/时间线」更新角色卡 / 时间线。")
+                        Text("导入后将自动提取角色 / 时间线；若解析失败，正文仍会保留，可在工具栏重新提取。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -177,9 +185,16 @@ public struct ImportChapterSheet: View {
         let trimmedTitle = titleOverride.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedSummary = summaryOverride.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // PROJECT_PLAN v0.9.3 §5.DI: import only lands the body
-        // (run_extractor=false). Extraction is a separate manual step on the
-        // toolbar, so this no longer fans out into character highlights.
+        // v1.3.1 (KK) P4: single-chapter import now runs the Extractor
+        // (推翻 v0.9.3 §5.DI「import 只落正文,提取纯手动」). The backend's
+        // import endpoint is two-phase for this path — body/title/source/
+        // finalized commits first, extraction is a second transaction whose
+        // failure only rolls back its own output (chapter this sheet edits
+        // already exists, unlike NewChapterSheet's create+import two-step,
+        // so there's no "stranded skeleton" risk here on extractor failure —
+        // worst case the chapter is finalized with正文 intact and no error
+        // dialog beyond the ErrorBus toast; the toolbar's manual "提取角色/
+        // 时间线" lets the author retry).
         let payload = ChapterImportRequest(
             // Send the trimmed version so the backend stores clean text; we
             // still keep the user's in-sheet `draftText` untouched in case
@@ -187,7 +202,7 @@ public struct ImportChapterSheet: View {
             draftText: trimmedDraft,
             title: trimmedTitle.isEmpty ? nil : trimmedTitle,
             summary: trimmedSummary.isEmpty ? nil : trimmedSummary,
-            runExtractor: false
+            runExtractor: true
         )
 
         isSubmitting = true
@@ -195,14 +210,55 @@ public struct ImportChapterSheet: View {
             let result = await chapterEditorStore.importChapter(payload)
             isSubmitting = false
             guard let result else {
-                // Error already published to ErrorBus by the store. Keep the
-                // sheet open so the user can fix and retry without re-pasting.
+                // v1.3.1 (KK) 审后修复 🟡#2: with the two-phase backend
+                // commit, a thrown error here can mean the body/finalize
+                // already landed and only the Extractor step failed — the
+                // old "just keep the sheet open" behavior left the editor
+                // showing a stale non-finalized chapter, so retrying "导入"
+                // in this same sheet hit the backend's status whitelist
+                // (finalized chapters reject import) as a confusing 409,
+                // and the "工具栏重新提取" entry the ErrorBus toast points to
+                // never appeared (it only shows once `finalized`). Re-GET to
+                // find out which case this is before deciding whether to
+                // keep the sheet open.
+                await handleImportFailure()
                 return
             }
             // Sync the sidebar list so the status pill flips to finalized /
-            // source=imported. No character refresh — import doesn't extract.
+            // source=imported, and mirror finalize()'s right-panel highlight
+            // for any characters the Extractor touched.
             chaptersStore.upsert(result.chapter)
+            charactersStore.markUpdated(result.updatedCharacterIds)
+            if !result.updatedCharacterIds.isEmpty {
+                await charactersStore.load(bookId: result.chapter.bookId)
+            }
             dismiss()
         }
+    }
+
+    /// v1.3.1 (KK) 审后修复 🟡#2 — mirrors `NewChapterSheet`'s post-failure
+    /// re-check (which only has to handle "landed" vs "not landed" here,
+    /// since this sheet edits an existing chapter — there's no skeleton to
+    /// delete either way, so an inconclusive GET can safely fall through to
+    /// "keep the sheet open", unlike `NewChapterSheet`'s three-state case).
+    private func handleImportFailure() async {
+        guard let reloaded = try? await environment.apiClient.getChapter(id: chapter.id) else {
+            // GET itself failed — inconclusive; the original ErrorBus toast
+            // from the import call already told the user something went
+            // wrong. Keep the sheet open so they can retry.
+            return
+        }
+        guard reloaded.status == .finalized, !(reloaded.draftText ?? "").isEmpty else {
+            // Confirmed not landed — safe to keep the sheet open for retry.
+            return
+        }
+        // Body committed; only the extractor step failed upstream. Close
+        // the sheet and refresh so the editor shows the real (finalized)
+        // state and the "重新提取" button becomes visible; surface a
+        // second, clearer Toast on top of the generic upstream one.
+        chaptersStore.upsert(reloaded)
+        await chapterEditorStore.load(chapterId: chapter.id)
+        environment.errorBus.publish("正文已导入，提取失败可在工具栏手动重试", critical: false)
+        dismiss()
     }
 }

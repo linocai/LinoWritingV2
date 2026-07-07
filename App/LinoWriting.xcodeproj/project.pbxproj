@@ -22,6 +22,7 @@
 		1697DF5EEC927AEC45ED763E /* MacSummariesTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81587C34FDB35004D1B1AEF2 /* MacSummariesTab.swift */; };
 		19321D4ECE64770012DC1055 /* NetworkProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DE2361D2021D4EFE7AA1395 /* NetworkProbe.swift */; };
 		1C170342079EB59ABD0D2092 /* IOSChapterEditPlaceholder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95B45D80B9FA0AFF0BF287BA /* IOSChapterEditPlaceholder.swift */; };
+		1D1E831DA64FA2D351A4E42B /* EditableTagList.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1909F9BB4E25CF1ED009A5F6 /* EditableTagList.swift */; };
 		1D6B44AB10A8006C890B9614 /* StructuredPrompt.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF6DBCC8C09225A7BDD25FF3 /* StructuredPrompt.swift */; };
 		2175D4106697CF7892234E99 /* IOSTimelineSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEB2CAFEFB49E3216E425974 /* IOSTimelineSection.swift */; };
 		22214F0A6DCB7F2F6C3ED22C /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73C97B43B64880265CE9E5E9 /* KeychainStore.swift */; };
@@ -158,6 +159,7 @@
 		16237DD8AEB48AAFBF77622A /* ExportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportTests.swift; sourceTree = "<group>"; };
 		16C3B293A1ED44F91A6B0503 /* MacBookSettingsTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacBookSettingsTab.swift; sourceTree = "<group>"; };
 		189FE3A9A77579F26D108542 /* BookCardGlassView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookCardGlassView.swift; sourceTree = "<group>"; };
+		1909F9BB4E25CF1ED009A5F6 /* EditableTagList.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditableTagList.swift; sourceTree = "<group>"; };
 		1AE6B76C1211EE081E3613BC /* MacTimelineTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacTimelineTab.swift; sourceTree = "<group>"; };
 		1B2C58B6A168FFEF4DB1030E /* MacPersonaSettingsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacPersonaSettingsSection.swift; sourceTree = "<group>"; };
 		1D4638717DEFCA4420ECEE09 /* IOSConnectionSettingsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSConnectionSettingsSection.swift; sourceTree = "<group>"; };
@@ -306,6 +308,7 @@
 			children = (
 				F0A0B47511005A5B2842571F /* CardHeadFieldCommit.swift */,
 				7BC492920B9E8880FD492888 /* DotIndicator.swift */,
+				1909F9BB4E25CF1ED009A5F6 /* EditableTagList.swift */,
 				95A1D123D6A024487328198E /* EditorWidgets.swift */,
 				4200A4C1B87B2644B3D219AE /* GlassControls.swift */,
 				8AC4B715D37906D4775007F1 /* InlineEditableDict.swift */,
@@ -764,6 +767,7 @@
 				0185146B5183AA34FC92CC37 /* CharactersStore.swift in Sources */,
 				3A6074DF63E085139A91BAA8 /* CodecFactory.swift in Sources */,
 				DDA51FE21DA32553EDA19FFC /* DotIndicator.swift in Sources */,
+				1D1E831DA64FA2D351A4E42B /* EditableTagList.swift in Sources */,
 				D8AF1AC7D6E0CFE4B109B257 /* EditorWidgets.swift in Sources */,
 				F235C2F080FC1BFB8C1F5694 /* ErrorBus.swift in Sources */,
 				DA06F1D070994F13591AB5BB /* ErrorMapping.swift in Sources */,
@@ -960,7 +964,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 1.3.0;
+				MARKETING_VERSION = 1.3.1;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -1023,7 +1027,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 1.3.0;
+				MARKETING_VERSION = 1.3.1;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";

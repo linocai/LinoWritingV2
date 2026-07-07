@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 @testable import LinoWriting
 
 /// R-4 (v0.8) — iOS-runtime confirmation that ``ChapterEditorStore`` runs
@@ -85,5 +86,74 @@ final class ChapterEditorStoreIOSTests: XCTestCase {
 
         XCTAssertNil(editor.chapter)
         XCTAssertEqual(editor.writingState, .idle)
+    }
+
+    // MARK: - v1.3.1 (KK) P5 — iOS screen-sleep-during-streaming fix
+
+    /// The idle timer must be disabled for the duration of an SSE write and
+    /// restored the moment it completes — the structural `writingState`
+    /// `didSet` (not a per-call-site point-name) is what drives this, so
+    /// this test exercises the store's public API exactly like a real
+    /// screen would, rather than reaching into the private toggle directly.
+    func test_startWriting_disablesIdleTimerDuringStream_restoresOnDone() async {
+        let mock = MockAPIClient()
+        let bus = ErrorBus()
+        let book = try! await mock.createBook(BookCreateRequest(title: "B", coverColor: nil))
+        let chapter = try! await mock.createChapter(
+            bookId: book.id,
+            ChapterCreateRequest(userPrompt: "想法", title: nil)
+        )
+
+        let editor = ChapterEditorStore(api: mock, errorBus: bus)
+        await editor.load(chapterId: chapter.id)
+
+        // Baseline: nothing streaming yet, idle timer must be the normal
+        // "allowed to sleep" default.
+        UIApplication.shared.isIdleTimerDisabled = false
+
+        await withCheckedContinuation { continuation in
+            editor.startWriting { _ in continuation.resume() }
+        }
+
+        // `startWriting`'s completion callback fires from the `.done` case,
+        // which is the same tick `writingState` flips to `.done` — the
+        // `didSet`-driven `endStreamingProtection()` has already run by the
+        // time we get here, so the idle timer should already be restored.
+        XCTAssertEqual(editor.writingState, .done)
+        XCTAssertFalse(
+            UIApplication.shared.isIdleTimerDisabled,
+            "idle timer must be re-enabled once writingState leaves .streaming"
+        )
+    }
+
+    /// Cancelling mid-stream (`cancelStream`) is one of the exit paths the
+    /// plan calls out explicitly (alongside `.done`/`.failed`) — confirm the
+    /// state-source-driven fix covers it too, not just the happy path.
+    func test_cancelStream_restoresIdleTimer() async {
+        let mock = MockAPIClient()
+        let bus = ErrorBus()
+        let book = try! await mock.createBook(BookCreateRequest(title: "B", coverColor: nil))
+        let chapter = try! await mock.createChapter(
+            bookId: book.id,
+            ChapterCreateRequest(userPrompt: "想法", title: nil)
+        )
+
+        let editor = ChapterEditorStore(api: mock, errorBus: bus)
+        await editor.load(chapterId: chapter.id)
+
+        UIApplication.shared.isIdleTimerDisabled = false
+        editor.startWriting()
+        // `startWriting` sets `writingState = .streaming(...)` synchronously
+        // before kicking off the SSE task, so the idle-timer disable has
+        // already happened by the time this call returns.
+        XCTAssertTrue(UIApplication.shared.isIdleTimerDisabled)
+
+        editor.cancelStream()
+
+        XCTAssertEqual(editor.writingState, .idle)
+        XCTAssertFalse(
+            UIApplication.shared.isIdleTimerDisabled,
+            "idle timer must be re-enabled after a user-initiated cancel"
+        )
     }
 }

@@ -20,6 +20,10 @@ struct IOSChaptersSection: View {
     @EnvironmentObject var chaptersStore: ChaptersStore
 
     @State private var isCreating = false
+    /// v1.3.1 (KK) P2 — long-press "删除" entry (the row is a plain `VStack`
+    /// + `NavigationLink`, not a `List`, so `.swipeActions` doesn't apply —
+    /// `.contextMenu` is the correct iOS affordance here).
+    @State private var pendingDelete: ChapterSummary?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -37,9 +41,26 @@ struct IOSChaptersSection: View {
                         row(chapter)
                     }
                     .buttonStyle(.plain)
+                    .contextMenu {
+                        Button(role: .destructive) { pendingDelete = chapter } label: {
+                            Label("删除", systemImage: "trash")
+                        }
+                    }
                 }
             }
             newChapterButton
+        }
+        .alert("删除这一章？",
+               isPresented: .constant(pendingDelete != nil),
+               presenting: pendingDelete) { chapter in
+            Button("取消", role: .cancel) { pendingDelete = nil }
+            Button("删除", role: .destructive) {
+                let target = chapter
+                pendingDelete = nil
+                Task { await chaptersStore.delete(id: target.id) }
+            }
+        } message: { _ in
+            Text("章节及其正文、结构化提示、关联事件都会删除，且无法撤销。")
         }
     }
 

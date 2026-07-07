@@ -142,6 +142,34 @@ def test_writer_system_prompt_keeps_existing_plot_and_style_rules():
     assert "只输出正文纯文本" in sp
 
 
+def test_writer_system_prompt_has_default_word_count_range_when_target_empty():
+    """v1.3.1 (KK) P8: when target_word_count is empty/unset, the Writer must
+    have a concrete default anchor (2500-3500 字) instead of the old bare
+    "允许上下浮动 20%" wording (which had nothing to float around when
+    target_word_count was itself empty). When a value IS provided, the ±20%
+    rule still applies — locks both halves so a future edit can't silently
+    drop the empty-case default."""
+    sp = WriterAgent.system_prompt
+    assert "2500" in sp and "3500" in sp
+    assert "为空" in sp or "未提供" in sp
+    assert "20%" in sp
+
+
+def test_writer_system_prompt_describes_recent_fulltext_usage():
+    """v1.3.1 (KK) P7 审后修复 🔵2 (reviewer 抓出): the Writer used to receive
+    ``recent_fulltext`` (最近 3 章原文, ~1万字) with zero rule describing what
+    it is or how to use it — the model could only guess from the key name.
+    Locks a description matching the Expander side's continuity-grounding
+    framing (see prompt_expander.py's OPERATIONAL_RULES), plus the red line
+    (migrated from the now-effectively-dead style_samples paragraph — see
+    context_pack.py's STYLE_SAMPLES_CHAPTER_COUNT docstring) that recent
+    prose is for continuity/style reference only, never verbatim reuse."""
+    sp = WriterAgent.system_prompt
+    assert "recent_fulltext" in sp
+    assert "连贯" in sp or "连续" in sp
+    assert "不要照搬" in sp
+
+
 def test_writer_user_message_carries_author_notes_when_present():
     """context_pack now includes characters[*].author_notes for Writer.
 
