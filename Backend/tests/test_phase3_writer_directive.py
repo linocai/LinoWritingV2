@@ -129,14 +129,14 @@ def test_writer_user_message_carries_chapter_directive(db_session):
     llm = _CapturingStreamLLM()
     list(WriterAgent(llm).stream(ctx))
     assert llm.last_user is not None
-    # The directive text rides in the user message...
-    assert _DIRECTIVE in llm.last_user
-    # ...under its own JSON key (top-level 方向 line, not buried as a nested
-    # structured_prompt sub-field only).
-    payload = json.loads(llm.last_user.split("\n\n")[0])
-    assert payload["chapter_directive"] == _DIRECTIVE
-    # 知识 line still independently present — directive did NOT replace cards.
-    assert payload["characters"][0]["id"] == character.id
+    # The directive text rides in the user message, under its own labelled
+    # line in the「# 本章写作任务」section (v1.3.4 快修: no more JSON blob —
+    # top-level 方向 line, not buried as a nested structured_prompt sub-field).
+    assert f"本章创作指令：{_DIRECTIVE}" in llm.last_user
+    # 知识 line still independently present — directive did NOT replace cards —
+    # on its own「# 在场角色」section, naming the character by id-bearing name.
+    assert "# 在场角色" in llm.last_user
+    assert character.name in llm.last_user
 
 
 def test_directive_is_separate_line_from_card_knowledge(db_session):
@@ -272,14 +272,19 @@ def test_writer_persona_carries_boundary_segment():
 
 def test_writer_operational_rules_teach_two_line_separation():
     """The directive-handling + 两条线分明 rule rides in the fixed operational
-    rules, and the graceful-degrade instruction is present."""
+    rules, and the graceful-degrade instruction is present.
+
+    v1.3.4 快修: the rules no longer reference the raw JSON key
+    ``chapter_directive`` (the model never sees that literal string any more
+    — the user message renders it as「本章创作指令」in the「# 本章写作任务」
+    section) — locks the Chinese label instead."""
     rules = WriterAgent.OPERATIONAL_RULES
-    assert "chapter_directive" in rules
+    assert "本章创作指令" in rules
     assert "方向盘" in rules
     assert "两条线" in rules  # 方向 vs 知识
-    assert "不越权推进 directive 之外的剧情" in rules
+    assert "不越权推进" in rules and "之外的剧情" in rules
     # Degrade instruction: behave when the directive is absent.
-    assert "缺失" in rules or "null" in rules
+    assert "没有" in rules or "缺少" in rules
 
 
 def test_writer_default_system_prompt_composes_persona_then_rules():

@@ -36,7 +36,7 @@ from app.schemas.chapter import (
     ChapterRead,
     ChapterSummary,
 )
-from app.services.agent_logging import log_agent_call, now_ms
+from app.services.agent_logging import llm_usage_kwargs, log_agent_call, now_ms
 from app.services.chapter_state import ensure_chapter_status
 from app.services.context_pack import build_expander_context, build_extractor_context, build_writer_context
 from app.services.exporter import (
@@ -157,6 +157,7 @@ def expand_chapter(
             input_data=context,
             output_data=structured_prompt,
             started_at=started,
+            **llm_usage_kwargs(llm),
         )
         db.commit()
     except (LLMError, ValueError) as exc:
@@ -168,6 +169,7 @@ def expand_chapter(
             input_data=context,
             started_at=started,
             error=str(exc),
+            **llm_usage_kwargs(llm),
         )
         db.commit()
         raise i18n_upstream(
@@ -497,6 +499,7 @@ def finalize_chapter(
             input_data=context,
             output_data=extractor_output,
             started_at=started,
+            **llm_usage_kwargs(llm),
         )
         db.commit()
     except (LLMError, AppError, ValueError) as exc:
@@ -508,6 +511,7 @@ def finalize_chapter(
             input_data=context,
             started_at=started,
             error=str(exc),
+            **llm_usage_kwargs(llm),
         )
         db.commit()
         if isinstance(exc, AppError):
@@ -581,6 +585,7 @@ def extract_chapter(
             input_data=context,
             output_data=extractor_output,
             started_at=started,
+            **llm_usage_kwargs(llm),
         )
         db.commit()
     except (LLMError, AppError, ValueError) as exc:
@@ -592,6 +597,7 @@ def extract_chapter(
             input_data=context,
             started_at=started,
             error=str(exc),
+            **llm_usage_kwargs(llm),
         )
         db.commit()
         if isinstance(exc, AppError):
@@ -693,6 +699,7 @@ def import_chapter(
             input_data=context,
             output_data=extractor_output,
             started_at=started,
+            **llm_usage_kwargs(llm),
         )
         db.commit()
     except (LLMError, AppError, ValueError) as exc:
@@ -707,6 +714,7 @@ def import_chapter(
             input_data=context,
             started_at=started,
             error=str(exc),
+            **llm_usage_kwargs(llm),
         )
         db.commit()
         if isinstance(exc, AppError):

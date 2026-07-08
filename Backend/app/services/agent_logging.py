@@ -35,6 +35,8 @@ def log_agent_call(
     output_data: Any = None,
     started_at: float | None = None,
     error: str | None = None,
+    tokens_in: int | None = None,
+    tokens_out: int | None = None,
 ) -> None:
     global _write_count
     latency_ms = int((perf_counter() - started_at) * 1000) if started_at is not None else None
@@ -45,12 +47,27 @@ def log_agent_call(
             input_preview=_preview(input_data, limit=1024),
             output_preview=_preview(output_data, limit=2048),
             latency_ms=latency_ms,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
             error=error,
         )
     )
     _write_count += 1
     if _write_count % RETENTION_CHECK_EVERY == 0:
         _enforce_retention(db)
+
+
+def llm_usage_kwargs(llm: Any) -> dict[str, int | None]:
+    """Pull ``{"tokens_in", "tokens_out"}`` off ``llm.last_usage`` for a
+    ``log_agent_call(**...)`` call, right after using an LLM client.
+
+    v1.3.4 快修 — 观测: tolerates LLM clients (test mocks, stubs) that don't
+    expose ``last_usage`` at all, and clients where it's ``None`` (the
+    upstream never reported usage for that call) — always returns a dict
+    with both keys, values ``None`` in either case. Never raises.
+    """
+    usage = getattr(llm, "last_usage", None) or {}
+    return {"tokens_in": usage.get("prompt_tokens"), "tokens_out": usage.get("completion_tokens")}
 
 
 def _enforce_retention(db: Session) -> None:

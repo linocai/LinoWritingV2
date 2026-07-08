@@ -113,12 +113,19 @@ def test_recent_fulltext_and_summaries_split_by_window(db_session):
     assert [s["index"] for s in expander["recent_summaries"]] == [1, 2]
     assert expander["recent_headlines"] == []  # well under RECENT_SUMMARY_COUNT
 
+    # v1.3.4 快修 — Writer 彻底断原文: unlike the Expander, the Writer no
+    # longer receives ANY raw prior-chapter prose at all — no
+    # ``recent_fulltext`` key, no ``style_samples`` key. Its summary window
+    # starts from the immediately-preceding chapter instead (chapter 5, split
+    # out as ``previous_chapter_summary``); chapters 1-4 land in
+    # ``recent_summaries`` (still well under RECENT_SUMMARY_COUNT, so nothing
+    # spills into recent_headlines).
     writer = build_writer_context(db_session, book, current)
-    assert [c["index"] for c in writer["recent_fulltext"]] == [3, 4, 5]
-    assert [s["index"] for s in writer["recent_summaries"]] == [1, 2]
+    assert "recent_fulltext" not in writer
+    assert "style_samples" not in writer
+    assert writer["previous_chapter_summary"]["index"] == 5
+    assert [s["index"] for s in writer["recent_summaries"]] == [1, 2, 3, 4]
     assert writer["recent_headlines"] == []
-    # style_samples zeroed — the fulltext window already carries these chapters.
-    assert writer["style_samples"] == []
 
 
 # ---- Phase L-2 (§5.L) — author_notes gating + merged query ----------------
@@ -216,17 +223,22 @@ def test_extractor_context_omits_author_notes(db_session):
 
 def test_writer_context_fulltext_and_style_window_share_one_bounded_query(db_session):
     """§5.L + audit J merged the old ``_recent_summaries`` / ``_style_samples``
-    pair into one bounded-window SELECT. v1.3.1 (KK) P7 keeps that merge for
-    the bounded window (recent_fulltext + style_samples share one query), and
-    adds a SECOND, deliberately separate query for the unbounded
-    ``recent_summaries`` tail (everything older than the window) — a single
-    ``LIMIT``-based query structurally cannot serve both "bounded window" and
-    "no upper bound" at once. So the contract here is: at most 2 chapter-only
-    SELECTs total (bounded window + unbounded tail), never more; and the
-    2-chapter book of ``_seed_with_author_notes`` fits entirely inside the
-    fulltext window, so the unbounded tail is empty (0 results, but the query
-    still fires — see the follow-up test below for a body that only fires the
-    window query).
+    pair into one bounded-window SELECT; v1.3.1 (KK) P7 added a SECOND,
+    deliberately separate query for the unbounded ``recent_summaries`` tail
+    (everything older than the window) — a single ``LIMIT``-based query
+    structurally cannot serve both "bounded window" and "no upper bound" at
+    once. The contract here is: at most 2 chapter-only SELECTs total (bounded
+    window + unbounded tail), never more.
+
+    v1.3.4 快修 — Writer 彻底断原文: ``build_writer_context`` now calls
+    ``_recent_finalized`` with ``fulltext_limit=0`` (see context_pack.py), so
+    for the Writer specifically the "bounded window" fetch never actually
+    contributes any fulltext rows — every finalized chapter always falls
+    through to the (still bounded-count, RECENT_SUMMARY_COUNT) summary tier
+    instead. The 2-query shape is unchanged (this test locks THAT), but the
+    content assertions below now check ``previous_chapter_summary`` /
+    ``recent_summaries`` instead of the (now entirely absent)
+    ``recent_fulltext`` / ``style_samples`` keys.
     """
     book, character, current = _seed_with_author_notes(db_session)
 
@@ -247,14 +259,15 @@ def test_writer_context_fulltext_and_style_window_share_one_bounded_query(db_ses
     finally:
         event.remove(bind, "before_cursor_execute", _capture)
 
-    # Both finalized chapters here fit inside the fulltext window
-    # (RECENT_FULLTEXT_COUNT=3 >= 2), so recent_fulltext carries both and
-    # recent_summaries/style_samples are empty (style_samples zeroed by the
-    # anti-duplication rule since the fulltext window hit).
-    assert [c["index"] for c in ctx["recent_fulltext"]] == [1, 2]
-    assert ctx["recent_summaries"] == []
+    # Writer gets neither raw channel at all — both keys are gone. The 2
+    # finalized chapters land entirely in the summary tier: chapter 2 (the
+    # nearest) is split out as previous_chapter_summary, chapter 1 is the
+    # rest of recent_summaries.
+    assert "recent_fulltext" not in ctx
+    assert "style_samples" not in ctx
+    assert ctx["previous_chapter_summary"]["index"] == 2
+    assert [s["index"] for s in ctx["recent_summaries"]] == [1]
     assert ctx["recent_headlines"] == []
-    assert ctx["style_samples"] == []
 
     # At most 2 chapter-only SELECTs (bounded window + unbounded tail) — never
     # a 3rd, and never back to the pre-merge shape of 2 *bounded* SELECTs.

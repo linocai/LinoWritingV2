@@ -9,6 +9,7 @@ from app.services.context_pack import (
     STYLE_SAMPLES_CHAPTER_COUNT,
     STYLE_SAMPLES_CHARS_PER_SIDE,
     _recent_finalized,
+    build_expander_context,
     build_writer_context,
 )
 
@@ -211,24 +212,29 @@ def test_style_samples_empty_when_no_finalized_chapters(db_session):
     db_session.commit()
 
     ctx = build_writer_context(db_session, book, current)
-    assert ctx["style_samples"] == []
+    assert "style_samples" not in ctx
+    assert ctx["previous_chapter_summary"] is None
+    assert ctx["recent_summaries"] == []
 
 
 # --------------------------------------------------------------------------
-# build_writer_context-level: style_samples is zeroed whenever the fulltext
-# window hits at all (recent_fulltext non-empty) — the P7 anti-duplication
-# rule. Since style_rows/fulltext_rows share the same source + filter, the
-# ONLY case where fulltext is empty is when there are ZERO finalized
-# chapters — and at zero chapters there is nothing to sample either, so
-# style_samples never actually gets a non-empty fallback value in practice
-# (see the module-level comment atop this file for the full reasoning).
+# build_writer_context-level: v1.3.4 快修 — Writer 彻底断原文. The Writer no
+# longer receives ``recent_fulltext`` OR ``style_samples`` at all — neither
+# key is ever present in ``build_writer_context``'s return dict, regardless
+# of how many finalized chapters exist. What used to be the fulltext window
+# now always lands in the summary tier instead (split into
+# ``previous_chapter_summary`` + ``recent_summaries``). The
+# ``RECENT_FULLTEXT_COUNT``-bounded-window invariant itself is untouched —
+# it just now only applies to the Expander (see
+# ``test_recent_fulltext_bounded_at_recent_fulltext_count_regardless_of_total_chapters``
+# below, ported to ``build_expander_context``).
 # --------------------------------------------------------------------------
 
 
-def test_build_writer_context_zeroes_style_samples_when_fulltext_window_hits(db_session):
+def test_build_writer_context_never_carries_fulltext_even_with_one_finalized_chapter(db_session):
     book, character = _seed_minimal_book(db_session)
-    # A single finalized chapter is enough to populate recent_fulltext (window
-    # size RECENT_FULLTEXT_COUNT=3 — 1 <= 3, so it lands in recent_fulltext).
+    # A single finalized chapter — well within the old RECENT_FULLTEXT_COUNT=3
+    # window — used to land in recent_fulltext; now it's summary-only.
     db_session.add(
         Chapter(
             book_id=book.id,
@@ -251,14 +257,16 @@ def test_build_writer_context_zeroes_style_samples_when_fulltext_window_hits(db_
     db_session.commit()
 
     ctx = build_writer_context(db_session, book, current)
-    assert len(ctx["recent_fulltext"]) == 1
-    assert ctx["style_samples"] == []
+    assert "recent_fulltext" not in ctx
+    assert "style_samples" not in ctx
+    assert ctx["previous_chapter_summary"]["index"] == 1
+    assert ctx["previous_chapter_summary"]["summary"] == "一"
+    assert ctx["recent_summaries"] == []
 
 
-def test_build_writer_context_style_samples_fallback_when_no_finalized_chapters_yet(db_session):
+def test_build_writer_context_no_fulltext_fallback_when_no_finalized_chapters_yet(db_session):
     """The very first chapter of a book: no finalized chapters exist at all,
-    so recent_fulltext is empty and style_samples correctly stays empty too
-    (there's nothing to sample from either way)."""
+    so both the summary tiers and the (absent) fulltext/style keys are empty."""
     book, character = _seed_minimal_book(db_session)
     current = Chapter(
         book_id=book.id,
@@ -271,13 +279,22 @@ def test_build_writer_context_style_samples_fallback_when_no_finalized_chapters_
     db_session.commit()
 
     ctx = build_writer_context(db_session, book, current)
-    assert ctx["recent_fulltext"] == []
-    assert ctx["style_samples"] == []
+    assert "recent_fulltext" not in ctx
+    assert "style_samples" not in ctx
+    assert ctx["previous_chapter_summary"] is None
+    assert ctx["recent_summaries"] == []
 
 
 def test_recent_fulltext_bounded_at_recent_fulltext_count_regardless_of_total_chapters(db_session):
     """Locks the P7 invariant: recent_fulltext never exceeds
-    RECENT_FULLTEXT_COUNT, even with many more finalized chapters available."""
+    RECENT_FULLTEXT_COUNT, even with many more finalized chapters available.
+
+    v1.3.4 快修: this invariant now only applies to the Expander (the Writer
+    no longer has a recent_fulltext channel at all — see the tests above), so
+    this test targets ``build_expander_context`` instead of
+    ``build_writer_context``. The underlying mechanism/constant is otherwise
+    unchanged.
+    """
     book, character = _seed_minimal_book(db_session)
     for i in range(1, 8):  # 7 finalized chapters — well over RECENT_FULLTEXT_COUNT=3.
         db_session.add(
@@ -301,7 +318,7 @@ def test_recent_fulltext_bounded_at_recent_fulltext_count_regardless_of_total_ch
     db_session.add(current)
     db_session.commit()
 
-    ctx = build_writer_context(db_session, book, current)
+    ctx = build_expander_context(db_session, book, current)
     assert len(ctx["recent_fulltext"]) == RECENT_FULLTEXT_COUNT == 3
     assert [c["index"] for c in ctx["recent_fulltext"]] == [5, 6, 7]
     # Older chapters (1-4) show up as summary-only — well under

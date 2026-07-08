@@ -212,15 +212,19 @@ def test_expander_operational_rules_describe_three_tier_memory_input():
     assert "recent_headlines" in rules
 
 
-def test_writer_operational_rules_describe_three_tier_memory_input():
-    """v1.3.2 (LL) P3: same keyword-regression guard as the Expander's, on
-    the Writer side — the Writer's OPERATIONAL_RULES must also mention all
-    three memory tiers so a future edit can't silently drop the
-    recent_summaries/recent_headlines description."""
+def test_writer_operational_rules_describe_background_memory_sections():
+    """v1.3.4 快修 (作者实测报障): the Writer no longer receives ANY raw
+    prior-chapter prose (``recent_fulltext`` deleted from its context/rules
+    entirely — see context_pack.py/writer.py). Its OPERATIONAL_RULES must
+    instead describe the three background-memory sections it DOES get
+    (「前情梗概」/「上一章梗概」/「更早章节大事记」) and warn against
+    treating them as writing material to expand/restate."""
     rules = WriterAgent.OPERATIONAL_RULES
-    assert "recent_fulltext" in rules
-    assert "recent_summaries" in rules
-    assert "recent_headlines" in rules
+    assert "recent_fulltext" not in rules
+    assert "前情梗概" in rules
+    assert "上一章梗概" in rules
+    assert "大事记" in rules
+    assert "不要展开" in rules
 
 
 def test_expander_operational_rules_reference_world_setting():

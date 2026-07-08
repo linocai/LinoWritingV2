@@ -46,7 +46,7 @@ from app.llm.base import LLMClient
 from app.models.chapter import Chapter
 from app.models.common import utc_now
 from app.schemas.chapter import ChapterRead
-from app.services.agent_logging import log_agent_call, now_ms
+from app.services.agent_logging import llm_usage_kwargs, log_agent_call, now_ms
 
 logger = logging.getLogger(__name__)
 
@@ -315,6 +315,7 @@ def _finish_done(job: WriteJob, session: Session, started_ms: float) -> None:
             output_data=draft_text,
             started_at=started_ms,
             error="superseded: chapter no longer 'writing' (admin_reset/DELETE/import took over) — draft not persisted",
+            **llm_usage_kwargs(job.llm),
         )
         session.commit()
         session.refresh(chapter)
@@ -332,6 +333,7 @@ def _finish_done(job: WriteJob, session: Session, started_ms: float) -> None:
         input_data=job.context,
         output_data=draft_text,
         started_at=started_ms,
+        **llm_usage_kwargs(job.llm),
     )
     session.commit()
     session.refresh(chapter)
@@ -354,6 +356,7 @@ def _finish_cancelled(job: WriteJob, session: Session, started_ms: float) -> Non
                 context=job.context,
                 started=started_ms,
                 error="stream cancelled by user",
+                llm=job.llm,
             )
             session.commit()
             session.refresh(chapter)
@@ -379,6 +382,7 @@ def _finish_failed(job: WriteJob, session: Session, started_ms: float, exc: Exce
                 context=job.context,
                 started=started_ms,
                 error=str(exc) or exc.__class__.__name__,
+                llm=job.llm,
             )
             session.commit()
     except Exception:  # 兜底: still emit a terminal error frame
@@ -423,6 +427,7 @@ def _save_partial_draft(
     context: dict[str, object],
     started: float,
     error: str,
+    llm: LLMClient | None = None,
 ) -> None:
     """Conservative partial-draft save (v1.2.0 P5 policy, moved here for the
     worker in v1.3.2 P1). Does **not** commit — the caller commits.
@@ -436,7 +441,10 @@ def _save_partial_draft(
       - Any other ``previous_status`` → restore it, log only.
 
     The ``agent_logs`` row is always written (with ``error``) so partial vs.
-    complete generations stay distinguishable for audit.
+    complete generations stay distinguishable for audit. ``llm`` is the same
+    client instance the worker just streamed from (``job.llm``) — v1.3.4 快修
+    reads its ``last_usage`` (via ``llm_usage_kwargs``) so even a
+    cancelled/failed generation's token spend is observable.
     """
     joined = "".join(parts) if parts else None
     # v1.3.2 (LL) P1 审后修复 (最高优先): optimistic-lock guard — same reason as
@@ -452,6 +460,7 @@ def _save_partial_draft(
             output_data=joined,
             started_at=started,
             error=f"{error} | superseded: chapter no longer 'writing' — not persisted",
+            **llm_usage_kwargs(llm),
         )
         return
     if parts and previous_status == "prompt_ready":
@@ -469,6 +478,7 @@ def _save_partial_draft(
         output_data=joined,
         started_at=started,
         error=error,
+        **llm_usage_kwargs(llm),
     )
 
 

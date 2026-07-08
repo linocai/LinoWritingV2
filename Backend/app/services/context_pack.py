@@ -10,32 +10,20 @@ from app.models.chapter import Chapter
 from app.models.character import Character
 from app.models.timeline_event import TimelineEvent
 
-# Style-sample knobs for WriterAgent's "参考前文文风" block.
-# Both agent-written and imported finalized chapters feed this — the goal is
-# pure stylistic reference, regardless of how the chapter was produced.
+# Style-sample knobs — originally for WriterAgent's "参考前文文风" block.
 #
-# v1.3.1 (KK) P7 审后修复 🔵1 (reviewer 抓出): this channel is currently
-# UNREACHABLE with a non-empty result in ``build_writer_context`` — NOT just
-# "a fallback for very-early books" as an earlier comment here incorrectly
-# claimed. ``_recent_finalized``'s ``fulltext_rows`` and ``style_rows`` are
-# both filtered from the SAME ``windowed_rows`` by the SAME condition
-# (``chapter.draft_text or ""`` truthy) — so ``style_rows`` non-empty implies
-# ``fulltext_rows`` non-empty too, which means ``build_writer_context``
-# always zeroes ``style_samples`` right back out (see the
-# ``if recent_fulltext: style_samples = []`` line below). This holds even for
-# a book's very first finalized chapter (1 chapter is enough to populate
-# ``recent_fulltext``, well under the ``RECENT_FULLTEXT_COUNT=3`` cap) — there
-# is no chapter count at which the fallback fires with non-empty output.
-# ``WriterAgent``'s "# 参考前文文风" block wording and
-# ``_render_style_samples_block`` are consequently dead in production too
-# (still reachable directly in unit tests that call ``_recent_finalized``
-# with ``fulltext_limit=0``, which is why they're kept rather than deleted).
-# Per PROJECT_PLAN §4 P7, "整体退场" (fully retiring the channel) was an
-# allowed option; this pass keeps the mechanism in place (plan-compliant,
-# behavior-preserving) and only corrects the comment to describe reality —
-# removing the dead code/mechanism outright is a slightly larger change than
-# a doc-only fix and is left as a follow-up if the team wants to formally
-# retire the channel rather than leave it inert.
+# v1.3.4 快修 (作者实测报障): that block is now GONE — line 上实测 Writer 输入
+# 83% 被前三章原文占据 (recent_fulltext), 模型把任务当素材续写导致大段跑偏。
+# Writer 彻底断原文: ``build_writer_context`` no longer surfaces
+# ``recent_fulltext`` OR ``style_samples`` at all (both keys deleted from its
+# return dict — see below). These two constants now serve only as the
+# ``_recent_finalized`` call-site's bypass value (a non-zero
+# ``style_samples_limit`` keeps that function's ``style_fetch_limit <= 0``
+# early-return from firing, which would otherwise also wipe out
+# ``recent_summaries``/``recent_headlines``) — the ``style_samples`` list it
+# computes is discarded, never returned to the Writer. The mechanism itself
+# (``_recent_finalized``'s head/tail slicing) is untouched and still directly
+# unit-tested (test_style_samples.py) at the function level.
 STYLE_SAMPLES_CHAPTER_COUNT = 2
 STYLE_SAMPLES_CHARS_PER_SIDE = 400
 
@@ -54,6 +42,11 @@ STYLE_SAMPLES_CHARS_PER_SIDE = 400
 # ~2000 chapters (linear growth slowed ~6-7x vs the old unbounded-summary
 # design; see PROJECT_PLAN §4 P3 / Backlog §3.1 for true-bounded memory at
 # super-long-form scale, not built here).
+#
+# v1.3.4 快修: still governs the Expander's ``recent_fulltext`` window
+# unchanged. The Writer no longer reads this tier at all (see
+# ``build_writer_context``) — its summary window now starts from the
+# immediately-preceding chapter instead of being carved out by this constant.
 RECENT_FULLTEXT_COUNT = 3
 
 # v1.3.2 (LL) P3 — the middle tier: finalized chapters older than the
@@ -176,11 +169,14 @@ def build_writer_context(db: Session, book: Book, chapter: Chapter) -> dict[str,
     #   · 方向 (direction): ``chapter_directive`` — the Expander's 200-300 字
     #     steering, surfaced as a TOP-LEVEL key (lifted out of structured_prompt)
     #     so it reads as its own input, not buried inside the blueprint JSON.
-    #   · 知识 (knowledge): ``characters`` / ``timelines`` / ``style_samples`` —
-    #     the relevant cards + memory, delivered by Context Pack on the same
-    #     separate line they always were. The directive NEVER carries this
-    #     knowledge (the Expander is forbidden from copying cards into it); it
-    #     only points the Writer where to go.
+    #   · 知识 (knowledge): ``characters`` / ``timelines`` / ``recent_summaries``
+    #     / ``recent_headlines`` / ``previous_chapter_summary`` — the relevant
+    #     cards + memory, delivered by Context Pack on the same separate line
+    #     they always were. The directive NEVER carries this knowledge (the
+    #     Expander is forbidden from copying cards into it); it only points
+    #     the Writer where to go. (v1.3.4 快修: no raw prior-chapter prose is
+    #     ever in this line any more — see the ``_recent_finalized`` call
+    #     below.)
     # The directive degrades gracefully: old / un-expanded chapters have no
     # ``chapter_directive`` in their structured_prompt → ``None`` here, and the
     # Writer simply falls back to the structured_prompt blueprint (the pre-P3
@@ -190,44 +186,39 @@ def build_writer_context(db: Session, book: Book, chapter: Chapter) -> dict[str,
     characters = _book_characters(db, book.id)
     selected = [character for character in characters if character.id in involved_ids]
     timelines = {character.id: _character_timeline(db, book.id, character.id, limit=15) for character in selected}
-    # Merged query (§5.L + audit J): fulltext/summaries + style_samples used to
-    # fire multiple near-identical SELECTs against the chapters table; now they
-    # share one query and split in memory.
-    #
-    # v1.3.2 (LL) P3 — three-tier memory: nearest RECENT_FULLTEXT_COUNT
-    # finalized chapters as full draft_text (``recent_fulltext``), next
-    # RECENT_SUMMARY_COUNT as full summary (``recent_summaries``), everything
-    # older still as a one-line headline (``recent_headlines``). style_samples's
-    # own query still runs (see ``_recent_finalized``), but its result is
-    # unconditionally discarded below whenever ``recent_fulltext`` is
-    # non-empty — feeding the same chapters twice (once as fulltext, once as
-    # head/tail snippets) would be duplicate token spend for identical text.
-    #
-    # v1.3.1 (KK) P7 审后修复 🔵1 (reviewer 抓出): an earlier version of this
-    # comment described style_samples as "populated as a fallback for
-    # very-early books where the fulltext window is still empty" — that is
-    # FALSE. ``fulltext_rows``/``style_rows`` share the same source rows and
-    # the same non-empty-``draft_text`` filter (see ``_recent_finalized``), so
-    # ``style_samples`` can only be non-empty when ``recent_fulltext`` is ALSO
-    # non-empty — meaning the zero-out below fires unconditionally whenever
-    # there would be anything to zero. There is no chapter count (not even
-    # "1 finalized chapter, well under RECENT_FULLTEXT_COUNT=3") at which
-    # this fallback actually delivers a non-empty result to the Writer.
-    # ``style_samples`` is kept as a mechanism (plan allowed either retiring
-    # it entirely or keeping it inert; see STYLE_SAMPLES_CHAPTER_COUNT's
-    # docstring above for why outright removal is left as a follow-up) rather
-    # than a live code path.
-    recent_fulltext, summaries, headlines, style_samples = _recent_finalized(
+
+    # v1.3.4 快修 (作者实测报障): Writer 彻底断原文. 线上实测一次 12.5k 字的
+    # Writer 输入里 10.4k 字 (83%) 是 recent_fulltext (前三章原文) ——模型把
+    # 这坨原文当"待续写的素材"，续出一章跟任务毫不相关的 11236 字。
+    # 修法：Writer 不再读 recent_fulltext / style_samples 里的任何前文原文，
+    # 只读梗概。``fulltext_limit=0`` 让 recent_fulltext 恒为空；
+    # ``style_samples_limit`` 仍传 STYLE_SAMPLES_CHAPTER_COUNT（而非 0）只是
+    # 为了绕开 ``_recent_finalized`` 的 ``style_fetch_limit <= 0`` 提前返回
+    # （那个分支会把 summaries/headlines 也一并清空）——下面把它算出来的
+    # style_samples 直接丢弃，从不放进返回的 context。
+    # 副作用（预期内、合意）：fulltext_limit=0 时 ``_recent_finalized`` 内部
+    # 恒无 fulltext_rows，于是它退化为"该章之前的全部 finalized 章节都参与
+    # summary/headline 切分"——summary 窗口从"上一章"起算，不再被 fulltext
+    # 窗口切走最近 3 章（这些章节仍然只是 summary-only，从未获得 raw
+    # draft_text）。``_recent_finalized`` 函数本身不改；expander 侧
+    # (``build_expander_context``) 的三层记忆调用照旧不变。
+    _, summaries, headlines, _ = _recent_finalized(
         db,
         book.id,
         chapter.index,
-        fulltext_limit=RECENT_FULLTEXT_COUNT,
+        fulltext_limit=0,
         style_samples_limit=STYLE_SAMPLES_CHAPTER_COUNT,
         summary_limit=RECENT_SUMMARY_COUNT,
-        chars_per_side=STYLE_SAMPLES_CHARS_PER_SIDE,
     )
-    if recent_fulltext:
-        style_samples = []
+    # 上一章梗概单列为衔接点 (previous_chapter_summary) —— summaries 按升序
+    # (最旧在前) 返回，故最后一项 = 离当前章最近的一章。recent_summaries 扣除
+    # 它，从第 2 近的章起，凑满 RECENT_SUMMARY_COUNT 总窗口，不重复计数。
+    if summaries:
+        previous_chapter_summary: dict[str, Any] | None = summaries[-1]
+        recent_summaries = summaries[:-1]
+    else:
+        previous_chapter_summary = None
+        recent_summaries = []
     # 方向 line: lift chapter_directive out so it's its own top-level input.
     # ``None`` (or empty/whitespace) means "no directive" — graceful degrade.
     raw_directive = structured_prompt.get("chapter_directive")
@@ -253,13 +244,14 @@ def build_writer_context(db: Session, book: Book, chapter: Chapter) -> dict[str,
         # would this character do here".
         "characters": [_character_full(character, include_author_notes=True) for character in selected],
         "timelines": timelines,
-        # 三层记忆 (P3): nearest RECENT_FULLTEXT_COUNT finalized chapters as full
-        # draft_text, next RECENT_SUMMARY_COUNT as full summary, everything
-        # older still as a one-line headline (recent_headlines).
-        "recent_fulltext": recent_fulltext,
-        "recent_summaries": summaries,
+        # v1.3.4 快修 — 衔接点单列: the immediately-preceding finalized
+        # chapter's summary, pulled out of the summary tier so the Writer
+        # sees exactly where "本章从这里接续" without hunting through the
+        # rest of recent_summaries. ``None`` when this is the book's first
+        # chapter (no prior finalized chapter exists yet).
+        "previous_chapter_summary": previous_chapter_summary,
+        "recent_summaries": recent_summaries,
         "recent_headlines": headlines,
-        "style_samples": style_samples,
     }
 
 

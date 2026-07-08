@@ -143,15 +143,21 @@ def _chapter_body(idx: int) -> str:
 
 
 class _RecordingWriterLLM(MockLLMClient):
+    """v1.3.4 快修: the Writer's user message is a sectioned Chinese document,
+    not JSON (see ``app.agents.writer._render_user_message``), so this mock
+    can no longer reverse-engineer the chapter index by parsing it as JSON.
+    ``_run_chapter`` always drives chapters strictly in order (1, 2, 3, ...),
+    one Writer call per chapter — so the 1-based position of THIS call among
+    ``self.users`` (before appending) is exactly the chapter index."""
+
     def __init__(self) -> None:
         self.systems: list[str] = []
         self.users: list[str] = []
 
     def complete_stream(self, *, system: str, user: str, **kwargs: Any):
+        idx = len(self.users) + 1
         self.systems.append(system)
         self.users.append(user)
-        context = json.loads(user.split("\n\n")[0])
-        idx = context.get("structured_prompt", {}).get("_chapter_index", "?")
         # Stream a long body with a unique mid-body marker (see _chapter_body).
         yield StreamChunk(kind="token", text=_chapter_body(idx))
 
@@ -321,57 +327,67 @@ def test_end_to_end_three_chapter_closed_loop_holds_all_invariants(client, auth_
         serialized = json.dumps(ctx, ensure_ascii=False, default=str)
         assert "outline_slice" not in serialized
 
-    # ----- INV-1'' (P3, was INV-1'/INV-1b' at P7): chapter N (N≥2)
-    #       Expander/Writer context's three memory tiers are each bounded
+    # ----- INV-1'' (P3, was INV-1'/INV-1b' at P7) — 拆面 at v1.3.4:
+    #       EXPANDER side unchanged: its three memory tiers are each bounded
     #       (except the last) and mutually exclusive — every chapter strictly
     #       older than N falls into EXACTLY ONE of fulltext / full-summary /
     #       headline, never zero, never more than one, and never re-fed as
     #       full body/summary outside its own tier.
+    #       WRITER side (v1.3.4 快修 作者实测报障): re-targeted from "fulltext
+    #       window content must match the expander's" to "ZERO raw prose,
+    #       ever" — build_writer_context no longer has a recent_fulltext key
+    #       at all, so there is nothing to compare against the expander's
+    #       window any more. Instead this locks (a) the user message never
+    #       carries the literal ``recent_fulltext`` string, and (b) — reusing
+    #       the existing mid-body marker technique — NO earlier chapter's
+    #       full body text (not even chapters still inside what would have
+    #       been the old fulltext window) ever leaks into the Writer's user
+    #       message.
     def _assert_three_tier_invariants(n: int) -> None:
         exp_ctx = expander_llm.contexts[n - 1]
-        wri_payload = json.loads(writer_llm.users[n - 1].split("\n\n")[0])
+        wri_user = writer_llm.users[n - 1]
 
         exp_fulltext = exp_ctx.get("recent_fulltext", [])
-        wri_fulltext = wri_payload.get("recent_fulltext", [])
         exp_summaries = exp_ctx.get("recent_summaries", [])
-        wri_summaries = wri_payload.get("recent_summaries", [])
         exp_headlines = exp_ctx.get("recent_headlines", [])
-        wri_headlines = wri_payload.get("recent_headlines", [])
 
         # Fulltext bounded at RECENT_FULLTEXT_COUNT; full-summary bounded at
         # the (test-patched) summary limit — neither grows past its bound.
         assert len(exp_fulltext) <= RECENT_FULLTEXT_COUNT, f"ch{n} expander fulltext window exceeded bound"
-        assert len(wri_fulltext) <= RECENT_FULLTEXT_COUNT, f"ch{n} writer fulltext window exceeded bound"
         assert len(exp_summaries) <= _TEST_SUMMARY_LIMIT, f"ch{n} expander summary window exceeded bound"
-        assert len(wri_summaries) <= _TEST_SUMMARY_LIMIT, f"ch{n} writer summary window exceeded bound"
 
         fulltext_indices = {c["index"] for c in exp_fulltext}
         summary_indices = {s["index"] for s in exp_summaries}
         headline_indices = {h["index"] for h in exp_headlines}
-        assert fulltext_indices == {c["index"] for c in wri_fulltext}, f"ch{n} expander/writer fulltext disagree"
-        assert summary_indices == {s["index"] for s in wri_summaries}, f"ch{n} expander/writer summary disagree"
-        assert headline_indices == {h["index"] for h in wri_headlines}, f"ch{n} expander/writer headline disagree"
+
+        # Writer 侧结构不变量: no recent_fulltext channel exists in its user
+        # message at all (no such key/section is ever rendered).
+        assert "recent_fulltext" not in wri_user, f"ch{n} writer user message carries a recent_fulltext leftover"
 
         serialized_exp = json.dumps(exp_ctx, ensure_ascii=False, default=str)
-        wri_user = writer_llm.users[n - 1]
         for earlier in range(1, n):
             in_fulltext = earlier in fulltext_indices
             in_summary = earlier in summary_indices
             in_headline = earlier in headline_indices
             assert in_fulltext or in_summary or in_headline, (
-                f"ch{n}: ch{earlier} missing from all three memory tiers"
+                f"ch{n}: ch{earlier} missing from all three expander memory tiers"
             )
             assert sum([in_fulltext, in_summary, in_headline]) == 1, (
-                f"ch{n}: ch{earlier} double-counted across memory tiers"
+                f"ch{n}: ch{earlier} double-counted across expander memory tiers"
             )
-            if in_fulltext:
-                continue  # inside the legitimate bounded full-prose window — expected.
-            # summary or headline tier — the mid-body marker (sits outside the
-            # bounded head/tail style window too) must never leak, proving no
-            # full-body re-feed for chapters outside the fulltext window.
             marker = f"【正文核心_{earlier}_MIDMARKER】"
-            assert marker not in serialized_exp, f"ch{n} expander ctx leaked ch{earlier} full body outside window"
-            assert marker not in wri_user, f"ch{n} writer ctx leaked ch{earlier} full body outside window"
+            if not in_fulltext:
+                # summary or headline tier — the mid-body marker (sits outside
+                # the bounded head/tail style window too) must never leak,
+                # proving no full-body re-feed for chapters outside the
+                # EXPANDER's fulltext window.
+                assert marker not in serialized_exp, f"ch{n} expander ctx leaked ch{earlier} full body outside window"
+            # v1.3.4 快修 — Writer 零原文: regardless of whether the expander's
+            # fulltext window still covers ch{earlier}, the WRITER must NEVER
+            # see its raw body — the marker must be absent unconditionally.
+            assert marker not in wri_user, (
+                f"ch{n} writer user message leaked ch{earlier}'s full body (Writer must carry zero raw prose)"
+            )
 
     for n in (2, 3, 4, 5):
         _assert_three_tier_invariants(n)
@@ -394,46 +410,46 @@ def test_end_to_end_three_chapter_closed_loop_holds_all_invariants(client, auth_
     # Positive (memory rolls — Writer side): chapter 2/3/4/5's Writer sees the
     # rolled-forward memory on the 知识 line — the involved card's updated
     # live_fields + the prior chapter's timeline event — never the prior body.
+    # v1.3.4 快修: the Writer's user message is a rendered document, not
+    # JSON — check the rendered「近期时间线」/「动态状态」lines directly.
     for n in (2, 3, 4, 5):
-        payload = json.loads(writer_llm.users[n - 1].split("\n\n")[0])
-        timelines = payload.get("timelines", {})
-        events = timelines.get(char_id, [])
-        event_texts = {e["event_text"] for e in events}
-        assert f"事件@第{n - 1}章" in event_texts, f"ch{n} writer missing ch{n - 1}'s timeline"
-        card_status = payload["characters"][0]["live_fields"]["current_status"]
-        assert card_status == f"走到第{n - 1}章末", f"ch{n} writer card not rolled forward"
+        wri_user = writer_llm.users[n - 1]
+        assert f"事件@第{n - 1}章" in wri_user, f"ch{n} writer missing ch{n - 1}'s timeline"
+        assert f"current_status：走到第{n - 1}章末" in wri_user, f"ch{n} writer card not rolled forward"
 
-    # INV-1'' anti-duplication half (was INV-1b' at P7): when the fulltext
-    # window is hit (at least one chapter lands in recent_fulltext), the
-    # Writer's OTHER prior-prose channel — style_samples — must be EMPTY, so
-    # the same chapters are never double-fed as both recent_fulltext and
-    # style_samples (anti-duplication rule). By chapter 5, the fulltext
-    # window (size 3) covers only the 3 most recent finalized chapters
-    # (2,3,4) and chapter 1 has rolled OUT into summary-only — the window is
-    # genuinely bounded, not just "big enough to swallow everything so far"
-    # as it was at n=2..4.
-    last_writer_payload = json.loads(writer_llm.users[-1].split("\n\n")[0])
-    last_fulltext = last_writer_payload.get("recent_fulltext", [])
-    style_samples = last_writer_payload.get("style_samples", [])
-    assert len(last_fulltext) > 0, "expected the fulltext window to have hit by chapter 5"
-    assert len(last_fulltext) <= RECENT_FULLTEXT_COUNT, "fulltext window must stay bounded even past chapter 5"
-    assert [c["index"] for c in last_fulltext] == [2, 3, 4], "fulltext window must be exactly the nearest 3 chapters"
-    assert style_samples == [], "style_samples must be empty when the fulltext window hit (no duplicate feed)"
+    # INV-1'' anti-duplication half (was INV-1b' at P7): pre-v1.3.4 this
+    # asserted "the writer's fulltext window HAS hit by chapter 5, and
+    # style_samples stays empty (no duplicate feed)". v1.3.4 retires the
+    # whole writer-side fulltext/style_samples channel outright — there is no
+    # window left to hit; every earlier chapter is summary/headline-only for
+    # the Writer. `_assert_three_tier_invariants` above already proves zero
+    # raw prose for chapters 2-5 (including this exact chapter-5 user
+    # message via the marker check) — reaffirm here that neither legacy key
+    # ever leaked back into the rendered document.
+    last_writer_user = writer_llm.users[-1]
+    assert "recent_fulltext" not in last_writer_user
+    assert "style_samples" not in last_writer_user
 
     # ----- INV-3 (P1): directive leaks no card content; Writer reads two lines. --
+    # v1.3.4 快修: the Writer's user message is a rendered document — extract
+    # just the「本章创作指令」line and check card-leak markers against THAT
+    # line specifically (they're expected to appear elsewhere, in the card's
+    # own「# 在场角色」section — that's the whole point of "two lines").
     for wri_user in writer_llm.users:
-        payload = json.loads(wri_user.split("\n\n")[0])
-        directive = payload["chapter_directive"]
-        assert directive == _DIRECTIVE
+        assert f"本章创作指令：{_DIRECTIVE}" in wri_user
+        directive_line = next(line for line in wri_user.splitlines() if line.startswith("本章创作指令："))
+        directive_text = directive_line.removeprefix("本章创作指令：")
+        assert directive_text == _DIRECTIVE
         for marker in _CARD_LEAK_MARKERS:
-            assert marker not in directive, f"directive leaked card marker {marker!r}"
-        # 知识 line: the card reaches the Writer on its own, separate line.
-        card = payload["characters"][0]
-        assert card["id"] == char_id
-        assert card["frozen_fields"]["core_traits"] == "谨慎"
-        # author_notes is on the card line, NOT on the directive line.
-        assert card["author_notes"]["motivation"] == "为妹妹复仇"
-        assert "为妹妹复仇" not in directive
+            assert marker not in directive_text, f"directive leaked card marker {marker!r}"
+        # 知识 line: the card reaches the Writer on its own, separate「# 在场角色」section.
+        assert "# 在场角色" in wri_user
+        assert character["name"] in wri_user
+        assert "core_traits：谨慎" in wri_user
+        # author_notes reaches the Writer overall (in the「作者笔记」block)...
+        assert "为妹妹复仇" in wri_user
+        # ...but never inside the directive line itself.
+        assert "为妹妹复仇" not in directive_text
 
     # ----- INV-4 (P3): Context Pack selects only the involved card, not dump-all.
     # (Only 林夕 is involved; add a decoy character to prove non-involved cards are
@@ -455,12 +471,10 @@ def test_end_to_end_three_chapter_closed_loop_holds_all_invariants(client, auth_
         app.dependency_overrides[get_extractor_llm_client] = lambda: MockLLMClient()
 
     last_writer_user = writer_llm.users[-1]
-    last_payload = json.loads(last_writer_user.split("\n\n")[0])
-    involved_card_ids = [c["id"] for c in last_payload["characters"]]
     # The Writer's 知识 line is the involved subset only — the decoy群演 (not
-    # involved) is NOT pulled in. P3: relevant cards, not dump-all.
-    assert decoy["id"] not in involved_card_ids
-    assert char_id in involved_card_ids
+    # involved) is NOT pulled in by name. P3: relevant cards, not dump-all.
+    assert decoy["name"] not in last_writer_user
+    assert character["name"] in last_writer_user
     # The Expander's relevant-memory slice is also involved-only (its all_characters
     # pool sees both, but involved_characters does not include the decoy).
     last_exp_ctx = expander_llm.contexts[-1]
@@ -577,6 +591,7 @@ def test_memory_rolls_forward_expander_locates_by_memory_not_pointer(client, aut
 
     # And the WRITER for chapter 2 DOES carry the rolled-forward memory on the
     # 知识 line (the involved card's updated live_fields), proving the loop's
-    # memory genuinely advanced between chapters.
-    ch2_writer_payload = json.loads(writer_llm.users[1].split("\n\n")[0])
-    assert ch2_writer_payload["characters"][0]["live_fields"]["current_status"] == "走到第1章末"
+    # memory genuinely advanced between chapters. v1.3.4 快修: the Writer's
+    # user message is a rendered document, not JSON — check the rendered
+    # 「动态状态」line directly.
+    assert "current_status：走到第1章末" in writer_llm.users[1]
