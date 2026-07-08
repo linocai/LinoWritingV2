@@ -77,5 +77,5 @@ struct BlinkingCaret: View {
 }
 
 // NOTE: `FlowLayout` (wrapping tag layout) lives in
-// `Views/Components/InlineEditableTags.swift` with the same `FlowLayout(spacing:)`
+// `Views/Components/FlowLayout.swift` with the same `FlowLayout(spacing:)`
 // signature — reused by both glass widget sets, not redeclared.

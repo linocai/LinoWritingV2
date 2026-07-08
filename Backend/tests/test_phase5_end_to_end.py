@@ -120,8 +120,6 @@ class _RecordingExpanderLLM(MockLLMClient):
 from app.services.context_pack import (  # noqa: E402
     HEADLINE_MAX_CHARS,
     RECENT_FULLTEXT_COUNT,
-    STYLE_SAMPLES_CHAPTER_COUNT,
-    STYLE_SAMPLES_CHARS_PER_SIDE,
     _distill_headline,
 )
 
@@ -198,7 +196,7 @@ def _seed_book_with_card(client, auth_headers) -> tuple[dict, dict]:
     book = client.post(
         "/api/v1/books",
         headers=auth_headers,
-        json={"title": "雨城三部曲", "cover_color": "#111111", "style_directive": "克制"},
+        json={"title": "雨城三部曲", "cover_color": "#111111"},
     ).json()
     # Author imports the initial character card (no outline module anymore —
     # v1.3.0 JJ P4/P5 deleted it; the Expander now locates itself via
@@ -323,9 +321,9 @@ def test_end_to_end_three_chapter_closed_loop_holds_all_invariants(client, auth_
         # No position pointer key smuggled in.
         serialized = json.dumps(ctx, ensure_ascii=False, default=str)
         assert "outline_slice" not in serialized
-        # v1.5.0 (NN) P1 定案 #4: the retired global style_directive channel is
-        # never surfaced to the Expander either — even though the book was
-        # created with a non-empty style_directive column (_seed_book_with_card).
+        # v1.5.0 (NN) P1 定案 #4 retired the global style_directive channel;
+        # v1.5.2 deleted it全链 (the column no longer exists). Regression guard:
+        # it must never resurface in the Expander context.
         assert "style_directive" not in ctx["book"]
 
     # ----- INV-1'' (P3, was INV-1'/INV-1b' at P7) — 拆面 at v1.3.4:

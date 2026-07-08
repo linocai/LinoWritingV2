@@ -23,7 +23,7 @@ def test_context_pack_filters_characters_and_limits_summaries(db_session):
     fulltext/summary split when draft_text IS present, and
     ``test_recent_finalized_three_tier_split_with_small_summary_limit`` for
     genuine three-tier coverage including headlines."""
-    book = Book(title="长夜", world_setting="雨城", style_directive="克制")
+    book = Book(title="长夜", world_setting="雨城")
     db_session.add(book)
     db_session.flush()
 
@@ -78,7 +78,7 @@ def test_recent_fulltext_and_summaries_split_by_window(db_session):
     into recent_headlines yet)."""
     from app.services.context_pack import RECENT_FULLTEXT_COUNT
 
-    book = Book(title="长夜", world_setting="雨城", style_directive="克制")
+    book = Book(title="长夜", world_setting="雨城")
     db_session.add(book)
     db_session.flush()
     c1 = Character(book_id=book.id, name="林夕", role="主角", frozen_fields={}, live_fields={})
@@ -132,7 +132,7 @@ def test_recent_fulltext_and_summaries_split_by_window(db_session):
 
 def _seed_with_author_notes(db_session) -> tuple[Book, Character, Chapter]:
     """Two finalized chapters + one current; character has author_notes."""
-    book = Book(title="长夜", world_setting="雨城", style_directive="克制")
+    book = Book(title="长夜", world_setting="雨城")
     db_session.add(book)
     db_session.flush()
     character = Character(
@@ -221,12 +221,11 @@ def test_extractor_context_omits_author_notes(db_session):
 
 
 def test_writer_context_no_longer_carries_style_directive(db_session):
-    """v1.5.0 (NN) P1 定案 #4: the global ``style_directive`` channel is
-    retired — ``build_writer_context`` must no longer surface a
-    ``style_directive`` key at all, even though the Book row here has a
-    non-empty ``style_directive`` column value. ``chapter_style`` (from
-    structured_prompt) is now the sole per-chapter style-input channel — see
-    ``agents/writer.py``."""
+    """v1.5.0 (NN) P1 定案 #4 retired the global ``style_directive`` channel;
+    v1.5.2 (清理收口) deleted it全链 (DB column + schema + serialization).
+    Regression guard: ``build_writer_context`` must never resurrect a
+    ``style_directive`` key. ``chapter_style`` (from structured_prompt) is the
+    sole per-chapter style-input channel — see ``agents/writer.py``."""
     book, character, current = _seed_with_author_notes(db_session)
     ctx = build_writer_context(db_session, book, current)
     assert "style_directive" not in ctx
@@ -234,7 +233,8 @@ def test_writer_context_no_longer_carries_style_directive(db_session):
 
 def test_expander_context_no_longer_carries_style_directive(db_session):
     """Same retirement on the Expander side: the ``book`` sub-dict must not
-    carry ``style_directive`` either."""
+    carry ``style_directive`` either (the column no longer exists as of
+    v1.5.2)."""
     book, character, current = _seed_with_author_notes(db_session)
     ctx = build_expander_context(db_session, book, current)
     assert "style_directive" not in ctx["book"]
@@ -249,15 +249,14 @@ def test_writer_context_fulltext_and_style_window_share_one_bounded_query(db_ses
     once. The contract here is: at most 2 chapter-only SELECTs total (bounded
     window + unbounded tail), never more.
 
-    v1.3.4 快修 — Writer 彻底断原文: ``build_writer_context`` now calls
-    ``_recent_finalized`` with ``fulltext_limit=0`` (see context_pack.py), so
-    for the Writer specifically the "bounded window" fetch never actually
-    contributes any fulltext rows — every finalized chapter always falls
-    through to the (still bounded-count, RECENT_SUMMARY_COUNT) summary tier
-    instead. The 2-query shape is unchanged (this test locks THAT), but the
-    content assertions below now check ``previous_chapter_summary`` /
-    ``recent_summaries`` instead of the (now entirely absent)
-    ``recent_fulltext`` / ``style_samples`` keys.
+    v1.3.4 快修 — Writer 彻底断原文: ``build_writer_context`` calls
+    ``_recent_finalized`` with ``fulltext_limit=0`` (see context_pack.py). As
+    of v1.5.2 (清理收口, style_samples mechanism retired) a ``fulltext_limit``
+    of 0 SKIPS the bounded-window SELECT entirely — so the Writer path now
+    issues only the single unbounded-tail chapters SELECT (the ``<= 2`` guard
+    below still holds, now with room to spare). The content assertions check
+    ``previous_chapter_summary`` / ``recent_headlines`` — the Writer never
+    surfaces ``recent_fulltext`` / ``style_samples`` / ``recent_summaries``.
     """
     book, character, current = _seed_with_author_notes(db_session)
 
@@ -294,71 +293,6 @@ def test_writer_context_fulltext_and_style_window_share_one_bounded_query(db_ses
         f"expected at most 2 chapters SELECTs (bounded window + unbounded "
         f"tail), got {len(chapter_only_selects)}: {chapter_only_selects!r}"
     )
-
-
-def test_merged_query_respects_different_limits(db_session):
-    """v1.3.1 (KK) P7: ``fulltext_limit`` and ``style_samples_limit`` can
-    diverge — the bounded-window fetch must be ``max(...)`` of the two, and
-    each of ``recent_fulltext`` / ``style_samples`` trimmed independently
-    from that shared window. ``recent_summaries`` (unbounded tail, older than
-    the window) is verified separately since it no longer takes a limit."""
-    book = Book(title="x")
-    db_session.add(book)
-    db_session.flush()
-    # Five finalized chapters, each with summary + draft_text.
-    for i in range(1, 6):
-        db_session.add(
-            Chapter(
-                book_id=book.id,
-                index=i,
-                user_prompt=f"第{i}章",
-                draft_text=f"第{i}章正文。" * 100,
-                summary=f"第{i}章摘要",
-                status="finalized",
-                source="agent",
-            )
-        )
-    current = Chapter(
-        book_id=book.id,
-        index=6,
-        user_prompt="当前",
-        status="prompt_ready",
-        structured_prompt={"characters_involved": []},
-    )
-    db_session.add(current)
-    db_session.commit()
-
-    from app.services.context_pack import RECENT_SUMMARY_COUNT, _recent_finalized
-
-    # fulltext=2, samples=4 → shared window fetches 4, fulltext trims to 2;
-    # everything outside the 4-row window (chapter 1) becomes the summary
-    # tier (well under RECENT_SUMMARY_COUNT here, so nothing spills into
-    # recent_headlines — see test_context_pack.py's three-tier test below
-    # for headline coverage).
-    fulltext, summaries, headlines, samples = _recent_finalized(
-        db_session, book.id, 6, fulltext_limit=2, style_samples_limit=4, summary_limit=RECENT_SUMMARY_COUNT
-    )
-    assert len(fulltext) == 2
-    assert [c["index"] for c in fulltext] == [4, 5]
-    assert len(samples) == 4
-    assert [s["chapter_index"] for s in samples] == [2, 3, 4, 5]
-    assert [s["index"] for s in summaries] == [1]
-    assert headlines == []
-
-    # Reverse skew: fulltext=3, samples=1 → shared window fetches 3.
-    fulltext, summaries, headlines, samples = _recent_finalized(
-        db_session, book.id, 6, fulltext_limit=3, style_samples_limit=1, summary_limit=RECENT_SUMMARY_COUNT
-    )
-    assert [c["index"] for c in fulltext] == [3, 4, 5]
-    assert [s["chapter_index"] for s in samples] == [5]
-    assert [s["index"] for s in summaries] == [1, 2]
-    assert headlines == []
-
-    # Both zero → empty + no DB hit (we don't assert the latter explicitly).
-    fulltext, summaries, headlines, samples = _recent_finalized(
-        db_session, book.id, 6, fulltext_limit=0, style_samples_limit=0, summary_limit=RECENT_SUMMARY_COUNT
-    )
-    assert fulltext == [] and summaries == [] and headlines == [] and samples == []
 
 
 def test_recent_finalized_three_tier_split_with_small_summary_limit(db_session):
@@ -399,8 +333,8 @@ def test_recent_finalized_three_tier_split_with_small_summary_limit(db_session):
 
     # fulltext=2, summary_limit=2 → nearest 2 (5,6) fulltext; next 2 (3,4)
     # full summary; remaining older (1,2) fall to headline.
-    fulltext, summaries, headlines, _ = _recent_finalized(
-        db_session, book.id, 7, fulltext_limit=2, style_samples_limit=0, summary_limit=2
+    fulltext, summaries, headlines = _recent_finalized(
+        db_session, book.id, 7, fulltext_limit=2, summary_limit=2
     )
     assert [c["index"] for c in fulltext] == [5, 6]
     assert [s["index"] for s in summaries] == [3, 4]

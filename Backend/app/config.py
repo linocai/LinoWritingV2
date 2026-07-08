@@ -29,10 +29,6 @@ class Settings(BaseSettings):
     #     python -c "import secrets; print(secrets.token_hex(32))"
     api_token: str = Field(min_length=16, validation_alias="API_TOKEN")
 
-    grok_api_key: str | None = None
-    grok_base_url: str = "https://api.x.ai/v1"
-    model_name: str = "grok-4"
-
     log_level: str = "INFO"
     cors_origins: str = Field(default="*", validation_alias="CORS_ORIGINS")
 

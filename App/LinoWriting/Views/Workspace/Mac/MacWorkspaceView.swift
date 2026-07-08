@@ -155,7 +155,7 @@ struct MacWorkspaceView: View {
     private func bodyRow(showRightInline: Bool, showSidebarInline: Bool) -> some View {
         HStack(spacing: 0) {
             if showSidebarInline {
-                MacChapterSidebar(book: currentBook, onExport: {})
+                MacChapterSidebar(book: currentBook)
                     .frame(width: LWMetrics.sidebarWidth)
             }
             ZStack(alignment: .topLeading) {
@@ -182,7 +182,7 @@ struct MacWorkspaceView: View {
 
     /// Narrow-width sidebar drawer — overlays the editor's leading edge.
     private var sidebarDrawer: some View {
-        MacChapterSidebar(book: currentBook, onExport: {})
+        MacChapterSidebar(book: currentBook)
             .frame(width: LWMetrics.sidebarWidth)
             .background(.regularMaterial)
             .overlay(alignment: .trailing) {

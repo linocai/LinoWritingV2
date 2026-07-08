@@ -160,7 +160,7 @@ public final class APIClient: APIClientProtocol, @unchecked Sendable {
 
     /// Send the request and decode the JSON body as `T`. For empty 204 responses, pass `EmptyResponse.self`.
     private func send<T: Decodable>(_ req: URLRequest, as _: T.Type) async throws -> T {
-        let (data, resp) = try await performRaw(req)
+        let (data, _) = try await performRaw(req)
         if T.self == EmptyResponse.self {
             // For 204 endpoints, fabricate an empty value.
             return EmptyResponse() as! T
@@ -170,7 +170,6 @@ public final class APIClient: APIClientProtocol, @unchecked Sendable {
         } catch {
             throw AppError.decoding("响应解析失败：\(error.localizedDescription)；原始内容：\(String(data: data.prefix(512), encoding: .utf8) ?? "")")
         }
-        _ = resp // silence unused
     }
 
     private func sendNoBody(_ req: URLRequest) async throws {

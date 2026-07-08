@@ -70,7 +70,6 @@ public final class AppStore: ObservableObject {
 
     public func openBook(_ book: Book) {
         currentBook = book
-        settings.lastOpenedBookId = book.id
     }
 
     public func closeBook() {

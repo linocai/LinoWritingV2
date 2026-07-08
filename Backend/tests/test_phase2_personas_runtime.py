@@ -403,7 +403,7 @@ def test_extractor_operational_rules_pin_summary_first_sentence_headline():
 
 
 def _seed_memory_world(db_session):
-    book = Book(title="长夜", world_setting="雨城", style_directive="克制")
+    book = Book(title="长夜", world_setting="雨城")
     db_session.add(book)
     db_session.flush()
     c1 = Character(

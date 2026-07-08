@@ -268,40 +268,6 @@ struct LWSectionLabel: View {
     }
 }
 
-// MARK: - Coloured tag chip — plot_anchors (v1.5.0 NN: renamed from must_happen)
-
-struct LWTagChip: View {
-    let text: String
-    let foreground: Color
-    let background: Color
-
-    var body: some View {
-        Text(text)
-            .font(.system(size: 12.5))
-            .foregroundStyle(foreground)
-            .padding(.horizontal, 11)
-            .padding(.vertical, 5)
-            .background(background, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-    }
-}
-
-// MARK: - "结构要点 · 供 Writer 参考" centred divider
-
-struct LWCenteredDivider: View {
-    let text: String
-
-    var body: some View {
-        HStack(spacing: 9) {
-            Rectangle().fill(LWMetrics.hairline).frame(height: 0.5)
-            Text(text)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(LWColor.mutedText3)
-                .fixedSize()
-            Rectangle().fill(LWMetrics.hairline).frame(height: 0.5)
-        }
-    }
-}
-
 // MARK: - Pointer cursor helper
 
 /// Push / pop the pointing-hand cursor on macOS hover. On iOS there is no

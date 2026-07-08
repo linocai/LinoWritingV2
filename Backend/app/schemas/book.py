@@ -14,7 +14,6 @@ class BookPatch(BaseModel):
     title: str | None = None
     cover_color: str | None = None
     world_setting: str | None = None
-    style_directive: str | None = None
 
 
 class BookRead(BaseModel):
@@ -24,7 +23,6 @@ class BookRead(BaseModel):
     title: str
     cover_color: str | None
     world_setting: str | None
-    style_directive: str | None
     chapter_count: int
     character_count: int
     created_at: UtcDatetime

@@ -324,10 +324,6 @@ public final class ChapterEditorStore: ObservableObject {
         await patch(ChapterPatchRequest(structuredPrompt: value))
     }
 
-    public func patchDraftText(_ value: String) async {
-        await patch(ChapterPatchRequest(draftText: value))
-    }
-
     private func patch(_ payload: ChapterPatchRequest) async {
         guard let chapter else { return }
         do {

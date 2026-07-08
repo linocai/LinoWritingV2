@@ -14,8 +14,6 @@ import SwiftUI
 /// `.lwSidebar()` glass. macOS-only.
 struct MacChapterSidebar: View {
     let book: Book
-    /// Unused now (export handled inline); kept so the container can inject hooks.
-    var onExport: () -> Void = {}
 
     @EnvironmentObject var chaptersStore: ChaptersStore
     @EnvironmentObject var charactersStore: CharactersStore

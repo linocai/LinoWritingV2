@@ -82,7 +82,7 @@ _USER_PROMPT = (
 def test_writer_context_surfaces_user_prompt_as_top_level_key(db_session):
     """build_writer_context lifts chapter.user_prompt to a top-level ``user_prompt``
     key — its own 剧情 line, distinct from the 知识 (cards/timelines)."""
-    book = Book(title="长夜", world_setting="雨城", style_directive="克制")
+    book = Book(title="长夜", world_setting="雨城")
     db_session.add(book)
     db_session.flush()
     character = Character(

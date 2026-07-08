@@ -4,8 +4,8 @@ import SwiftUI
 /// v1.1.0 (FF) Phase 3 — 设定 tab. 作品名称 (`patchBook`) / 封面色 6 swatch /
 /// 世界观设定 (world_setting) / "删除整本作品…" (`deleteBook` → back to shelf).
 /// v1.5.0 (NN) P2 — 「文风指令」输入框已删（全局 `style_directive` 退场，
-/// 全书文风底色载体移到 Writer 人格；`Book.styleDirective`/`BookRead` 后端
-/// 字段仍保留 vestigial，仅停止在此 UI 绑定/提交）。macOS-only.
+/// 全书文风底色载体移到 Writer 人格）。v1.5.2 已于全链删除（DB 列/后端 schema/
+/// 前端字段一并移除）。macOS-only.
 struct MacBookSettingsTab: View {
     let book: Book
 

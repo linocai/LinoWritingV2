@@ -16,7 +16,7 @@ def test_books_crud(client, auth_headers):
     patch = client.patch(
         f"/api/v1/books/{book['id']}",
         headers=auth_headers,
-        json={"world_setting": "雨城与旧案。", "style_directive": "冷峻克制。"},
+        json={"world_setting": "雨城与旧案。"},
     )
     assert patch.status_code == 200
     assert patch.json()["world_setting"] == "雨城与旧案。"

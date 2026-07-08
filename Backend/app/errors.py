@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request, status
+from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
@@ -142,10 +142,6 @@ def error_payload(error: AppError) -> dict[str, Any]:
 
 def error_response(error: AppError) -> JSONResponse:
     return JSONResponse(status_code=error.status_code, content=error_payload(error))
-
-
-def not_found(message: str = "Resource not found") -> AppError:
-    return AppError("not_found", message, status_code=status.HTTP_404_NOT_FOUND)
 
 
 def conflict(message: str, details: dict[str, Any] | None = None) -> AppError:

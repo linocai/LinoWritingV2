@@ -13,8 +13,8 @@ import SwiftUI
 /// title / cover also syncs the shelf cache + open-book metadata so the change
 /// shows on the next shelf visit. iOS-only.
 /// v1.5.0 (NN) P2 — 「文风指令」输入框已删（全局 `style_directive` 退场，
-/// 全书文风底色载体移到 Writer 人格；`Book.styleDirective`/`BookRead` 后端
-/// 字段仍保留 vestigial，仅停止在此 UI 绑定/提交）。
+/// 全书文风底色载体移到 Writer 人格）。v1.5.2 已于全链删除（DB 列/后端 schema/
+/// 前端字段一并移除）。
 struct IOSBookSettingsSection: View {
     let book: Book
 

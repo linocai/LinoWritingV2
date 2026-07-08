@@ -7,10 +7,9 @@ import SwiftUI
 /// `MacAddFieldRow` established for `[String: JSONValue]` dictionaries (v1.3.0
 /// II P1), reshaped for bare string arrays: each tag renders with a small
 /// trailing "×" delete affordance, plus a trailing dashed "＋ 添加" pill that
-/// expands into a single-field text input on tap. Reuses the glass-styled
-/// `LWTagChip` colors and the existing `FlowLayout` (`InlineEditableTags.swift`)
-/// rather than the older `InlineEditableTags` component's plain-style chips,
-/// so this reads consistently with stage2's other tag groups
+/// expands into a single-field text input on tap. Renders its own glass-styled
+/// chips and reuses `FlowLayout` (`Views/Components/FlowLayout.swift`), so this
+/// reads consistently with stage2's other tag groups
 /// (`MacChapterEditor.tagGroup` / `IOSChapterEditPlaceholder.tagGroup`).
 ///
 /// `maxCount` is kept general-purpose (no current caller uses it since

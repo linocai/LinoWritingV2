@@ -11,7 +11,6 @@ from app.models.provider_key import ProviderKey
 from app.models.system_settings import SystemSettings
 from app.services.encryption import decrypt_api_key, encrypt_api_key
 from app.schemas.provider_key import (
-    AGENT_ROLES,
     ActiveAgentKeyRead,
     ActiveAgentKeyUpdate,
     ActiveProviderKeyUpdate,
@@ -28,7 +27,8 @@ router = APIRouter(tags=["provider_keys"])
 # v0.7 M-1: maps agent_role → corresponding column on system_settings. Used
 # by the parameterised /settings/active_key/{agent_role} endpoint as a
 # single source of truth, so adding a new Agent later only requires editing
-# this dict + AGENT_ROLES + adding a new column on system_settings.
+# this dict + the ``AGENT_ROLES`` tuple in schemas/provider_key.py + adding a
+# new column on system_settings.
 _AGENT_TO_SETTINGS_COLUMN: dict[AgentRole, str] = {
     "writer": "active_writer_key_id",
     "extractor": "active_extractor_key_id",

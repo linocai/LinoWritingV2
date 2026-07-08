@@ -986,10 +986,6 @@ struct MacChapterEditor: View {
 
 // MARK: - Helpers
 
-private extension String {
-    var nonEmpty: String? { isEmpty ? nil : self }
-}
-
 /// v1.3.2 (LL) P2 — fires `onActive` whenever the app returns to the
 /// foreground. Kept as its own modifier so the `scenePhase` `onChange`
 /// inference doesn't add to `MacChapterEditor.body`'s already-at-the-cliff

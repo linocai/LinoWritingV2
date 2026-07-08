@@ -37,8 +37,8 @@ public final class BookStore: ObservableObject {
     }
 
     // v1.5.0 (NN) P2 — `patchStyleDirective` removed: 全局 `style_directive`
-    // 退场，书设置页不再提交它（`BookPatchRequest.styleDirective` 字段/`Book`
-    // 模型仍保留 decode-only，后端 schema 未删，roundtrip 安全）。
+    // 退场（书设置页不再提交它）。v1.5.2 全链删除：DB 列 + BookRead/BookPatch +
+    // 前端 `Book`/`BookPatchRequest` 字段一并移除。全书文风底色载体在 Writer 人格。
 
     public func patchTitle(_ value: String) async {
         await patch(BookPatchRequest(title: value))

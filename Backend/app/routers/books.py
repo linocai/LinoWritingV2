@@ -134,7 +134,6 @@ def _book_read(db: Session, book: Book) -> BookRead:
             "title": book.title,
             "cover_color": book.cover_color,
             "world_setting": book.world_setting,
-            "style_directive": book.style_directive,
             "chapter_count": chapter_count,
             "character_count": character_count,
             "created_at": book.created_at,

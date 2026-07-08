@@ -5,7 +5,6 @@ public struct Book: Codable, Equatable, Identifiable, Sendable, Hashable {
     public var title: String
     public var coverColor: String?
     public var worldSetting: String?
-    public var styleDirective: String?
     public var chapterCount: Int
     public var characterCount: Int
     public var createdAt: Date
@@ -16,7 +15,6 @@ public struct Book: Codable, Equatable, Identifiable, Sendable, Hashable {
         case id, title
         case coverColor = "cover_color"
         case worldSetting = "world_setting"
-        case styleDirective = "style_directive"
         case chapterCount = "chapter_count"
         case characterCount = "character_count"
         case createdAt = "created_at"
@@ -29,7 +27,6 @@ public struct Book: Codable, Equatable, Identifiable, Sendable, Hashable {
         title: String,
         coverColor: String? = nil,
         worldSetting: String? = nil,
-        styleDirective: String? = nil,
         chapterCount: Int = 0,
         characterCount: Int = 0,
         createdAt: Date,
@@ -40,7 +37,6 @@ public struct Book: Codable, Equatable, Identifiable, Sendable, Hashable {
         self.title = title
         self.coverColor = coverColor
         self.worldSetting = worldSetting
-        self.styleDirective = styleDirective
         self.chapterCount = chapterCount
         self.characterCount = characterCount
         self.createdAt = createdAt
@@ -68,24 +64,20 @@ public struct BookPatchRequest: Codable, Sendable {
     public var title: String?
     public var coverColor: String?
     public var worldSetting: String?
-    public var styleDirective: String?
 
     enum CodingKeys: String, CodingKey {
         case title
         case coverColor = "cover_color"
         case worldSetting = "world_setting"
-        case styleDirective = "style_directive"
     }
 
     public init(
         title: String? = nil,
         coverColor: String? = nil,
-        worldSetting: String? = nil,
-        styleDirective: String? = nil
+        worldSetting: String? = nil
     ) {
         self.title = title
         self.coverColor = coverColor
         self.worldSetting = worldSetting
-        self.styleDirective = styleDirective
     }
 }

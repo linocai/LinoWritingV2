@@ -17,7 +17,6 @@ class Book(Base):
     title: Mapped[str] = mapped_column(Text, nullable=False)
     cover_color: Mapped[str | None] = mapped_column(Text)
     world_setting: Mapped[str | None] = mapped_column(Text)
-    style_directive: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

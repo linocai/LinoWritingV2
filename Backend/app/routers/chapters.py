@@ -20,7 +20,6 @@ from app.llm.base import (
     LLMClient,
     get_expander_llm_client,
     get_extractor_llm_client,
-    get_llm_client,
     get_writer_llm_client,
 )
 from app.llm.errors import LLMError

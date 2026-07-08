@@ -54,9 +54,6 @@ public final class Settings: @unchecked Sendable {
     public static let trustedBackendIPs: [String] = ["118.178.122.194"]
 
     private let defaults: UserDefaults
-    private let lastBookKey = "last_opened_book_id"
-    private let sidebarWidthKey = "sidebar_width"
-    private let rightPanelWidthKey = "right_panel_width"
 
     /// `UserDefaults` key shared with `@AppStorage("editor_font_design")` in views.
     /// Kept `public static` so views and tests can reference the same key
@@ -66,41 +63,4 @@ public final class Settings: @unchecked Sendable {
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
     }
-
-    public var lastOpenedBookId: String? {
-        get { defaults.string(forKey: lastBookKey) }
-        set { defaults.set(newValue, forKey: lastBookKey) }
-    }
-
-    public var sidebarWidth: CGFloat {
-        get { CGFloat(defaults.double(forKey: sidebarWidthKey).nonZero ?? 220.0) }
-        set { defaults.set(Double(newValue), forKey: sidebarWidthKey) }
-    }
-
-    public var rightPanelWidth: CGFloat {
-        get { CGFloat(defaults.double(forKey: rightPanelWidthKey).nonZero ?? 340.0) }
-        set { defaults.set(Double(newValue), forKey: rightPanelWidthKey) }
-    }
-
-    /// Chapter draft / preview body font design. Default `.serif` (PROJECT_PLAN §5.K.4).
-    ///
-    /// NOTE (K-3): the UI switch lives in `SettingsView` after the E-3 LLM Providers
-    /// rework lands. This service-layer accessor + the `@AppStorage` reads in
-    /// `Step3_DraftView` are sufficient for K-3 — the field is wired end-to-end
-    /// and persists across launches; the picker UI is a single additional row.
-    public var editorFontDesign: EditorFontDesign {
-        get {
-            guard let raw = defaults.string(forKey: Self.editorFontDesignKey),
-                  let parsed = EditorFontDesign(rawValue: raw) else {
-                return .default
-            }
-            return parsed
-        }
-        set { defaults.set(newValue.rawValue, forKey: Self.editorFontDesignKey) }
-    }
-}
-
-private extension Double {
-    /// Treats 0.0 as "not set" (UserDefaults' default for missing keys).
-    var nonZero: Double? { self == 0.0 ? nil : self }
 }

@@ -10,3 +10,14 @@ build/
 # 本地规划/归档文档（不入版本控制）
 PROJECT_PLAN.md
 archive/
+
+# Python
+__pycache__/
+.pytest_cache/
+*.egg-info/
+.venv/
+Backend/.env
+Backend/lino_writing.db
+
+# 会话本地配置
+.claude/

@@ -133,7 +133,6 @@ public final class MockAPIClient: APIClientProtocol, @unchecked Sendable {
         if let t = req.title { book.title = t }
         if let c = req.coverColor { book.coverColor = c }
         if let w = req.worldSetting { book.worldSetting = w }
-        if let s = req.styleDirective { book.styleDirective = s }
         book.updatedAt = Date()
         books[idx] = book
         return book
