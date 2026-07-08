@@ -6,13 +6,15 @@ import SwiftUI
 /// Handoff `LinoWriting iOS.dc.html` 屏2 设定 tab:
 ///   - 作品名称 (Songti input, `PATCH /books/{id}` title).
 ///   - 封面颜色: 6 named swatches (`PATCH /books/{id}` cover_color).
-///   - 世界观设定 (`world_setting`) / 文风指令 (`style_directive`),
-///     blur → `PATCH /books/{id}`.
+///   - 世界观设定 (`world_setting`), blur → `PATCH /books/{id}`.
 ///   - 导出整本… (`GET /books/{id}/export`) / 删除整本作品… (`DELETE /books/{id}`).
 ///
 /// Mirrors `MacBookSettingsTab` reflowed for iPhone full width. Editing the
 /// title / cover also syncs the shelf cache + open-book metadata so the change
 /// shows on the next shelf visit. iOS-only.
+/// v1.5.0 (NN) P2 — 「文风指令」输入框已删（全局 `style_directive` 退场，
+/// 全书文风底色载体移到 Writer 人格；`Book.styleDirective`/`BookRead` 后端
+/// 字段仍保留 vestigial，仅停止在此 UI 绑定/提交）。
 struct IOSBookSettingsSection: View {
     let book: Book
 
@@ -25,12 +27,10 @@ struct IOSBookSettingsSection: View {
 
     @State private var titleDraft = ""
     @State private var worldDraft = ""
-    @State private var styleDraft = ""
     @State private var showExportSheet = false
     @State private var showDeleteConfirm = false
     @FocusState private var titleFocused: Bool
     @FocusState private var worldFocused: Bool
-    @FocusState private var styleFocused: Bool
 
     private var current: Book { bookStore.book ?? book }
 
@@ -62,12 +62,6 @@ struct IOSBookSettingsSection: View {
                 .focused($worldFocused)
                 .onChange(of: worldFocused) { _, f in if !f { commitWorld() } }
                 .padding(.bottom, 16)
-
-            label("文风指令")
-            LWTextArea(text: $styleDraft, placeholder: "希望 Writer 遵循的文风…", minHeight: 84, font: .system(size: 13.5), lineSpacing: 5, background: Color.white.opacity(0.7))
-                .focused($styleFocused)
-                .onChange(of: styleFocused) { _, f in if !f { commitStyle() } }
-                .padding(.bottom, 18)
 
             Button { showExportSheet = true } label: {
                 Text("导出整本…")
@@ -130,7 +124,6 @@ struct IOSBookSettingsSection: View {
     private func syncDrafts() {
         titleDraft = current.title
         worldDraft = current.worldSetting ?? ""
-        styleDraft = current.styleDirective ?? ""
     }
 
     private func commitTitle() {
@@ -141,10 +134,6 @@ struct IOSBookSettingsSection: View {
     private func commitWorld() {
         guard worldDraft != (current.worldSetting ?? "") else { return }
         Task { await bookStore.patchWorldSetting(worldDraft) }
-    }
-    private func commitStyle() {
-        guard styleDraft != (current.styleDirective ?? "") else { return }
-        Task { await bookStore.patchStyleDirective(styleDraft) }
     }
     private func setCover(_ name: String) {
         guard name != current.coverColor else { return }

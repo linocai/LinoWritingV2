@@ -38,9 +38,10 @@ enum MacRoleVocab {
     /// One-line responsibility blurb for the persona cards (handoff `roleDesc`).
     /// v1.4.0 (MM) P3 — 优化师降职为结构员+校对员（删 `chapter_directive`）；
     /// Writer 改为直接依据作者本章剧情（Bible）写作，字数落区间。
+    /// v1.5.0 (NN) P2 — 优化师终极精简为「框架员+选角员+领读员」，desc 对齐。
     static func desc(_ role: AgentRole) -> String {
         switch role {
-        case .expander: return "收束结构 ＋ 校对连续性/世界观 ＋ 框定范围（不发明情节）"
+        case .expander: return "搭框架（场景/视角/字数/锚点）＋选角＋定本章文风＋提醒连续性（不发明情节）"
         case .writer: return "依据你写的本章剧情（Bible）＋ 上下文包写正文，字数落区间"
         case .extractor: return "把本章实际发生的事，回写进人物卡与时间线"
         }

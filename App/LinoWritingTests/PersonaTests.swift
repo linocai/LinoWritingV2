@@ -15,6 +15,12 @@ import XCTest
 ///  - StructuredPrompt: v1.4.0 (MM) P1/P3 — `chapter_directive` field removed
 ///    (legacy payloads carrying the residual key still decode successfully,
 ///    silently ignored); `continuity_alerts` round-trips snake_case.
+///  - StructuredPrompt: v1.5.0 (NN) P2 — `chapter_goal`/`must_not_happen`/
+///    `extra_notes`/`focus_traits` deleted; `must_happen`→`plot_anchors`
+///    (old key does NOT populate the renamed field); new `chapter_style`
+///    round-trips snake_case + absent-key decodes as nil. Old residual keys
+///    (`chapter_goal`/`must_happen`/`chapter_directive`/etc.) still decode
+///    successfully and are silently ignored.
 ///  - AgentPersonaUpdateRequest encodes a snake_case body.
 @MainActor
 final class PersonaTests: XCTestCase {
@@ -64,23 +70,56 @@ final class PersonaTests: XCTestCase {
         XCTAssertFalse(store.isMutating(.writer))
     }
 
-    // MARK: - StructuredPrompt codec (v1.4.0 MM P1/P3)
+    // MARK: - StructuredPrompt codec (v1.5.0 NN P2)
 
-    func test_directive_residualKeyStillDecodesAndIsIgnored() throws {
-        // Legacy payload with a residual `chapter_directive` key from a chapter
-        // written before v1.4.0 — the field no longer exists on the model, but
-        // decoding must still succeed and simply drop the unknown key.
+    func test_legacyKeys_residualAndIgnored() throws {
+        // Legacy payload from a chapter written before v1.5.0 carrying every
+        // now-deleted key (`chapter_goal`/`must_not_happen`/`extra_notes`/
+        // `focus_traits`/`chapter_directive`) plus the *old* `must_happen`
+        // key — none of these exist on the model anymore, so decoding must
+        // still succeed, silently drop them all, and (crucially) NOT map the
+        // old `must_happen` onto the renamed `plot_anchors` field.
         let legacy = Data("""
-        {"chapter_goal":"g","must_happen":[],"must_not_happen":[],"characters_involved":[],
-         "chapter_directive":"本章方向"}
+        {"chapter_goal":"g","must_happen":["旧锚点"],"must_not_happen":["x"],
+         "extra_notes":"n","focus_traits":["t"],"chapter_directive":"本章方向",
+         "characters_involved":[]}
         """.utf8)
         let decoded = try CodecFactory.makeDecoder().decode(StructuredPrompt.self, from: legacy)
-        XCTAssertEqual(decoded.chapterGoal, "g")
+        XCTAssertEqual(decoded.plotAnchors, [])
         XCTAssertEqual(decoded.continuityAlerts, [])
+        XCTAssertNil(decoded.chapterStyle)
+    }
+
+    func test_plotAnchors_roundTripsSnakeCase() throws {
+        var sp = StructuredPrompt()
+        sp.plotAnchors = ["主角发现信物"]
+        let data = try CodecFactory.makeEncoder().encode(sp)
+        let json = String(data: data, encoding: .utf8) ?? ""
+        XCTAssertTrue(json.contains("\"plot_anchors\""), "expected snake_case key, got: \(json)")
+        let decoded = try CodecFactory.makeDecoder().decode(StructuredPrompt.self, from: data)
+        XCTAssertEqual(decoded.plotAnchors, ["主角发现信物"])
+    }
+
+    func test_chapterStyle_roundTripsSnakeCase() throws {
+        var sp = StructuredPrompt()
+        sp.chapterStyle = "短句、快节奏、克制"
+        let data = try CodecFactory.makeEncoder().encode(sp)
+        let json = String(data: data, encoding: .utf8) ?? ""
+        XCTAssertTrue(json.contains("\"chapter_style\""), "expected snake_case key, got: \(json)")
+        let decoded = try CodecFactory.makeDecoder().decode(StructuredPrompt.self, from: data)
+        XCTAssertEqual(decoded.chapterStyle, "短句、快节奏、克制")
+    }
+
+    func test_chapterStyle_absentKeyDecodesAsNil() throws {
+        let legacy = Data("""
+        {"plot_anchors":[],"characters_involved":[]}
+        """.utf8)
+        let decoded = try CodecFactory.makeDecoder().decode(StructuredPrompt.self, from: legacy)
+        XCTAssertNil(decoded.chapterStyle)
     }
 
     func test_continuityAlerts_roundTripsSnakeCase() throws {
-        var sp = StructuredPrompt(chapterGoal: "g")
+        var sp = StructuredPrompt()
         sp.continuityAlerts = ["第三章提到的信物本章未回收"]
         let data = try CodecFactory.makeEncoder().encode(sp)
         let json = String(data: data, encoding: .utf8) ?? ""
@@ -92,11 +131,10 @@ final class PersonaTests: XCTestCase {
     func test_continuityAlerts_absentKeyDecodesAsEmpty() throws {
         // Legacy payload with no continuity_alerts key at all.
         let legacy = Data("""
-        {"chapter_goal":"g","must_happen":[],"must_not_happen":[],"characters_involved":[]}
+        {"plot_anchors":[],"characters_involved":[]}
         """.utf8)
         let decoded = try CodecFactory.makeDecoder().decode(StructuredPrompt.self, from: legacy)
         XCTAssertEqual(decoded.continuityAlerts, [])
-        XCTAssertEqual(decoded.chapterGoal, "g")
     }
 
     // MARK: - Request body encoding

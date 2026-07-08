@@ -66,14 +66,12 @@ class MockLLMClient:
         if "all_characters" in context:
             character_ids = [character["id"] for character in context["all_characters"]]
             return {
-                "chapter_goal": "让主角发现山洞中的线索。",
-                "must_happen": ["主角发现一枚带血的铜钱"],
-                "must_not_happen": ["不要揭晓幕后黑手"],
+                "plot_anchors": ["主角发现一枚带血的铜钱"],
                 "characters_involved": character_ids[:1],
                 "scene_setting": "雨夜山洞",
                 "narrative_pov": "third_person_limited",
                 "target_word_count": 800,
-                "extra_notes": "保持悬疑感",
+                "chapter_style": "克制冷静，短句为主。",
             }
         character = context["characters"][0]
         live_fields = dict(character.get("live_fields") or {})

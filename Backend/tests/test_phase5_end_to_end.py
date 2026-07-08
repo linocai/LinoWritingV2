@@ -323,6 +323,10 @@ def test_end_to_end_three_chapter_closed_loop_holds_all_invariants(client, auth_
         # No position pointer key smuggled in.
         serialized = json.dumps(ctx, ensure_ascii=False, default=str)
         assert "outline_slice" not in serialized
+        # v1.5.0 (NN) P1 定案 #4: the retired global style_directive channel is
+        # never surfaced to the Expander either — even though the book was
+        # created with a non-empty style_directive column (_seed_book_with_card).
+        assert "style_directive" not in ctx["book"]
 
     # ----- INV-1'' (P3, was INV-1'/INV-1b' at P7) — 拆面 at v1.3.4:
     #       EXPANDER side unchanged: its three memory tiers are each bounded
@@ -444,11 +448,17 @@ def test_end_to_end_three_chapter_closed_loop_holds_all_invariants(client, auth_
         assert task_body.lstrip().startswith("作者本章剧情叙述")
         assert "本章节 Bible" in task_body
         bible_pos = task_body.index(expected_user_prompt)
-        goal_pos = task_body.index("本章目标：")
-        assert bible_pos < goal_pos, "user_prompt (Bible) must precede the structured blueprint fields"
+        anchor_pos = task_body.index("场景：")
+        assert bible_pos < anchor_pos, "user_prompt (Bible) must precede the structured blueprint fields"
         # The deleted directive concept must not survive anywhere in the message.
         assert "本章创作指令" not in wri_user
         assert "chapter_directive" not in wri_user
+        # v1.5.0 (NN) P1 定案 #4: the retired global style_directive channel
+        # must never render — chapter_style (from the Expander mock, below)
+        # is now the sole per-chapter style input.
+        assert "# 文风要求" not in wri_user
+        assert "# 本章文风" in wri_user
+        assert "克制冷静，短句为主。" in wri_user
         # 知识 line: the card reaches the Writer on its own, separate「# 在场角色」section.
         assert "# 在场角色" in wri_user
         assert character["name"] in wri_user

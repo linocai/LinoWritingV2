@@ -206,7 +206,7 @@ def test_style_samples_empty_when_no_finalized_chapters(db_session):
         index=2,
         user_prompt="当前",
         status="prompt_ready",
-        structured_prompt={"chapter_goal": "x", "characters_involved": [character.id]},
+        structured_prompt={"characters_involved": [character.id]},
     )
     db_session.add(current)
     db_session.commit()
@@ -251,7 +251,7 @@ def test_build_writer_context_never_carries_fulltext_even_with_one_finalized_cha
         index=2,
         user_prompt="当前",
         status="prompt_ready",
-        structured_prompt={"chapter_goal": "x", "characters_involved": [character.id]},
+        structured_prompt={"characters_involved": [character.id]},
     )
     db_session.add(current)
     db_session.commit()
@@ -273,7 +273,7 @@ def test_build_writer_context_no_fulltext_fallback_when_no_finalized_chapters_ye
         index=1,
         user_prompt="当前",
         status="prompt_ready",
-        structured_prompt={"chapter_goal": "x", "characters_involved": [character.id]},
+        structured_prompt={"characters_involved": [character.id]},
     )
     db_session.add(current)
     db_session.commit()
@@ -313,7 +313,7 @@ def test_recent_fulltext_bounded_at_recent_fulltext_count_regardless_of_total_ch
         index=8,
         user_prompt="当前",
         status="prompt_ready",
-        structured_prompt={"chapter_goal": "x", "characters_involved": [character.id]},
+        structured_prompt={"characters_involved": [character.id]},
     )
     db_session.add(current)
     db_session.commit()

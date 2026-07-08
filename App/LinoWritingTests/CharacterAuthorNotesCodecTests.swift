@@ -7,7 +7,11 @@ import XCTest
 /// - decoding a payload that includes `author_notes` (new backend)
 /// - decoding a legacy payload missing `author_notes` (fallback to `[:]`)
 /// - PATCH request serialises `author_notes` in snake_case
-/// - StructuredPrompt.focus_traits round-trip + legacy fallback
+///
+/// v1.5.0 (NN) P2 — the former "StructuredPrompt.focus_traits" section (3
+/// tests) is deleted along with the `focus_traits` field itself (no
+/// replacement needed — `plot_anchors` codec coverage lives in
+/// `PersonaTests.swift`).
 final class CharacterAuthorNotesCodecTests: XCTestCase {
 
     // MARK: Character.author_notes decode
@@ -105,67 +109,5 @@ final class CharacterAuthorNotesCodecTests: XCTestCase {
         let obj = try JSONSerialization.jsonObject(with: data) as! [String: Any]
         XCTAssertNotNil(obj["author_notes"])
         XCTAssertNil(obj["authorNotes"])
-    }
-
-    // MARK: StructuredPrompt.focus_traits
-
-    func test_structuredPrompt_decodesFocusTraits_whenPresent() throws {
-        let json = """
-        {
-          "chapter_goal": "推动两人关系",
-          "must_happen": [],
-          "must_not_happen": [],
-          "characters_involved": [],
-          "focus_traits": ["谨慎", "对妹妹的愧疚"]
-        }
-        """.data(using: .utf8)!
-        let prompt = try CodecFactory.makeDecoder().decode(StructuredPrompt.self, from: json)
-        XCTAssertEqual(prompt.focusTraits, ["谨慎", "对妹妹的愧疚"])
-    }
-
-    func test_structuredPrompt_decodesFocusTraits_fallsBackToEmpty_whenMissing() throws {
-        let json = """
-        {
-          "chapter_goal": "推动两人关系",
-          "must_happen": [],
-          "must_not_happen": [],
-          "characters_involved": []
-        }
-        """.data(using: .utf8)!
-        let prompt = try CodecFactory.makeDecoder().decode(StructuredPrompt.self, from: json)
-        XCTAssertEqual(prompt.focusTraits, [])
-    }
-
-    func test_structuredPrompt_roundTrip_preservesFocusTraits() throws {
-        let original = StructuredPrompt(
-            chapterGoal: "山洞夜话",
-            mustHappen: ["A 告诉 B 真相"],
-            charactersInvolved: ["c1", "c2"],
-            focusTraits: ["谨慎", "愧疚"]
-        )
-        let encoder = CodecFactory.makeEncoder()
-        let decoder = CodecFactory.makeDecoder()
-        let data = try encoder.encode(original)
-
-        // Snake-case wire check.
-        let obj = try JSONSerialization.jsonObject(with: data) as! [String: Any]
-        XCTAssertEqual(obj["focus_traits"] as? [String], ["谨慎", "愧疚"])
-        XCTAssertNil(obj["focusTraits"])
-
-        let again = try decoder.decode(StructuredPrompt.self, from: data)
-        XCTAssertEqual(again, original)
-    }
-
-    // MARK: ChapterPatchRequest carries focus_traits via structured_prompt
-
-    func test_chapterPatchRequest_encodesStructuredPromptWithFocusTraits() throws {
-        let req = ChapterPatchRequest(structuredPrompt: StructuredPrompt(
-            chapterGoal: "x",
-            focusTraits: ["谨慎"]
-        ))
-        let data = try CodecFactory.makeEncoder().encode(req)
-        let obj = try JSONSerialization.jsonObject(with: data) as! [String: Any]
-        let sp = obj["structured_prompt"] as! [String: Any]
-        XCTAssertEqual(sp["focus_traits"] as? [String], ["谨慎"])
     }
 }

@@ -145,10 +145,15 @@ def test_state_conflicts(client, auth_headers):
     assert finalize.status_code == 409
     assert finalize.json()["error"]["kind"] == "conflict"
 
+    # v1.5.0 (NN) P1: ``require_chapter_goal`` (the only thing that could make
+    # an EMPTY structured_prompt invalid) is deleted along with the field
+    # itself — every remaining field is optional, so ``{}`` now validates
+    # fine. ``target_word_count`` still requires ``gt=0``, so a negative value
+    # is the still-genuinely-invalid payload that exercises this 422 path.
     invalid_patch = client.patch(
         f"/api/v1/chapters/{chapter['id']}",
         headers=auth_headers,
-        json={"structured_prompt": {}},
+        json={"structured_prompt": {"target_word_count": -1}},
     )
     assert invalid_patch.status_code == 422
     assert invalid_patch.json()["error"]["kind"] == "validation"
@@ -176,7 +181,7 @@ def test_writer_stream_keepalive_and_error_restore_status(client, auth_headers, 
     client.patch(
         f"/api/v1/chapters/{chapter['id']}",
         headers=auth_headers,
-        json={"structured_prompt": {"chapter_goal": "重试写作"}},
+        json={"structured_prompt": {"scene_setting": "重试写作"}},
     )
     override_all_llm_clients(lambda: FailingStreamLLM())
     with client.stream("POST", f"/api/v1/chapters/{chapter['id']}/write", headers=auth_headers) as response:

@@ -63,9 +63,8 @@ logger = logging.getLogger(__name__)
 
 # Explicit allowlist for PATCH /chapters/{id}. ChapterPatch schema already
 # only exposes these four fields, but we re-assert it at the router level
-# so that adding a new field to the schema later (e.g. status, source,
-# focus_traits) does NOT silently become a writable mass-assignment vector.
-# See §5.P.1 F.
+# so that adding a new field to the schema later (e.g. status, source) does
+# NOT silently become a writable mass-assignment vector. See §5.P.1 F.
 PATCHABLE_CHAPTER_FIELDS = frozenset(
     {"title", "user_prompt", "structured_prompt", "draft_text"}
 )

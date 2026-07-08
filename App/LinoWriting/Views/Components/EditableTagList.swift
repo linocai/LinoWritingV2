@@ -1,8 +1,9 @@
 import SwiftUI
 
 /// v1.3.1 (KK) P6 — cross-platform editable tag list for `[String]`-shaped
-/// `StructuredPrompt` fields (`mustHappen` / `mustNotHappen` / `focusTraits`).
-/// Mirrors the "+ 字段/+ 笔记" add-row pattern `MacCharacterTab`'s
+/// `StructuredPrompt` fields (v1.5.0 NN P2: `plotAnchors`, by then the sole
+/// tag-list field — `mustNotHappen`/`focusTraits` deleted, `mustHappen`
+/// renamed). Mirrors the "+ 字段/+ 笔记" add-row pattern `MacCharacterTab`'s
 /// `MacAddFieldRow` established for `[String: JSONValue]` dictionaries (v1.3.0
 /// II P1), reshaped for bare string arrays: each tag renders with a small
 /// trailing "×" delete affordance, plus a trailing dashed "＋ 添加" pill that
@@ -12,9 +13,10 @@ import SwiftUI
 /// so this reads consistently with stage2's other tag groups
 /// (`MacChapterEditor.tagGroup` / `IOSChapterEditPlaceholder.tagGroup`).
 ///
-/// `maxCount` (used by `focusTraits`, capped at 2 per PROJECT_PLAN §4 P6) hides
-/// the add control once the cap is reached rather than disabling it silently —
-/// a short caption explains why.
+/// `maxCount` is kept general-purpose (no current caller uses it since
+/// `focusTraits` was deleted in v1.5.0) — hides the add control once the cap
+/// is reached rather than disabling it silently, with a short caption
+/// explaining why.
 struct EditableTagList: View {
     let items: [String]
     let tagFg: Color

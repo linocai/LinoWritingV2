@@ -159,8 +159,10 @@ def test_expander_emits_continuity_alerts_as_string_list():
 
 
 def test_expander_continuity_alerts_defensively_drop_non_string_and_blank_items():
-    """Same server-side defensive shape as ``focus_traits`` — a model that
-    over-delivers junk into the list must not blow up the contract."""
+    """Same server-side defensive-list shape used elsewhere in this module
+    (see ``PromptExpanderAgent.expand``'s ``chapter_style`` truncation) — a
+    model that over-delivers junk into the list must not blow up the
+    contract."""
 
     class _JunkAlertLLM(MockLLMClient):
         def complete_json(self, *, system: str, user: str, schema: dict, **kwargs):
@@ -233,7 +235,10 @@ def test_expander_operational_rules_describe_continuity_alerts_as_author_facing(
     assert "chapter_directive" not in rules
     # The boundary wording must survive a future "small tweak".
     assert "作者" in rules
-    assert "author_notes" in rules
+    # v1.5.0 (NN) P1: the ``focus_traits`` responsibility (and its
+    # ``author_notes``-as-trait-pool wording) is deleted entirely — no
+    # replacement concept references author_notes in these rules any more.
+    assert "focus_traits" not in rules
 
 
 def test_expander_schema_advertises_continuity_alerts_and_no_directive():
@@ -248,49 +253,74 @@ def test_expander_schema_advertises_continuity_alerts_and_no_directive():
     assert "chapter_directive" not in schema["properties"]
 
 
-def test_expander_preserves_authors_extra_notes_when_llm_output_leaves_it_blank(db_session):
-    """P1 决议 #1: re-expand 不覆盖作者已填 extra_notes — when this call's LLM
-    output leaves ``extra_notes`` empty, ``PromptExpanderAgent.expand`` falls
-    back to whatever ``build_expander_context`` surfaced as
-    ``existing_extra_notes`` (the value BEFORE this expand call)."""
+def test_expander_schema_advertises_chapter_style_slot_and_no_focus_traits():
+    """v1.5.0 (NN) P1: the schema must expose the new ``chapter_style`` slot
+    (笼子②, 50-char cap mirrored here) and no longer offer the deleted
+    ``focus_traits``/``extra_notes`` slots at all."""
+    from app.agents.prompt_expander import _expander_json_schema
 
-    class _BlankExtraNotesLLM(MockLLMClient):
+    schema = _expander_json_schema()
+    style = schema["properties"]["chapter_style"]
+    assert style["maxLength"] == 50
+    assert "focus_traits" not in schema["properties"]
+    assert "extra_notes" not in schema["properties"]
+
+
+def test_expander_truncates_overlong_chapter_style_server_side():
+    """笼子① — even if the LLM ignores the "≤50 字" instruction, ``expand()``
+    truncates ``chapter_style`` server-side before validation (same defensive
+    hand as the deleted focus_traits truncate used to be)."""
+
+    class _OverlongStyleLLM(MockLLMClient):
         def complete_json(self, *, system: str, user: str, schema: dict, **kwargs):
             base = super().complete_json(system=system, user=user, schema=schema, **kwargs)
-            base["extra_notes"] = ""  # model leaves the author channel untouched
+            base["chapter_style"] = "字" * 80  # over the 50-char cap
             return base
 
-    result = PromptExpanderAgent(_BlankExtraNotesLLM()).expand(
-        {
-            "all_characters": [{"id": "c1", "name": "林夕", "role": "主角"}],
-            "existing_extra_notes": "作者手填：这章要埋一个后面才揭晓的伏笔。",
-        }
+    result = PromptExpanderAgent(_OverlongStyleLLM()).expand(
+        {"all_characters": [{"id": "c1", "name": "林夕", "role": "主角"}]}
     )
-    assert result["extra_notes"] == "作者手填：这章要埋一个后面才揭晓的伏笔。"
+    assert len(result["chapter_style"]) == 50
 
 
-def test_expander_authors_extra_notes_wins_even_when_llm_also_fills_it(db_session):
-    """审后修复 🟡2 (archive/REVIEW_REPORT_v1.4.0.md): the original guard only
-    fired when THIS call's LLM output left extra_notes blank — an author-filled
-    note could still be clobbered by a model that (against OPERATIONAL_RULES)
-    ALSO filled the field with its own text. extra_notes is a pure author-owned
-    channel (P1 决议 #1): once the author has written something, it wins
-    UNCONDITIONALLY, even when the model's own output is non-empty."""
+def test_expander_blank_chapter_style_normalizes_to_absent():
+    """An all-whitespace chapter_style collapses to ``None`` (excluded from
+    the persisted prompt by ``exclude_none``), never a dangling blank string."""
 
-    class _AlsoFillsExtraNotesLLM(MockLLMClient):
+    class _BlankStyleLLM(MockLLMClient):
         def complete_json(self, *, system: str, user: str, schema: dict, **kwargs):
             base = super().complete_json(system=system, user=user, schema=schema, **kwargs)
-            base["extra_notes"] = "模型不听话自己编的补充说明。"
+            base["chapter_style"] = "   "
             return base
 
-    result = PromptExpanderAgent(_AlsoFillsExtraNotesLLM()).expand(
-        {
-            "all_characters": [{"id": "c1", "name": "林夕", "role": "主角"}],
-            "existing_extra_notes": "作者手填：这章要埋一个后面才揭晓的伏笔。",
-        }
+    result = PromptExpanderAgent(_BlankStyleLLM()).expand(
+        {"all_characters": [{"id": "c1", "name": "林夕", "role": "主角"}]}
     )
-    assert result["extra_notes"] == "作者手填：这章要埋一个后面才揭晓的伏笔。"
-    assert "模型不听话自己编的补充说明。" not in result["extra_notes"]
+    assert "chapter_style" not in result
+
+
+def test_expander_operational_rules_teach_chapter_style_cages():
+    """The rules must teach the model both cages in prose: the ≤50 字 cap and
+    the "只谈文字层面，禁情节/意象" boundary (schema alone is not enough — a
+    model without structured-output support only ever sees the prose)."""
+    rules = PromptExpanderAgent.OPERATIONAL_RULES
+    assert "chapter_style" in rules
+    assert "50 字" in rules
+    assert "情节" in rules and "意象" in rules
+
+
+def test_expander_operational_rules_frame_plot_anchors_as_guided_reading_not_checklist():
+    """v1.5.0 (NN) P1 定案 #2: plot_anchors is framed as a 领读注解, not a
+    验收清单 — the old must_happen concept and the deleted must_not_happen /
+    focus_traits / chapter_goal / extra_notes fields must not survive as dead
+    text in the rules."""
+    rules = PromptExpanderAgent.OPERATIONAL_RULES
+    assert "plot_anchors" in rules
+    assert "领读注解" in rules
+    assert "must_happen" not in rules
+    assert "must_not_happen" not in rules
+    assert "chapter_goal" not in rules
+    assert "extra_notes" not in rules
 
 
 def test_expander_pops_dead_chapter_directive_key_before_persisting(db_session):
@@ -312,27 +342,6 @@ def test_expander_pops_dead_chapter_directive_key_before_persisting(db_session):
         {"all_characters": [{"id": "c1", "name": "林夕", "role": "主角"}]}
     )
     assert "chapter_directive" not in result
-
-
-def test_build_expander_context_surfaces_existing_extra_notes(db_session):
-    """``build_expander_context`` reads the author's CURRENT extra_notes value
-    (before this expand() call overwrites structured_prompt) into
-    ``existing_extra_notes`` so ``expand()`` can preserve it."""
-    book = Book(title="长夜")
-    db_session.add(book)
-    db_session.flush()
-    chapter = Chapter(
-        book_id=book.id,
-        index=1,
-        user_prompt="找线索",
-        status="prompt_ready",
-        structured_prompt={"chapter_goal": "推进", "extra_notes": "作者的旧补充说明"},
-    )
-    db_session.add(chapter)
-    db_session.commit()
-
-    ctx = build_expander_context(db_session, book, chapter)
-    assert ctx["existing_extra_notes"] == "作者的旧补充说明"
 
 
 def test_expander_operational_rules_describe_three_tier_memory_input():
@@ -430,7 +439,7 @@ def _seed_memory_world(db_session):
         user_prompt="本章意图",
         status="prompt_ready",
         # Only c1 is involved → relevant-memory slice must contain c1, not c2.
-        structured_prompt={"chapter_goal": "推进", "characters_involved": [c1.id]},
+        structured_prompt={"characters_involved": [c1.id]},
     )
     db_session.add(current)
     db_session.flush()
@@ -504,7 +513,7 @@ def test_expander_context_first_pass_empty_involved_slice(db_session):
     ``recent_headlines`` (all empty, no prior chapters here — v1.3.2 LL P3
     three-tier memory, no regression on the first chapter's empty window)
     and the all_characters pool are still present so the Expander can pick
-    characters and infer focus_traits."""
+    characters (选角) and generate plot_anchors/chapter_style (领读)."""
     book = Book(title="新书")
     db_session.add(book)
     db_session.flush()

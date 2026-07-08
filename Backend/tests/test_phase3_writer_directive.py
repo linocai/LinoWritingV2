@@ -100,7 +100,6 @@ def test_writer_context_surfaces_user_prompt_as_top_level_key(db_session):
         user_prompt=_USER_PROMPT,
         status="prompt_ready",
         structured_prompt={
-            "chapter_goal": "推进",
             "characters_involved": [character.id],
         },
     )
@@ -133,7 +132,6 @@ def test_writer_user_message_carries_user_prompt_as_bible(db_session):
         user_prompt=_USER_PROMPT,
         status="prompt_ready",
         structured_prompt={
-            "chapter_goal": "推进",
             "characters_involved": [character.id],
         },
     )
@@ -184,7 +182,6 @@ def test_user_prompt_bible_is_separate_line_from_card_knowledge(db_session):
         user_prompt=_USER_PROMPT,
         status="prompt_ready",
         structured_prompt={
-            "chapter_goal": "推进",
             "characters_involved": [character.id],
         },
     )
@@ -226,7 +223,7 @@ def test_writer_context_user_prompt_blank_for_missing_row_field(db_session):
         index=1,
         user_prompt=None,
         status="prompt_ready",
-        structured_prompt={"chapter_goal": "推进", "characters_involved": [character.id]},
+        structured_prompt={"characters_involved": [character.id]},
     )
     db_session.add(current)
     db_session.commit()
@@ -242,7 +239,7 @@ def test_writer_task_block_omits_bible_line_when_user_prompt_blank():
     the task block falls back to whatever structured_prompt fields exist."""
     context = {
         "user_prompt": "   \n  ",
-        "structured_prompt": {"chapter_goal": "推进"},
+        "structured_prompt": {"scene_setting": "推进"},
         "characters": [],
         "timelines": {},
         "recent_summaries": [],
@@ -251,7 +248,7 @@ def test_writer_task_block_omits_bible_line_when_user_prompt_blank():
     list(WriterAgent(llm).stream(context))
     assert llm.last_user is not None
     assert "本章节 Bible" not in llm.last_user
-    assert "本章目标：推进" in llm.last_user
+    assert "场景：推进" in llm.last_user
 
 
 def test_writer_still_streams_without_user_prompt(db_session):
@@ -264,7 +261,7 @@ def test_writer_still_streams_without_user_prompt(db_session):
         index=1,
         user_prompt=None,
         status="prompt_ready",
-        structured_prompt={"chapter_goal": "推进", "characters_involved": []},
+        structured_prompt={"characters_involved": []},
     )
     db_session.add(current)
     db_session.commit()

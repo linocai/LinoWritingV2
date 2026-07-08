@@ -9,12 +9,13 @@ import SwiftUI
 ///   ① 本章剧情 — `user_prompt` (a full prose account of what happens this
 ///      chapter, v1.3.0 JJ P7) + "优化师 · 生成本章指令" (`expand`, force when
 ///      prompt_ready).
-///   ② 结构要点 (v1.4.0 MM P3 — directive HERO box deleted, 优化师降职为
-///      结构员+校对员) — goal / scene·pov·words / must·must-not·chars·focus
-///      tags, all editable (v1.3.1 P6); above them, an ephemeral "优化师提醒"
-///      box surfaces `structured_prompt.continuity_alerts` (read-only,醒目
-///      but explicitly a reminder, never a task). "Writer · 写正文" (SSE
-///      `write`; red "■ 停止生成" while streaming).
+///   ② 结构要点 (v1.5.0 NN P2 — 优化师终极精简为「框架员+选角员+领读员」,
+///      四字段删除) — scene·pov·words / 涉及角色 / 情节锚点 (plot_anchors,
+///      领读注解) tags / 本章文风 (chapter_style, ≤50 字), all editable
+///      (v1.3.1 P6 / v1.5.0 P2); above them, an ephemeral "优化师提醒" box
+///      surfaces `structured_prompt.continuity_alerts` (read-only,醒目但
+///      明确是提醒非任务). "Writer · 写正文" (SSE `write`; red "■ 停止生成"
+///      while streaming) is enabled purely by `user_prompt` non-empty.
 ///   ③ 正文 — Songti paragraphs + word count; blinking caret while streaming.
 ///      Status-driven footer: draft_ready → finalize; finalized → 阅读模式 /
 ///      重新提取 / 重新打开编辑, plus the green 本章梗概 block above.
@@ -44,14 +45,13 @@ struct MacChapterEditor: View {
     // with the same empty-guard shape as the title fix (P1); Picker /
     // tag-add / multi-select commit immediately on change (no separate
     // "save" step needed for those).
-    @State private var chapterGoalDraft = ""
     @State private var sceneSettingDraft = ""
     @State private var targetWordCountDraft = ""
-    @State private var extraNotesDraft = ""
-    @FocusState private var chapterGoalFocused: Bool
+    // v1.5.0 (NN) P2 — 新增：本章文风（≤50 字，优化师生成，作者可编辑/清空）。
+    @State private var chapterStyleDraft = ""
     @FocusState private var sceneSettingFocused: Bool
     @FocusState private var targetWordCountFocused: Bool
-    @FocusState private var extraNotesFocused: Bool
+    @FocusState private var chapterStyleFocused: Bool
 
     @State private var showImportSheet = false
     @State private var showResetConfirm = false
@@ -98,18 +98,15 @@ struct MacChapterEditor: View {
         // bug). Splitting into two `.modifier` groups keeps each inference
         // problem small enough to solve quickly.
         .modifier(Stage2FieldSyncModifiers(
-            chapterGoal: chapter?.structuredPrompt?.chapterGoal ?? "",
             sceneSetting: chapter?.structuredPrompt?.sceneSetting ?? "",
             targetWordCount: chapter?.structuredPrompt?.targetWordCount,
-            extraNotes: chapter?.structuredPrompt?.extraNotes ?? "",
-            chapterGoalFocused: chapterGoalFocused,
+            chapterStyle: chapter?.structuredPrompt?.chapterStyle ?? "",
             sceneSettingFocused: sceneSettingFocused,
             targetWordCountFocused: targetWordCountFocused,
-            extraNotesFocused: extraNotesFocused,
-            chapterGoalDraft: $chapterGoalDraft,
+            chapterStyleFocused: chapterStyleFocused,
             sceneSettingDraft: $sceneSettingDraft,
             targetWordCountDraft: $targetWordCountDraft,
-            extraNotesDraft: $extraNotesDraft
+            chapterStyleDraft: $chapterStyleDraft
         ))
         .sheet(isPresented: $showImportSheet) {
             ImportChapterSheet(chapter: chapter ?? placeholderChapter)
@@ -325,19 +322,6 @@ struct MacChapterEditor: View {
                 continuityAlertsBox(sp.continuityAlerts)
             }
 
-            // v1.3.1 (KK) P6 — 本章目标 (chapter_goal), now editable.
-            // Required by the backend — empty-blur reverts, no PATCH.
-            VStack(alignment: .leading, spacing: 5) {
-                LWSectionLabel("本章目标")
-                TextField("这一章要达成什么？", text: $chapterGoalDraft, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13.5))
-                    .foregroundStyle(LWColor.secondaryText)
-                    .lineSpacing(3)
-                    .focused($chapterGoalFocused)
-                    .onChange(of: chapterGoalFocused) { _, f in if !f { commitChapterGoal() } }
-            }
-
             // scene / pov / target word count — all editable now.
             HStack(alignment: .top, spacing: 10) {
                 editableInfoCell(label: "场景") {
@@ -372,51 +356,37 @@ struct MacChapterEditor: View {
                 }
             }
 
-            // v1.3.1 (KK) P6 — extra_notes, now editable (multi-line).
+            // v1.5.0 (NN) P2 — 新增：本章文风 (chapter_style)，优化师生成的
+            // ≤50 字文风提示（句式/节奏/用词密度/叙事温度），作者可编辑/清空；
+            // 替代已退场的全局「文风指令」。
             VStack(alignment: .leading, spacing: 5) {
-                LWSectionLabel("补充说明")
-                TextField("其它给 Writer 的补充说明…", text: $extraNotesDraft, axis: .vertical)
+                LWSectionLabel("本章文风")
+                TextField("句式/节奏/用词密度/叙事温度，≤50 字，可留空", text: $chapterStyleDraft, axis: .vertical)
                     .textFieldStyle(.plain)
                     .font(.system(size: 13))
                     .foregroundStyle(LWColor.secondaryText)
                     .lineSpacing(3)
-                    .focused($extraNotesFocused)
-                    .onChange(of: extraNotesFocused) { _, f in if !f { commitExtraNotes() } }
+                    .focused($chapterStyleFocused)
+                    .onChange(of: chapterStyleFocused) { _, f in if !f { commitChapterStyle() } }
+                Text("留空则遵循 Writer 人格里的整体文风底色。")
+                    .font(.system(size: 11))
+                    .foregroundStyle(LWColor.mutedText3)
             }
 
-            // must / must-not / chars / focus — all editable now (add/remove).
+            // plot anchors / chars — all editable now (add/remove).
             VStack(alignment: .leading, spacing: 12) {
                 VStack(alignment: .leading, spacing: 7) {
-                    LWSectionLabel("✓ 必须发生", color: LWColor.success)
+                    LWSectionLabel("情节锚点", color: LWColor.success)
                     EditableTagList(
-                        items: sp.mustHappen,
+                        items: sp.plotAnchors,
                         tagFg: LWColor.hex(0x2F7A52), tagBg: LWColor.success.opacity(0.1),
-                        addPlaceholder: "必须发生的事…",
-                        onAdd: addMustHappen, onRemove: removeMustHappen
-                    )
-                }
-                VStack(alignment: .leading, spacing: 7) {
-                    LWSectionLabel("✕ 不可发生", color: LWColor.danger)
-                    EditableTagList(
-                        items: sp.mustNotHappen,
-                        tagFg: LWColor.hex(0xB0524B), tagBg: LWColor.danger.opacity(0.1),
-                        addPlaceholder: "不可发生的事…",
-                        onAdd: addMustNotHappen, onRemove: removeMustNotHappen
+                        addPlaceholder: "帮 Writer 领读的情节锚点…",
+                        onAdd: addPlotAnchor, onRemove: removePlotAnchor
                     )
                 }
                 VStack(alignment: .leading, spacing: 7) {
                     LWSectionLabel("涉及角色", color: LWColor.mutedText3)
                     characterMultiSelect(sp)
-                }
-                VStack(alignment: .leading, spacing: 7) {
-                    LWSectionLabel("聚焦特质 · 最多 2 个", color: LWColor.mutedText3)
-                    EditableTagList(
-                        items: sp.focusTraits,
-                        tagFg: LWColor.authorNote, tagBg: LWColor.hex(0x9A6BE0, opacity: 0.12),
-                        maxCount: 2,
-                        addPlaceholder: "特质…",
-                        onAdd: addFocusTrait, onRemove: removeFocusTrait
-                    )
                 }
             }
 
@@ -434,7 +404,7 @@ struct MacChapterEditor: View {
                         LWPrimaryButton(
                             title: hasDraft(chapter) ? "Writer · 重新生成" : "Writer · 写正文",
                             systemImage: "pencil",
-                            enabled: !sp.chapterGoal.isEmpty || !(chapter.userPrompt ?? "").isEmpty
+                            enabled: !(chapter.userPrompt ?? "").isEmpty
                         ) { startWriting() }
                     }
                     Spacer()
@@ -824,10 +794,9 @@ struct MacChapterEditor: View {
     private func syncDrafts(_ chapter: Chapter?) {
         promptDraft = chapter?.userPrompt ?? ""
         titleDraft = chapter?.title ?? ""
-        chapterGoalDraft = chapter?.structuredPrompt?.chapterGoal ?? ""
         sceneSettingDraft = chapter?.structuredPrompt?.sceneSetting ?? ""
         targetWordCountDraft = chapter?.structuredPrompt?.targetWordCount.map(String.init) ?? ""
-        extraNotesDraft = chapter?.structuredPrompt?.extraNotes ?? ""
+        chapterStyleDraft = chapter?.structuredPrompt?.chapterStyle ?? ""
     }
 
     private func commitPrompt() {
@@ -855,26 +824,7 @@ struct MacChapterEditor: View {
     }
     // MARK: - v1.3.1 (KK) P6 — Step2 full-field edit commits
 
-    /// `chapter_goal` is required by the backend (`require_chapter_goal`
-    /// 422) — front-end guards it the same way title (P1) does: clearing the
-    /// field cancels the edit (revert, no PATCH) rather than sending an
-    /// empty string and eating a 422 Toast whose message is an untranslated
-    /// backend string.
-    private func commitChapterGoal() {
-        guard let chapter else { return }
-        let trimmed = chapterGoalDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        let original = chapter.structuredPrompt?.chapterGoal ?? ""
-        guard trimmed != original else { return }
-        guard !trimmed.isEmpty else {
-            chapterGoalDraft = original
-            return
-        }
-        var sp = chapter.structuredPrompt ?? StructuredPrompt()
-        sp.chapterGoal = trimmed
-        Task { await chapterEditorStore.patchStructuredPrompt(sp); refreshList() }
-    }
-
-    /// `scene_setting` is optional — unlike `chapter_goal`, an empty value is
+    /// `scene_setting` is optional — an empty value is
     /// legal (clears the field), so no revert-on-blank guard here.
     private func commitSceneSetting() {
         guard let chapter else { return }
@@ -913,14 +863,15 @@ struct MacChapterEditor: View {
         Task { await chapterEditorStore.patchStructuredPrompt(sp); refreshList() }
     }
 
-    /// `extra_notes` — optional free text, empty is legal (clears it).
-    private func commitExtraNotes() {
+    /// v1.5.0 (NN) P2 — `chapter_style` optional free text (≤50 字 guideline,
+    /// server-side truncates on `expand()`); empty is legal (clears it).
+    private func commitChapterStyle() {
         guard let chapter else { return }
-        let trimmed = extraNotesDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        let original = chapter.structuredPrompt?.extraNotes ?? ""
+        let trimmed = chapterStyleDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let original = chapter.structuredPrompt?.chapterStyle ?? ""
         guard trimmed != original else { return }
         var sp = chapter.structuredPrompt ?? StructuredPrompt()
-        sp.extraNotes = trimmed.isEmpty ? nil : trimmed
+        sp.chapterStyle = trimmed.isEmpty ? nil : trimmed
         Task { await chapterEditorStore.patchStructuredPrompt(sp); refreshList() }
     }
 
@@ -933,47 +884,20 @@ struct MacChapterEditor: View {
         Task { await chapterEditorStore.patchStructuredPrompt(sp); refreshList() }
     }
 
-    /// `must_happen` add — tag lists commit immediately per add/remove
-    /// (mirrors `MacAddFieldRow`'s immediate-commit shape, no separate blur
-    /// step since there's nothing to "leave unsaved").
-    private func addMustHappen(_ text: String) {
+    /// v1.5.0 (NN) P2 — `plot_anchors` add/remove (由 `must_happen` 改名，
+    /// 定性从「验收清单」变「领读注解」). Tag lists commit immediately per
+    /// add/remove (mirrors `MacAddFieldRow`'s immediate-commit shape, no
+    /// separate blur step since there's nothing to "leave unsaved").
+    private func addPlotAnchor(_ text: String) {
         guard let chapter else { return }
         var sp = chapter.structuredPrompt ?? StructuredPrompt()
-        sp.mustHappen.append(text)
+        sp.plotAnchors.append(text)
         Task { await chapterEditorStore.patchStructuredPrompt(sp); refreshList() }
     }
-    private func removeMustHappen(at index: Int) {
-        guard let chapter, chapter.structuredPrompt?.mustHappen.indices.contains(index) == true else { return }
+    private func removePlotAnchor(at index: Int) {
+        guard let chapter, chapter.structuredPrompt?.plotAnchors.indices.contains(index) == true else { return }
         var sp = chapter.structuredPrompt ?? StructuredPrompt()
-        sp.mustHappen.remove(at: index)
-        Task { await chapterEditorStore.patchStructuredPrompt(sp); refreshList() }
-    }
-    private func addMustNotHappen(_ text: String) {
-        guard let chapter else { return }
-        var sp = chapter.structuredPrompt ?? StructuredPrompt()
-        sp.mustNotHappen.append(text)
-        Task { await chapterEditorStore.patchStructuredPrompt(sp); refreshList() }
-    }
-    private func removeMustNotHappen(at index: Int) {
-        guard let chapter, chapter.structuredPrompt?.mustNotHappen.indices.contains(index) == true else { return }
-        var sp = chapter.structuredPrompt ?? StructuredPrompt()
-        sp.mustNotHappen.remove(at: index)
-        Task { await chapterEditorStore.patchStructuredPrompt(sp); refreshList() }
-    }
-    /// `focus_traits` — front-end hard cap at 2 (plan §4 P6); `EditableTagList`'s
-    /// `maxCount` hides the add control once at cap, so this only ever gets
-    /// called with room to spare, but guard again defensively.
-    private func addFocusTrait(_ text: String) {
-        guard let chapter else { return }
-        var sp = chapter.structuredPrompt ?? StructuredPrompt()
-        guard sp.focusTraits.count < 2 else { return }
-        sp.focusTraits.append(text)
-        Task { await chapterEditorStore.patchStructuredPrompt(sp); refreshList() }
-    }
-    private func removeFocusTrait(at index: Int) {
-        guard let chapter, chapter.structuredPrompt?.focusTraits.indices.contains(index) == true else { return }
-        var sp = chapter.structuredPrompt ?? StructuredPrompt()
-        sp.focusTraits.remove(at: index)
+        sp.plotAnchors.remove(at: index)
         Task { await chapterEditorStore.patchStructuredPrompt(sp); refreshList() }
     }
     /// `characters_involved` — multi-select toggle against the book's
@@ -999,7 +923,6 @@ struct MacChapterEditor: View {
     }
 
     private func startWriting() {
-        if chapterGoalFocused { commitChapterGoal() }
         chapterEditorStore.startWriting { chapter in
             chaptersStore.upsert(chapter)
         }
@@ -1087,25 +1010,21 @@ private struct ReattachOnScenePhaseActive: ViewModifier {
 /// "only overwrite the draft if the user isn't actively editing it" guard
 /// used throughout this file (`promptFocused`/`titleFocused` etc.).
 private struct Stage2FieldSyncModifiers: ViewModifier {
-    let chapterGoal: String
     let sceneSetting: String
     let targetWordCount: Int?
-    let extraNotes: String
-    let chapterGoalFocused: Bool
+    let chapterStyle: String
     let sceneSettingFocused: Bool
     let targetWordCountFocused: Bool
-    let extraNotesFocused: Bool
-    @Binding var chapterGoalDraft: String
+    let chapterStyleFocused: Bool
     @Binding var sceneSettingDraft: String
     @Binding var targetWordCountDraft: String
-    @Binding var extraNotesDraft: String
+    @Binding var chapterStyleDraft: String
 
     func body(content: Content) -> some View {
         content
-            .onChange(of: chapterGoal) { _, new in if !chapterGoalFocused { chapterGoalDraft = new } }
             .onChange(of: sceneSetting) { _, new in if !sceneSettingFocused { sceneSettingDraft = new } }
             .onChange(of: targetWordCount) { _, new in if !targetWordCountFocused { targetWordCountDraft = new.map(String.init) ?? "" } }
-            .onChange(of: extraNotes) { _, new in if !extraNotesFocused { extraNotesDraft = new } }
+            .onChange(of: chapterStyle) { _, new in if !chapterStyleFocused { chapterStyleDraft = new } }
     }
 }
 #endif

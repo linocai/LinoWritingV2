@@ -2,8 +2,10 @@
 import SwiftUI
 
 /// v1.1.0 (FF) Phase 3 — 设定 tab. 作品名称 (`patchBook`) / 封面色 6 swatch /
-/// 世界观设定 (world_setting) / 文风指令 (style_directive) / "删除整本作品…"
-/// (`deleteBook` → back to shelf). macOS-only.
+/// 世界观设定 (world_setting) / "删除整本作品…" (`deleteBook` → back to shelf).
+/// v1.5.0 (NN) P2 — 「文风指令」输入框已删（全局 `style_directive` 退场，
+/// 全书文风底色载体移到 Writer 人格；`Book.styleDirective`/`BookRead` 后端
+/// 字段仍保留 vestigial，仅停止在此 UI 绑定/提交）。macOS-only.
 struct MacBookSettingsTab: View {
     let book: Book
 
@@ -17,11 +19,9 @@ struct MacBookSettingsTab: View {
 
     @State private var titleDraft = ""
     @State private var worldDraft = ""
-    @State private var styleDraft = ""
     @State private var showDeleteConfirm = false
     @FocusState private var titleFocused: Bool
     @FocusState private var worldFocused: Bool
-    @FocusState private var styleFocused: Bool
 
     private var current: Book { bookStore.book ?? book }
 
@@ -52,12 +52,6 @@ struct MacBookSettingsTab: View {
             LWTextArea(text: $worldDraft, placeholder: "这个世界的设定…", minHeight: 110, font: .system(size: 13), lineSpacing: 4)
                 .focused($worldFocused)
                 .onChange(of: worldFocused) { _, f in if !f { commitWorld() } }
-                .padding(.bottom, 16)
-
-            LWSectionLabel("文风指令")
-            LWTextArea(text: $styleDraft, placeholder: "希望 Writer 遵循的文风…", minHeight: 80, font: .system(size: 13), lineSpacing: 4)
-                .focused($styleFocused)
-                .onChange(of: styleFocused) { _, f in if !f { commitStyle() } }
                 .padding(.bottom, 16)
 
             Divider().overlay(LWMetrics.hairlineLight)
@@ -102,7 +96,6 @@ struct MacBookSettingsTab: View {
     private func syncDrafts() {
         titleDraft = current.title
         worldDraft = current.worldSetting ?? ""
-        styleDraft = current.styleDirective ?? ""
     }
 
     private func commitTitle() {
@@ -116,10 +109,6 @@ struct MacBookSettingsTab: View {
     private func commitWorld() {
         guard worldDraft != (current.worldSetting ?? "") else { return }
         Task { await bookStore.patchWorldSetting(worldDraft) }
-    }
-    private func commitStyle() {
-        guard styleDraft != (current.styleDirective ?? "") else { return }
-        Task { await bookStore.patchStyleDirective(styleDraft) }
     }
     private func setCover(_ name: String) {
         guard name != current.coverColor else { return }

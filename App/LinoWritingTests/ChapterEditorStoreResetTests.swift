@@ -153,10 +153,9 @@ final class ChapterEditorStoreResetTests: XCTestCase {
             mock.chapters[idx].status = .writing
             mock.chapters[idx].draftText = "已经写了半段还卡住的正文"
             mock.chapters[idx].structuredPrompt = StructuredPrompt(
-                chapterGoal: "should be preserved",
-                mustHappen: ["A"],
-                mustNotHappen: [],
-                charactersInvolved: []
+                plotAnchors: ["A"],
+                charactersInvolved: [],
+                chapterStyle: "should be preserved"
             )
         }
 
@@ -173,7 +172,7 @@ final class ChapterEditorStoreResetTests: XCTestCase {
             "admin_reset must preserve draft_text — that's the whole rescue contract"
         )
         XCTAssertEqual(
-            editor.chapter?.structuredPrompt?.chapterGoal,
+            editor.chapter?.structuredPrompt?.chapterStyle,
             "should be preserved",
             "structured_prompt is preserved too"
         )

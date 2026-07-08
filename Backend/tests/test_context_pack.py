@@ -40,7 +40,7 @@ def test_context_pack_filters_characters_and_limits_summaries(db_session):
         index=4,
         user_prompt="四",
         status="prompt_ready",
-        structured_prompt={"chapter_goal": "推进", "characters_involved": [c1.id]},
+        structured_prompt={"characters_involved": [c1.id]},
     )
     db_session.add_all([chapter1, chapter2, chapter3, chapter4])
     db_session.flush()
@@ -101,7 +101,7 @@ def test_recent_fulltext_and_summaries_split_by_window(db_session):
         index=6,
         user_prompt="当前",
         status="prompt_ready",
-        structured_prompt={"chapter_goal": "推进", "characters_involved": [c1.id]},
+        structured_prompt={"characters_involved": [c1.id]},
     )
     db_session.add(current)
     db_session.commit()
@@ -171,7 +171,7 @@ def _seed_with_author_notes(db_session) -> tuple[Book, Character, Chapter]:
         index=3,
         user_prompt="当前",
         status="prompt_ready",
-        structured_prompt={"chapter_goal": "推进", "characters_involved": [character.id]},
+        structured_prompt={"characters_involved": [character.id]},
     )
     db_session.add(current)
     db_session.commit()
@@ -219,6 +219,26 @@ def test_extractor_context_omits_author_notes(db_session):
     # Defensive: the other fields are still there.
     assert payload["frozen_fields"] == {"core_traits": "谨慎"}
     assert payload["live_fields"] == {"current_status": "山中"}
+
+
+def test_writer_context_no_longer_carries_style_directive(db_session):
+    """v1.5.0 (NN) P1 定案 #4: the global ``style_directive`` channel is
+    retired — ``build_writer_context`` must no longer surface a
+    ``style_directive`` key at all, even though the Book row here has a
+    non-empty ``style_directive`` column value. ``chapter_style`` (from
+    structured_prompt) is now the sole per-chapter style-input channel — see
+    ``agents/writer.py``."""
+    book, character, current = _seed_with_author_notes(db_session)
+    ctx = build_writer_context(db_session, book, current)
+    assert "style_directive" not in ctx
+
+
+def test_expander_context_no_longer_carries_style_directive(db_session):
+    """Same retirement on the Expander side: the ``book`` sub-dict must not
+    carry ``style_directive`` either."""
+    book, character, current = _seed_with_author_notes(db_session)
+    ctx = build_expander_context(db_session, book, current)
+    assert "style_directive" not in ctx["book"]
 
 
 def test_writer_context_fulltext_and_style_window_share_one_bounded_query(db_session):
@@ -305,7 +325,7 @@ def test_merged_query_respects_different_limits(db_session):
         index=6,
         user_prompt="当前",
         status="prompt_ready",
-        structured_prompt={"chapter_goal": "x", "characters_involved": []},
+        structured_prompt={"characters_involved": []},
     )
     db_session.add(current)
     db_session.commit()

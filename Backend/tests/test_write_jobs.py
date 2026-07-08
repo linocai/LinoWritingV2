@@ -660,16 +660,19 @@ class _SlowReviseLLM(MockLLMClient):
         return self.revision
 
 
-def _ctx(target: int, *, must_happen: list[str] | None = None, must_not_happen: list[str] | None = None) -> dict:
+def _ctx(target: int, *, plot_anchors: list[str] | None = None) -> dict:
     """A minimal writer context carrying the revise-relevant keys the worker
-    reads (target_word_count top-level + structured_prompt lists + style)."""
+    reads (target_word_count top-level + structured_prompt plot_anchors /
+    chapter_style). v1.5.0 (NN) P1: renamed from ``must_happen``, dropped
+    ``must_not_happen`` (deleted, no replacement), and ``style_directive``
+    moved from a top-level context key into ``structured_prompt.chapter_style``
+    (the retired global channel's per-chapter replacement)."""
     return {
         "target_word_count": target,
-        "style_directive": "简洁克制",
         "structured_prompt": {
             "target_word_count": target,
-            "must_happen": must_happen or [],
-            "must_not_happen": must_not_happen or [],
+            "plot_anchors": plot_anchors or [],
+            "chapter_style": "简洁克制",
         },
     }
 

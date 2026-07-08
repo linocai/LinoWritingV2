@@ -66,10 +66,9 @@ def _seed_draft_ready(client, auth_headers, db_session, *, draft_text: str, targ
     row.status = "draft_ready"
     row.draft_text = draft_text
     row.structured_prompt = {
-        "chapter_goal": "推进主线",
         "target_word_count": target,
-        "must_happen": ["关键事件甲"],
-        "must_not_happen": ["泄底"],
+        "plot_anchors": ["关键事件甲"],
+        "chapter_style": "冷静克制。",
     }
     db_session.commit()
     return chapter

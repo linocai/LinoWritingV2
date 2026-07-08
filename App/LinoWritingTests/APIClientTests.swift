@@ -55,12 +55,11 @@ final class APIClientTests: XCTestCase {
           "title": "山洞夜话",
           "user_prompt": "他们躲进山洞，开始坦白",
           "structured_prompt": {
-            "chapter_goal": "推动两人关系",
-            "must_happen": ["A 告诉 B 真相"],
-            "must_not_happen": [],
+            "plot_anchors": ["A 告诉 B 真相"],
             "characters_involved": ["33333333-3333-3333-3333-333333333333"],
             "narrative_pov": "third_person_limited",
-            "target_word_count": 3000
+            "target_word_count": 3000,
+            "chapter_style": "短句、克制"
           },
           "draft_text": "雨声不断。",
           "summary": null,
@@ -74,9 +73,10 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(chapter.index, 3)
         XCTAssertEqual(chapter.title, "山洞夜话")
         XCTAssertEqual(chapter.status, .draftReady)
-        XCTAssertEqual(chapter.structuredPrompt?.chapterGoal, "推动两人关系")
+        XCTAssertEqual(chapter.structuredPrompt?.plotAnchors, ["A 告诉 B 真相"])
         XCTAssertEqual(chapter.structuredPrompt?.narrativePov, .thirdPersonLimited)
         XCTAssertEqual(chapter.structuredPrompt?.targetWordCount, 3000)
+        XCTAssertEqual(chapter.structuredPrompt?.chapterStyle, "短句、克制")
         XCTAssertEqual(chapter.draftText, "雨声不断。")
     }
 

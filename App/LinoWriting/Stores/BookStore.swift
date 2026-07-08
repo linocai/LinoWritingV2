@@ -36,9 +36,9 @@ public final class BookStore: ObservableObject {
         await patch(BookPatchRequest(worldSetting: value))
     }
 
-    public func patchStyleDirective(_ value: String) async {
-        await patch(BookPatchRequest(styleDirective: value))
-    }
+    // v1.5.0 (NN) P2 — `patchStyleDirective` removed: 全局 `style_directive`
+    // 退场，书设置页不再提交它（`BookPatchRequest.styleDirective` 字段/`Book`
+    // 模型仍保留 decode-only，后端 schema 未删，roundtrip 安全）。
 
     public func patchTitle(_ value: String) async {
         await patch(BookPatchRequest(title: value))

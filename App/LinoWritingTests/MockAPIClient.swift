@@ -373,9 +373,7 @@ public final class MockAPIClient: APIClientProtocol, @unchecked Sendable {
         guard let idx = chapters.firstIndex(where: { $0.id == chapterId }) else { throw AppError.notFound("chapter") }
         var c = chapters[idx]
         c.structuredPrompt = StructuredPrompt(
-            chapterGoal: "Mock expanded goal",
-            mustHappen: ["事件 A"],
-            mustNotHappen: [],
+            plotAnchors: ["事件 A"],
             charactersInvolved: []
         )
         c.status = .promptReady

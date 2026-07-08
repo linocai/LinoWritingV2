@@ -508,9 +508,14 @@ def _compress_to_range(
     the eventual persist/cancel outcome (🔵12)."""
     reviser = ReviserAgent(job.llm, persona=job.writer_persona)
     structured_prompt = job.context.get("structured_prompt") or {}
-    must_happen = _clean_str_list(structured_prompt.get("must_happen"))
-    must_not_happen = _clean_str_list(structured_prompt.get("must_not_happen"))
-    style_directive = (job.context.get("style_directive") or "").strip()
+    # v1.5.0 (NN) P1 — reviser input换源: ``must_happen``→``plot_anchors``
+    # (renamed field, same "锚点情节不得丢失" list shape); ``must_not_happen``
+    # is deleted entirely (no replacement passed); ``style_directive`` (used to
+    # read ``job.context`` directly — the retired global channel) →
+    # ``chapter_style`` (read from ``structured_prompt``, same per-chapter
+    # source the Writer itself now uses).
+    plot_anchors = _clean_str_list(structured_prompt.get("plot_anchors"))
+    chapter_style = (structured_prompt.get("chapter_style") or "").strip()
 
     def _label(harsher: bool) -> str:
         return "harsher" if harsher else "initial"
@@ -522,9 +527,8 @@ def _compress_to_range(
                 text,
                 word_low=low,
                 word_high=high,
-                must_happen=must_happen,
-                must_not_happen=must_not_happen,
-                style_directive=style_directive,
+                plot_anchors=plot_anchors,
+                chapter_style=chapter_style,
                 harsher=harsher,
             )
         except Exception as exc:  # LLMError / transport — degrade, never abort

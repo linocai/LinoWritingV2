@@ -112,8 +112,8 @@ def build_expander_context(db: Session, book: Book, chapter: Chapter) -> dict[st
     #      paragraph describing what happens this chapter, not a one-liner —
     #      see P7's Step1 copy change; the key/shape here is unchanged).
     # ``all_characters`` (brief, with frozen_fields + author_notes) is kept so
-    # the Expander can still pick characters_involved / infer focus_traits
-    # (§5.L.4) even on the first pass when the involved set is still empty.
+    # the Expander can still pick characters_involved (选角) even on the first
+    # pass when the involved set is still empty.
     #
     # v1.3.2 (LL) P3 — three-tier memory: the nearest ``RECENT_FULLTEXT_COUNT``
     # finalized chapters are read as full ``draft_text`` (``recent_fulltext``);
@@ -142,7 +142,11 @@ def build_expander_context(db: Session, book: Book, chapter: Chapter) -> dict[st
             "id": book.id,
             "title": book.title,
             "world_setting": book.world_setting,
-            "style_directive": book.style_directive,
+            # v1.5.0 (NN) P1 定案 #4 — the global ``style_directive`` channel
+            # is retired: ``book.style_directive`` is no longer surfaced here
+            # at all (the DB column + ``BookRead`` schema field stay, vestigial,
+            # zero migration — nothing downstream reads this dict for it any
+            # more).
         },
         "chapter": {
             "id": chapter.id,
@@ -150,14 +154,10 @@ def build_expander_context(db: Session, book: Book, chapter: Chapter) -> dict[st
             "title": chapter.title,
             "user_prompt": chapter.user_prompt,
         },
-        # v1.4.0 (MM) P1 决议 #1 — the author's own extra_notes value BEFORE
-        # this expand() call overwrites ``chapter.structured_prompt`` wholesale
-        # (see routers/chapters.py ``expand_chapter``: context is built first,
-        # then ``chapter.structured_prompt = structured_prompt`` replaces it).
-        # ``PromptExpanderAgent.expand`` falls back to this when its own LLM
-        # call's output leaves extra_notes empty, so re-expand never silently
-        # wipes an author-written note.
-        "existing_extra_notes": (chapter.structured_prompt or {}).get("extra_notes"),
+        # v1.5.0 (NN) P1 定案 #1 — ``extra_notes`` is deleted (full chain): the
+        # "existing_extra_notes preserved across re-expand" mechanism this key
+        # used to feed (see ``PromptExpanderAgent.expand``, pre-v1.5.0) is
+        # gone along with the field itself. No replacement key is added here.
         # relevant memory slice: involved cards + their recent timeline.
         "involved_characters": [
             _character_full(character, include_author_notes=True) for character in involved
@@ -233,7 +233,10 @@ def build_writer_context(db: Session, book: Book, chapter: Chapter) -> dict[str,
         recent_summaries = []
     return {
         "world_setting": book.world_setting or "",
-        "style_directive": book.style_directive or "",
+        # v1.5.0 (NN) P1 定案 #4 — the global ``style_directive`` channel is
+        # retired: no longer surfaced here. Per-chapter style now flows solely
+        # via ``structured_prompt.chapter_style`` (see agents/writer.py); the
+        # book-wide style baseline lives in the Writer persona itself.
         # 剧情 (plot, highest authority) — v1.4.0 (MM) P1 决议 #2: the
         # author's own chapter narrative, verbatim, its own top-level line.
         # This is 本章节 Bible — see ``agents.writer._render_task_block``.
@@ -448,10 +451,10 @@ def _character_brief(character: Character) -> dict[str, Any]:
 
     Keeps the v0.6 ``profile`` one-liner (so the Expander can write tight
     structured prompts without ingesting every field), and adds the full
-    ``frozen_fields`` + ``author_notes`` so §5.L.4 focus_traits inference
-    has the underlying trait pool to pick from. ``live_fields`` stays out
-    — it's Extractor-managed state ("what's true right now"), not a trait
-    pool the Expander should reason about.
+    ``frozen_fields`` + ``author_notes`` so the Expander's 领读 (plot_anchors /
+    chapter_style) pass has the underlying character pool to reason from.
+    ``live_fields`` stays out — it's Extractor-managed state ("what's true
+    right now"), not a trait pool the Expander should reason about.
     """
     frozen = character.frozen_fields or {}
     # v0.7.1 — dropped ``voice`` from the fallback chain. The field was removed

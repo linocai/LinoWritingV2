@@ -32,26 +32,28 @@ class _CapturingLLM:
 # style_samples）；② user 消息从一坨 JSON 改写成固定节序的中文文档
 # (``_render_user_message``)。以下测试锁定节序、空节省略、以及各字段的正确
 # 归属。
+#
+# v1.5.0 (NN) P1 — 优化师终极精简: chapter_goal/must_not_happen/focus_traits/
+# extra_notes 四字段全删（无补偿性规则）；must_happen→plot_anchors（领读注
+# 解，标签「必须发生」→「情节锚点」）；新增 chapter_style，渲染为独立
+# 「# 本章文风」节，替代退场的全局「# 文风要求」节（源从顶层 style_directive
+# 换成 structured_prompt.chapter_style）。
 
 
 def test_writer_user_message_section_order_full_context():
     """A fully-populated context renders every section, in the fixed order:
-    世界观设定 → 文风要求 → 前情梗概 → 更早章节大事记 → 上一章梗概 →
+    世界观设定 → 本章文风 → 前情梗概 → 更早章节大事记 → 上一章梗概 →
     在场角色 → 本章写作任务 → 交稿要求 (always last)."""
     llm = _CapturingLLM()
     context = {
         "world_setting": "雨城常年阴雨。",
-        "style_directive": "克制、留白。",
         "user_prompt": "本章把林夕推到抉择口。",
         "target_word_count": 2500,
         "structured_prompt": {
-            "chapter_goal": "推进剧情",
             "scene_setting": "雨夜山洞",
             "narrative_pov": "third_person_limited",
-            "must_happen": ["发现铜钱"],
-            "must_not_happen": ["揭晓黑手"],
-            "focus_traits": ["谨慎"],
-            "extra_notes": "保持悬疑感",
+            "plot_anchors": ["发现铜钱"],
+            "chapter_style": "短句为主，节奏偏快。",
         },
         "characters": [
             {
@@ -74,7 +76,7 @@ def test_writer_user_message_section_order_full_context():
 
     headers = [
         "# 世界观设定（硬约束，正文不得违背）",
-        "# 文风要求",
+        "# 本章文风",
         "# 前情梗概（背景资料，非写作素材——不要展开、复述或续写其中内容）",
         "# 更早章节大事记",
         "# 上一章梗概（衔接点：本章从这个落点接续）",
@@ -87,6 +89,10 @@ def test_writer_user_message_section_order_full_context():
     # 本章写作任务 is second-to-last, 交稿要求 is last (verbatim, not just present).
     assert msg.rstrip().endswith("抵达区间即完稿。")
     assert positions[-2] < positions[-1] < len(msg)
+    # chapter_style content actually rendered under the new header.
+    assert "# 本章文风\n短句为主，节奏偏快。" in msg
+    # plot_anchors renders under its 领读 label, not the old 验收清单 label.
+    assert "情节锚点：" in msg and "- 发现铜钱" in msg
 
 
 def test_writer_user_message_omits_empty_sections():
@@ -107,7 +113,7 @@ def test_writer_user_message_omits_empty_sections():
     msg = llm.last_user
     for header in (
         "# 世界观设定",
-        "# 文风要求",
+        "# 本章文风",
         "# 前情梗概",
         "# 更早章节大事记",
         "# 上一章梗概",
@@ -150,7 +156,7 @@ def test_writer_user_message_author_notes_present_but_labelled_backstage():
     a bare unlabelled field."""
     llm = _CapturingLLM()
     context = {
-        "structured_prompt": {"chapter_goal": "推进", "focus_traits": ["谨慎"]},
+        "structured_prompt": {},
         "characters": [
             {
                 "id": "c1",
@@ -169,16 +175,15 @@ def test_writer_user_message_author_notes_present_but_labelled_backstage():
     msg = llm.last_user
     assert "作者笔记（纯幕后，绝不入正文）：" in msg
     assert "为妹妹复仇" in msg
-    assert "聚焦特质：谨慎" in msg
 
 
 def test_writer_user_message_task_section_field_level_omission():
     """Within「# 本章写作任务」, individual fields are omitted line-by-line
-    when absent (no must_not_happen here → no「不可发生」line), while present
-    fields (chapter_goal / must_happen) still render."""
+    when absent (no narrative_pov here → no「视角」half), while present
+    fields (scene_setting / plot_anchors) still render."""
     llm = _CapturingLLM()
     context = {
-        "structured_prompt": {"chapter_goal": "推进剧情", "must_happen": ["发现线索"]},
+        "structured_prompt": {"scene_setting": "雨夜山洞", "plot_anchors": ["发现线索"]},
         "characters": [],
         "timelines": {},
         "recent_summaries": [],
@@ -186,11 +191,75 @@ def test_writer_user_message_task_section_field_level_omission():
     list(WriterAgent(llm).stream(context))
     assert llm.last_user is not None
     msg = llm.last_user
-    assert "本章目标：推进剧情" in msg
-    assert "必须发生：" in msg and "- 发现线索" in msg
-    assert "不可发生：" not in msg
-    assert "聚焦特质：" not in msg
-    assert "补充说明：" not in msg
+    assert "场景：雨夜山洞" in msg
+    assert "视角：" not in msg
+    assert "情节锚点：" in msg and "- 发现线索" in msg
+
+
+def test_writer_ignores_legacy_deleted_fields_in_old_structured_prompt():
+    """Old chapters may still carry the deleted keys (chapter_goal /
+    must_not_happen / focus_traits / extra_notes / the old ``must_happen``
+    name) in their persisted structured_prompt JSON — ``StructuredPrompt``'s
+    ``extra="allow"`` tolerates them at the schema layer, but the Writer must
+    never read or render any of them (dead keys, silently ignored)."""
+    llm = _CapturingLLM()
+    context = {
+        "structured_prompt": {
+            "chapter_goal": "旧版遗留字段",
+            "must_happen": ["旧版遗留的 must_happen 键名"],
+            "must_not_happen": ["旧版遗留"],
+            "focus_traits": ["旧版遗留"],
+            "extra_notes": "旧版遗留",
+        },
+        "characters": [],
+        "timelines": {},
+        "recent_summaries": [],
+    }
+    list(WriterAgent(llm).stream(context))
+    assert llm.last_user is not None
+    msg = llm.last_user
+    assert "旧版遗留" not in msg
+    assert "本章目标：" not in msg
+    assert "不可发生" not in msg
+    assert "聚焦特质" not in msg
+    assert "补充说明" not in msg
+
+
+def test_writer_user_message_renders_chapter_style_section():
+    """v1.5.0 (NN) P1: chapter_style (优化师产出的 ≤50 字本章文风) renders as
+    its own independent「# 本章文风」section, replacing the old global
+    「# 文风要求」slot."""
+    llm = _CapturingLLM()
+    context = {
+        "structured_prompt": {"chapter_style": "短句为主，节奏偏快，用词克制冷静。"},
+        "characters": [],
+        "timelines": {},
+        "recent_summaries": [],
+    }
+    list(WriterAgent(llm).stream(context))
+    assert llm.last_user is not None
+    msg = llm.last_user
+    assert "# 本章文风\n短句为主，节奏偏快，用词克制冷静。" in msg
+
+
+def test_writer_user_message_style_directive_no_longer_rendered():
+    """v1.5.0 (NN) P1 定案 #4: the global ``style_directive`` channel is
+    retired — even if a stray top-level ``style_directive`` key rides along
+    on the context dict (e.g. a stale caller), the Writer must never surface
+    it as a「# 文风要求」section any more."""
+    llm = _CapturingLLM()
+    context = {
+        "style_directive": "克制、留白。",
+        "structured_prompt": {},
+        "characters": [],
+        "timelines": {},
+        "recent_summaries": [],
+    }
+    list(WriterAgent(llm).stream(context))
+    assert llm.last_user is not None
+    msg = llm.last_user
+    assert "# 文风要求" not in msg
+    assert "克制、留白。" not in msg
 
 
 # ---- Phase L-2 (§5.L.5) — system_prompt rewrite assertions --------------
@@ -205,11 +274,9 @@ def test_writer_system_prompt_teaches_show_dont_tell_rules():
     sp = WriterAgent.system_prompt
     # Section headers from §5.L.5.
     assert "角色卡使用规则" in sp
-    assert "本章重点" in sp
     assert "author_notes" in sp  # survives via the DB-editable persona's [边界] line
     # Concept anchors that drive the model's framing.
     assert "幕后参考" in sp
-    assert "聚焦特质" in sp  # v1.3.4: Chinese label replaces the raw focus_traits key
     # Show-don't-tell example pair must survive intact (both halves).
     assert "❌ 反例" in sp
     assert "✓ 正例" in sp
@@ -220,6 +287,16 @@ def test_writer_system_prompt_teaches_show_dont_tell_rules():
     # author's private notes and them being narrated verbatim (v1.3.4:
     # rendered as「作者笔记」in the user message, not the raw JSON key).
     assert "绝不可有任何句子直接转述作者笔记" in sp
+
+
+def test_writer_system_prompt_drops_focus_traits_section():
+    """v1.5.0 (NN) P1: the「# 本章重点」focus_traits section is deleted
+    entirely (no replacement) — the whole concept must not survive as dead
+    text in the operational rules."""
+    sp = WriterAgent.system_prompt
+    assert "本章重点" not in sp
+    assert "聚焦特质" not in sp
+    assert "focus_traits" not in sp
 
 
 def test_writer_system_prompt_drops_old_strict_frozen_directive():
@@ -233,17 +310,18 @@ def test_writer_system_prompt_drops_old_strict_frozen_directive():
 
 
 def test_writer_system_prompt_keeps_existing_plot_and_style_rules():
-    """Don't regress the parts that were correct in v0.6 — must_happen /
-    must_not_happen / timelines / target_word_count / output format.
+    """Don't regress the parts that were correct — plot_anchors / timelines /
+    target_word_count / output format.
 
-    v1.3.4 快修: the rules now describe these via the Chinese section labels
-    the model actually sees in the user message (「必须发生」/「不可发生」/
-    「近期时间线」/「文风要求」/ 目标字数), not the raw JSON key names."""
+    v1.5.0 (NN) P1: the old ``must_happen``/``must_not_happen``/
+    ``style_directive`` concepts are gone — this locks the new
+    plot_anchors ("情节锚点") + chapter_style ("本章文风") wording, and
+    positively asserts the deleted must_not_happen concept doesn't survive."""
     sp = WriterAgent.system_prompt
-    assert "必须发生" in sp
-    assert "不可发生" in sp
+    assert "情节锚点" in sp
+    assert "不可发生" not in sp
     assert "近期时间线" in sp
-    assert "文风要求" in sp
+    assert "本章文风" in sp
     assert "目标字数" in sp
     assert "只输出正文纯文本" in sp
 
@@ -286,7 +364,7 @@ def test_writer_user_message_carries_author_notes_when_present():
     """
     llm = _CapturingLLM()
     context = {
-        "structured_prompt": {"chapter_goal": "推进", "focus_traits": ["谨慎"]},
+        "structured_prompt": {},
         "characters": [
             {
                 "id": "c1",
@@ -303,7 +381,6 @@ def test_writer_user_message_carries_author_notes_when_present():
     assert llm.last_user is not None
     assert "作者笔记" in llm.last_user
     assert "为妹妹复仇" in llm.last_user
-    assert "聚焦特质：谨慎" in llm.last_user
 
 
 def test_writer_system_prompt_declares_world_setting_hard_constraint():
@@ -327,7 +404,7 @@ def test_writer_user_message_trailing_word_count_block_with_target():
     llm = _CapturingLLM()
     context = {
         "target_word_count": 2500,
-        "structured_prompt": {"chapter_goal": "推进", "target_word_count": 2500},
+        "structured_prompt": {"target_word_count": 2500},
         "characters": [],
         "timelines": {},
         "recent_summaries": [],
@@ -348,7 +425,7 @@ def test_writer_user_message_trailing_word_count_block_default_range():
     for junk in (None, 0, -100, True):
         context = {
             "target_word_count": junk,
-            "structured_prompt": {"chapter_goal": "推进"},
+            "structured_prompt": {},
             "characters": [],
             "timelines": {},
             "recent_summaries": [],
@@ -364,7 +441,7 @@ def test_writer_user_message_word_count_block_falls_back_to_structured_prompt():
     key still resolve the target from structured_prompt."""
     llm = _CapturingLLM()
     context = {
-        "structured_prompt": {"chapter_goal": "推进", "target_word_count": 3000},
+        "structured_prompt": {"target_word_count": 3000},
         "characters": [],
         "timelines": {},
         "recent_summaries": [],
@@ -385,7 +462,7 @@ def test_writer_user_message_user_prompt_is_primary_content_of_task_section():
     llm = _CapturingLLM()
     context = {
         "user_prompt": "林夕在雨夜山洞里找到了那枚带血的铜钱。",
-        "structured_prompt": {"chapter_goal": "推进剧情", "must_happen": ["发现铜钱"]},
+        "structured_prompt": {"scene_setting": "雨夜山洞", "plot_anchors": ["发现铜钱"]},
         "characters": [],
         "timelines": {},
         "recent_summaries": [],
@@ -395,8 +472,8 @@ def test_writer_user_message_user_prompt_is_primary_content_of_task_section():
     msg = llm.last_user
     task_body = msg.split("# 本章写作任务", 1)[1].split("# 交稿要求", 1)[0]
     bible_pos = task_body.index("林夕在雨夜山洞里找到了那枚带血的铜钱。")
-    goal_pos = task_body.index("本章目标：推进剧情")
-    assert bible_pos < goal_pos, "user_prompt (Bible) must precede the structured blueprint fields"
+    anchor_pos = task_body.index("情节锚点：")
+    assert bible_pos < anchor_pos, "user_prompt (Bible) must precede the structured blueprint fields"
     assert "本章节 Bible" in task_body
     assert "情节的最高权威" in task_body
 
@@ -410,7 +487,6 @@ def test_writer_user_message_never_renders_continuity_alerts():
     context = {
         "user_prompt": "林夕决定连夜追查线索。",
         "structured_prompt": {
-            "chapter_goal": "推进剧情",
             "continuity_alerts": [
                 "本章与第 2 章梗概矛盾：黑刀不应该已经出现。",
             ],

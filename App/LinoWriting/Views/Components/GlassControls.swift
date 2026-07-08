@@ -268,7 +268,7 @@ struct LWSectionLabel: View {
     }
 }
 
-// MARK: - Coloured tag chip — must_happen / must_not / chars / focus
+// MARK: - Coloured tag chip — plot_anchors (v1.5.0 NN: renamed from must_happen)
 
 struct LWTagChip: View {
     let text: String

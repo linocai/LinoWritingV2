@@ -13,7 +13,7 @@ def test_agents_use_mock_llm_contract():
         "chapter": {"user_prompt": "找到线索"},
     }
     expanded = PromptExpanderAgent(llm).expand(context)
-    assert expanded["chapter_goal"]
+    assert expanded["plot_anchors"]
     assert expanded["characters_involved"] == ["char-1"]
 
     writer_context = {"structured_prompt": expanded, "characters": [], "timelines": {}, "recent_summaries": []}

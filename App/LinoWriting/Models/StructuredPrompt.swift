@@ -15,69 +15,59 @@ public enum NarrativePOV: String, Codable, CaseIterable, Sendable {
 }
 
 public struct StructuredPrompt: Codable, Equatable, Sendable, Hashable {
-    public var chapterGoal: String
-    public var mustHappen: [String]
-    public var mustNotHappen: [String]
+    /// v1.5.0 (NN) P2 — 由 `mustHappen` 改名：定性从「验收清单」变「领读注解」，
+    /// 帮 Writer 理解本章 Bible 的情节锚点。
+    public var plotAnchors: [String]
     public var charactersInvolved: [String]
     public var sceneSetting: String?
     public var narrativePov: NarrativePOV?
     public var targetWordCount: Int?
-    public var extraNotes: String?
-    /// PROJECT_PLAN §5.L.3 / §5.L.5 — 0-2 trait names that the Writer should
-    /// preferentially emerge this chapter. Empty for older payloads.
-    public var focusTraits: [String]
+    /// v1.5.0 (NN) P2 — 新增：优化师生成的本章文风（≤50 字，服务端截断），
+    /// 作者 Step2 可编辑，可清空。
+    public var chapterStyle: String?
     /// v1.4.0 (MM) P1 — 优化师「连续性/矛盾校对」产出：给作者看的提醒清单
     /// （缺口/矛盾），Writer 不读。`decodeIfPresent` 容旧：无此键时为 `[]`。
     public var continuityAlerts: [String]
 
     enum CodingKeys: String, CodingKey {
-        case chapterGoal = "chapter_goal"
-        case mustHappen = "must_happen"
-        case mustNotHappen = "must_not_happen"
+        case plotAnchors = "plot_anchors"
         case charactersInvolved = "characters_involved"
         case sceneSetting = "scene_setting"
         case narrativePov = "narrative_pov"
         case targetWordCount = "target_word_count"
-        case extraNotes = "extra_notes"
-        case focusTraits = "focus_traits"
+        case chapterStyle = "chapter_style"
         case continuityAlerts = "continuity_alerts"
     }
 
     public init(
-        chapterGoal: String = "",
-        mustHappen: [String] = [],
-        mustNotHappen: [String] = [],
+        plotAnchors: [String] = [],
         charactersInvolved: [String] = [],
         sceneSetting: String? = nil,
         narrativePov: NarrativePOV? = nil,
         targetWordCount: Int? = nil,
-        extraNotes: String? = nil,
-        focusTraits: [String] = [],
+        chapterStyle: String? = nil,
         continuityAlerts: [String] = []
     ) {
-        self.chapterGoal = chapterGoal
-        self.mustHappen = mustHappen
-        self.mustNotHappen = mustNotHappen
+        self.plotAnchors = plotAnchors
         self.charactersInvolved = charactersInvolved
         self.sceneSetting = sceneSetting
         self.narrativePov = narrativePov
         self.targetWordCount = targetWordCount
-        self.extraNotes = extraNotes
-        self.focusTraits = focusTraits
+        self.chapterStyle = chapterStyle
         self.continuityAlerts = continuityAlerts
     }
 
+    /// 自定义 decoder：容忍老章残留键（`must_happen`/`chapter_goal`/
+    /// `must_not_happen`/`extra_notes`/`focus_traits` 等）——`CodingKeys` 里
+    /// 已不含这些键，解码时天然忽略，无需显式 `extra="allow"` 等价物。
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.chapterGoal = try c.decodeIfPresent(String.self, forKey: .chapterGoal) ?? ""
-        self.mustHappen = try c.decodeIfPresent([String].self, forKey: .mustHappen) ?? []
-        self.mustNotHappen = try c.decodeIfPresent([String].self, forKey: .mustNotHappen) ?? []
+        self.plotAnchors = try c.decodeIfPresent([String].self, forKey: .plotAnchors) ?? []
         self.charactersInvolved = try c.decodeIfPresent([String].self, forKey: .charactersInvolved) ?? []
         self.sceneSetting = try c.decodeIfPresent(String.self, forKey: .sceneSetting)
         self.narrativePov = try c.decodeIfPresent(NarrativePOV.self, forKey: .narrativePov)
         self.targetWordCount = try c.decodeIfPresent(Int.self, forKey: .targetWordCount)
-        self.extraNotes = try c.decodeIfPresent(String.self, forKey: .extraNotes)
-        self.focusTraits = try c.decodeIfPresent([String].self, forKey: .focusTraits) ?? []
+        self.chapterStyle = try c.decodeIfPresent(String.self, forKey: .chapterStyle)
         self.continuityAlerts = try c.decodeIfPresent([String].self, forKey: .continuityAlerts) ?? []
     }
 }
