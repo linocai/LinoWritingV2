@@ -117,15 +117,14 @@ def test_recent_fulltext_and_summaries_split_by_window(db_session):
     # longer receives ANY raw prior-chapter prose at all — no
     # ``recent_fulltext`` key, no ``style_samples`` key. Its summary window
     # starts from the immediately-preceding chapter instead (chapter 5, split
-    # out as ``previous_chapter_summary``); chapters 1-4 land in
-    # ``recent_summaries`` (still well under RECENT_SUMMARY_COUNT, so nothing
-    # spills into recent_headlines).
+    # out as ``previous_chapter_summary``). v1.5.1 快修: the summary middle
+    # tier is retired — chapters 1-4 arrive ONLY as one-line headlines.
     writer = build_writer_context(db_session, book, current)
     assert "recent_fulltext" not in writer
     assert "style_samples" not in writer
+    assert "recent_summaries" not in writer
     assert writer["previous_chapter_summary"]["index"] == 5
-    assert [s["index"] for s in writer["recent_summaries"]] == [1, 2, 3, 4]
-    assert writer["recent_headlines"] == []
+    assert [h["index"] for h in writer["recent_headlines"]] == [1, 2, 3, 4]
 
 
 # ---- Phase L-2 (§5.L) — author_notes gating + merged query ----------------
@@ -279,15 +278,14 @@ def test_writer_context_fulltext_and_style_window_share_one_bounded_query(db_ses
     finally:
         event.remove(bind, "before_cursor_execute", _capture)
 
-    # Writer gets neither raw channel at all — both keys are gone. The 2
-    # finalized chapters land entirely in the summary tier: chapter 2 (the
-    # nearest) is split out as previous_chapter_summary, chapter 1 is the
-    # rest of recent_summaries.
+    # Writer gets neither raw channel at all — both keys are gone. v1.5.1:
+    # chapter 2 (the nearest) is split out as previous_chapter_summary; the
+    # summary middle tier is retired, so chapter 1 arrives only as a headline.
     assert "recent_fulltext" not in ctx
     assert "style_samples" not in ctx
+    assert "recent_summaries" not in ctx
     assert ctx["previous_chapter_summary"]["index"] == 2
-    assert [s["index"] for s in ctx["recent_summaries"]] == [1]
-    assert ctx["recent_headlines"] == []
+    assert [h["index"] for h in ctx["recent_headlines"]] == [1]
 
     # At most 2 chapter-only SELECTs (bounded window + unbounded tail) — never
     # a 3rd, and never back to the pre-merge shape of 2 *bounded* SELECTs.

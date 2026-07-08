@@ -182,8 +182,8 @@ def build_writer_context(db: Session, book: Book, chapter: Chapter) -> dict[str,
     #     used to be lifted out, but this is the author's own narrative, never
     #     agent-authored). This is 本章节 Bible — see ``agents.writer`` for how
     #     it's rendered as the「本章写作任务」section's primary content.
-    #   · 知识 (knowledge): ``characters`` / ``timelines`` / ``recent_summaries``
-    #     / ``recent_headlines`` / ``previous_chapter_summary`` — the relevant
+    #   · 知识 (knowledge): ``characters`` / ``timelines`` /
+    #     ``recent_headlines`` / ``previous_chapter_summary`` — the relevant
     #     cards + memory, delivered by Context Pack on the same separate line
     #     they always were. (v1.3.4 快修: no raw prior-chapter prose is ever in
     #     this line any more — see the ``_recent_finalized`` call below.)
@@ -214,23 +214,25 @@ def build_writer_context(db: Session, book: Book, chapter: Chapter) -> dict[str,
     # 窗口切走最近 3 章（这些章节仍然只是 summary-only，从未获得 raw
     # draft_text）。``_recent_finalized`` 函数本身不改；expander 侧
     # (``build_expander_context``) 的三层记忆调用照旧不变。
+    # v1.5.1 快修 (作者拍板) — Writer 的 200 字梗概中层退场：完整梗概只保留
+    # **上一章**这一份（衔接点，不可替代——只有它带着"上一章怎么收尾"的落点），
+    # 更早的全部章一律降为每章一行的机械大事记（``recent_headlines``，
+    # ≤40 字/章）。理由：Writer 需要的不是"前情故事"而是"不写错的最低事实
+    # 集"——大事记（全书视角、无角色过滤）+ 时间线（在场角色事件）+ 角色卡
+    # （当前状态）三者合起来即覆盖梗概中层的全部功能；砍掉它把记忆区体积从
+    # ~200×30 字压到 200 + 40×N 字。``summary_limit=1`` 让 ``_recent_finalized``
+    # 只给最近一章完整 summary，其余全部落 headline 切分。expander 侧
+    # （校对员，连续性核对需要细节）的三层记忆调用照旧不变——梗概数据本身
+    # 照常由档案员产出，只是 Writer 不再吃中层。
     _, summaries, headlines, _ = _recent_finalized(
         db,
         book.id,
         chapter.index,
         fulltext_limit=0,
         style_samples_limit=STYLE_SAMPLES_CHAPTER_COUNT,
-        summary_limit=RECENT_SUMMARY_COUNT,
+        summary_limit=1,
     )
-    # 上一章梗概单列为衔接点 (previous_chapter_summary) —— summaries 按升序
-    # (最旧在前) 返回，故最后一项 = 离当前章最近的一章。recent_summaries 扣除
-    # 它，从第 2 近的章起，凑满 RECENT_SUMMARY_COUNT 总窗口，不重复计数。
-    if summaries:
-        previous_chapter_summary: dict[str, Any] | None = summaries[-1]
-        recent_summaries = summaries[:-1]
-    else:
-        previous_chapter_summary = None
-        recent_summaries = []
+    previous_chapter_summary: dict[str, Any] | None = summaries[-1] if summaries else None
     return {
         "world_setting": book.world_setting or "",
         # v1.5.0 (NN) P1 定案 #4 — the global ``style_directive`` channel is
@@ -256,10 +258,11 @@ def build_writer_context(db: Session, book: Book, chapter: Chapter) -> dict[str,
         # v1.3.4 快修 — 衔接点单列: the immediately-preceding finalized
         # chapter's summary, pulled out of the summary tier so the Writer
         # sees exactly where "本章从这里接续" without hunting through the
-        # rest of recent_summaries. ``None`` when this is the book's first
-        # chapter (no prior finalized chapter exists yet).
+        # memory tiers. ``None`` when this is the book's first chapter
+        # (no prior finalized chapter exists yet). v1.5.1: the 200-字 summary
+        # middle tier is GONE from the Writer — everything older than the
+        # previous chapter arrives only as one-line ``recent_headlines``.
         "previous_chapter_summary": previous_chapter_summary,
-        "recent_summaries": recent_summaries,
         "recent_headlines": headlines,
     }
 

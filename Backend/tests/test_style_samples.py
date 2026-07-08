@@ -214,7 +214,8 @@ def test_style_samples_empty_when_no_finalized_chapters(db_session):
     ctx = build_writer_context(db_session, book, current)
     assert "style_samples" not in ctx
     assert ctx["previous_chapter_summary"] is None
-    assert ctx["recent_summaries"] == []
+    # v1.5.1: the summary middle tier is gone from the Writer entirely.
+    assert "recent_summaries" not in ctx
 
 
 # --------------------------------------------------------------------------
@@ -261,7 +262,8 @@ def test_build_writer_context_never_carries_fulltext_even_with_one_finalized_cha
     assert "style_samples" not in ctx
     assert ctx["previous_chapter_summary"]["index"] == 1
     assert ctx["previous_chapter_summary"]["summary"] == "一"
-    assert ctx["recent_summaries"] == []
+    # v1.5.1: the summary middle tier is gone from the Writer entirely.
+    assert "recent_summaries" not in ctx
 
 
 def test_build_writer_context_no_fulltext_fallback_when_no_finalized_chapters_yet(db_session):
@@ -282,7 +284,8 @@ def test_build_writer_context_no_fulltext_fallback_when_no_finalized_chapters_ye
     assert "recent_fulltext" not in ctx
     assert "style_samples" not in ctx
     assert ctx["previous_chapter_summary"] is None
-    assert ctx["recent_summaries"] == []
+    # v1.5.1: the summary middle tier is gone from the Writer entirely.
+    assert "recent_summaries" not in ctx
 
 
 def test_recent_fulltext_bounded_at_recent_fulltext_count_regardless_of_total_chapters(db_session):

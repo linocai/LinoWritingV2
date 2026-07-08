@@ -360,14 +360,15 @@ def test_writer_operational_rules_describe_background_memory_sections():
     """v1.3.4 快修 (作者实测报障): the Writer no longer receives ANY raw
     prior-chapter prose (``recent_fulltext`` deleted from its context/rules
     entirely — see context_pack.py/writer.py). Its OPERATIONAL_RULES must
-    instead describe the three background-memory sections it DOES get
-    (「前情梗概」/「上一章梗概」/「更早章节大事记」) and warn against
-    treating them as writing material to expand/restate."""
+    instead describe the TWO background-memory sections it DOES get
+    (「前情大事记」/「上一章梗概」— v1.5.1 快修 retired the 200-字 summary
+    middle tier) and warn against treating them as writing material to
+    expand/restate."""
     rules = WriterAgent.OPERATIONAL_RULES
     assert "recent_fulltext" not in rules
-    assert "前情梗概" in rules
+    assert "前情大事记" in rules
     assert "上一章梗概" in rules
-    assert "大事记" in rules
+    assert "前情梗概" not in rules
     assert "不要展开" in rules
 
 

@@ -41,8 +41,10 @@ class _CapturingLLM:
 
 
 def test_writer_user_message_section_order_full_context():
-    """A fully-populated context renders every section, in the fixed order:
-    世界观设定 → 本章文风 → 前情梗概 → 更早章节大事记 → 上一章梗概 →
+    """A fully-populated context renders every section, in the fixed order
+    (v1.5.1 快修: the 200-字 summary middle tier is GONE — everything older
+    than the previous chapter arrives only as one-line headlines):
+    世界观设定 → 本章文风 → 前情大事记 → 上一章梗概 →
     在场角色 → 本章写作任务 → 交稿要求 (always last)."""
     llm = _CapturingLLM()
     context = {
@@ -67,8 +69,11 @@ def test_writer_user_message_section_order_full_context():
         ],
         "timelines": {"c1": [{"chapter_index": 2, "event_text": "发现旧信。"}]},
         "previous_chapter_summary": {"index": 3, "summary": "林夕跟丢了嫌疑人。"},
-        "recent_summaries": [{"index": 1, "summary": "接下失踪案。"}, {"index": 2, "summary": "发现旧信。"}],
-        "recent_headlines": [{"index": 0, "headline": "序章：退役回乡。"}],
+        "recent_headlines": [
+            {"index": 0, "headline": "序章：退役回乡。"},
+            {"index": 1, "headline": "接下失踪案。"},
+            {"index": 2, "headline": "发现旧信。"},
+        ],
     }
     list(WriterAgent(llm).stream(context))
     assert llm.last_user is not None
@@ -77,8 +82,7 @@ def test_writer_user_message_section_order_full_context():
     headers = [
         "# 世界观设定（硬约束，正文不得违背）",
         "# 本章文风",
-        "# 前情梗概（背景资料，非写作素材——不要展开、复述或续写其中内容）",
-        "# 更早章节大事记",
+        "# 前情大事记（每章一行，不写错的最低事实集——不要展开或续写）",
         "# 上一章梗概（衔接点：本章从这个落点接续）",
         "# 在场角色（幕后参考，用于判断言行，不是清单）",
         "# 本章写作任务",
@@ -93,6 +97,10 @@ def test_writer_user_message_section_order_full_context():
     assert "# 本章文风\n短句为主，节奏偏快。" in msg
     # plot_anchors renders under its 领读 label, not the old 验收清单 label.
     assert "情节锚点：" in msg and "- 发现铜钱" in msg
+    # v1.5.1: the retired summary-middle-tier header must never reappear, and
+    # all three earlier chapters arrive as one-line headlines.
+    assert "# 前情梗概" not in msg
+    assert "第 1 章：接下失踪案。" in msg and "第 2 章：发现旧信。" in msg
 
 
 def test_writer_user_message_omits_empty_sections():
@@ -114,8 +122,7 @@ def test_writer_user_message_omits_empty_sections():
     for header in (
         "# 世界观设定",
         "# 本章文风",
-        "# 前情梗概",
-        "# 更早章节大事记",
+        "# 前情大事记",
         "# 上一章梗概",
         "# 在场角色",
         "# 本章写作任务",
@@ -128,24 +135,25 @@ def test_writer_user_message_omits_empty_sections():
 
 
 def test_writer_user_message_previous_chapter_summary_rendered_standalone():
-    """previous_chapter_summary gets its own labelled section, distinct from
-    (and not duplicated inside) recent_summaries."""
+    """previous_chapter_summary gets its own labelled section — the ONLY full
+    200-字 summary anywhere in the Writer message (v1.5.1: the summary middle
+    tier is retired; earlier chapters arrive only as one-line headlines)."""
     llm = _CapturingLLM()
     context = {
         "structured_prompt": {},
         "characters": [],
         "timelines": {},
         "previous_chapter_summary": {"index": 5, "summary": "林夕决定改走山路。"},
-        "recent_summaries": [{"index": 3, "summary": "林夕接下失踪案。"}],
-        "recent_headlines": [],
+        "recent_headlines": [{"index": 3, "headline": "林夕接下失踪案。"}],
     }
     list(WriterAgent(llm).stream(context))
     assert llm.last_user is not None
     msg = llm.last_user
     assert "# 上一章梗概（衔接点：本章从这个落点接续）" in msg
     assert "第 5 章：林夕决定改走山路。" in msg
-    assert "# 前情梗概（背景资料，非写作素材——不要展开、复述或续写其中内容）" in msg
+    assert "# 前情大事记（每章一行，不写错的最低事实集——不要展开或续写）" in msg
     assert "第 3 章：林夕接下失踪案。" in msg
+    assert "# 前情梗概" not in msg
     # No duplication: chapter 5's summary appears exactly once in the message.
     assert msg.count("林夕决定改走山路。") == 1
 
@@ -343,14 +351,16 @@ def test_writer_system_prompt_describes_background_memory_sections():
     """v1.3.4 快修 (作者实测报障): the Writer used to receive ``recent_fulltext``
     (最近 3 章原文, ~1万字) with a rule that (implicitly) invited it to treat
     prior prose as material to draw from — line 上实测这坨原文占了 83% 的输入，
-    模型把它当成了"待续写的素材"。The rule now describes only the THREE
-    background-memory sections the Writer still gets (前情梗概/更早章节大事记/
-    上一章梗概) and explicitly forbids expanding/restating/continuing them."""
+    模型把它当成了"待续写的素材"。v1.5.1 快修: the 200-字 summary middle tier
+    is retired too — the rule now describes exactly TWO background-memory
+    sections (前情大事记/上一章梗概) and explicitly forbids
+    expanding/restating/continuing them."""
     sp = WriterAgent.system_prompt
     assert "recent_fulltext" not in sp
-    assert "前情梗概" in sp
-    assert "更早章节大事记" in sp
+    assert "前情大事记" in sp
     assert "上一章梗概" in sp
+    assert "前情梗概" not in sp
+    assert "更早章节大事记" not in sp
     assert "不要展开" in sp
 
 
