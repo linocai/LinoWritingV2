@@ -12,15 +12,23 @@ import SwiftUI
 /// not a macOS-only degrade.
 public struct StatusBadge: View {
     public let status: ChapterStatus
+    /// v1.4.0 (MM) P4 — optional label swap while keeping `status`'s color
+    /// palette (e.g. "修订中" over the `.writing` blue, during the two-pass
+    /// compression sub-phase, which server-side is still `status=="writing"`
+    /// — there is no separate persisted `ChapterStatus` case for it).
+    public var overrideLabel: String?
 
-    public init(_ status: ChapterStatus) { self.status = status }
+    public init(_ status: ChapterStatus, overrideLabel: String? = nil) {
+        self.status = status
+        self.overrideLabel = overrideLabel
+    }
 
     public var body: some View {
         // PROJECT_PLAN §5.K.4 (字体段): `.contentTransition(.numericText())` lets
         // the label morph between states (e.g. 写作中 → 草稿就绪) rather than
         // hard-snap. The outer `.animation(.smooth, value: status)` is what
         // actually drives the transition — without it, contentTransition is inert.
-        Text(status.label)
+        Text(overrideLabel ?? status.label)
             .font(.caption2.weight(.semibold))
             .contentTransition(.numericText())
             .padding(.horizontal, 7)
@@ -28,6 +36,10 @@ public struct StatusBadge: View {
             .background(palette.background, in: Capsule())
             .foregroundStyle(palette.text)
             .animation(.smooth(duration: 0.3), value: status)
+            // v1.4.0 (MM) P4 — the "写作中"→"修订中" label swap happens with
+            // `status` unchanged (both are `.writing` server-side), so the
+            // transition needs its own trigger keyed on `overrideLabel` too.
+            .animation(.smooth(duration: 0.3), value: overrideLabel)
     }
 
     private var palette: (text: Color, background: Color) {

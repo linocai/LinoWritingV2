@@ -80,10 +80,11 @@ def _bearer_key(request: Request) -> str:
 
 def _is_write_endpoint(request: Request) -> bool:
     """Return True for the LLM-spending POST routes that get the tight
-    30/min budget. Matches §5.T.2 exactly: only the four chapter actions
-    that call out to an LLM provider or finalize an irreversible write —
-    plus (v1.3.0 II P2) ``POST /books/{id}/characters/parse``, the
-    character-card LLM-parse endpoint (also LLM-spending).
+    30/min budget. The chapter actions that call out to an LLM provider or
+    finalize an irreversible write — ``expand``/``write``/``import``/
+    ``finalize`` (§5.T.2), plus (v1.4.0 MM P2) ``revise`` — and (v1.3.0 II P2)
+    ``POST /books/{id}/characters/parse``, the character-card LLM-parse
+    endpoint (also LLM-spending).
     """
     if request.method != "POST":
         return False
@@ -94,7 +95,9 @@ def _is_write_endpoint(request: Request) -> bool:
         if len(parts) < 6:
             return False
         action = parts[-1]
-        return action in {"expand", "write", "import", "finalize"}
+        # v1.4.0 (MM) P2 (🔵11): the standalone revision endpoint is LLM-spending
+        # too → same tight 30/min budget as the other chapter write actions.
+        return action in {"expand", "write", "import", "finalize", "revise"}
     if path.startswith("/api/v1/books/"):
         # ``/api/v1/books/{id}/characters/parse``.
         parts = path.rstrip("/").split("/")

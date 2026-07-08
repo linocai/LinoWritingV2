@@ -12,8 +12,9 @@ import XCTest
 /// Coverage:
 ///  - PersonaStore: load three rows / save flips is_default semantics in store
 ///    state / per-role mutating flag clears.
-///  - StructuredPrompt: `chapter_directive` round-trips snake_case and
-///    `decodeIfPresent` tolerates an absent key (legacy payload → nil).
+///  - StructuredPrompt: v1.4.0 (MM) P1/P3 — `chapter_directive` field removed
+///    (legacy payloads carrying the residual key still decode successfully,
+///    silently ignored); `continuity_alerts` round-trips snake_case.
 ///  - AgentPersonaUpdateRequest encodes a snake_case body.
 @MainActor
 final class PersonaTests: XCTestCase {
@@ -63,25 +64,38 @@ final class PersonaTests: XCTestCase {
         XCTAssertFalse(store.isMutating(.writer))
     }
 
-    // MARK: - StructuredPrompt.chapterDirective codec
+    // MARK: - StructuredPrompt codec (v1.4.0 MM P1/P3)
 
-    func test_directive_roundTripsSnakeCase() throws {
-        var sp = StructuredPrompt(chapterGoal: "g")
-        sp.chapterDirective = "本章方向"
-        let data = try CodecFactory.makeEncoder().encode(sp)
-        let json = String(data: data, encoding: .utf8) ?? ""
-        XCTAssertTrue(json.contains("\"chapter_directive\""), "expected snake_case key, got: \(json)")
-        let decoded = try CodecFactory.makeDecoder().decode(StructuredPrompt.self, from: data)
-        XCTAssertEqual(decoded.chapterDirective, "本章方向")
+    func test_directive_residualKeyStillDecodesAndIsIgnored() throws {
+        // Legacy payload with a residual `chapter_directive` key from a chapter
+        // written before v1.4.0 — the field no longer exists on the model, but
+        // decoding must still succeed and simply drop the unknown key.
+        let legacy = Data("""
+        {"chapter_goal":"g","must_happen":[],"must_not_happen":[],"characters_involved":[],
+         "chapter_directive":"本章方向"}
+        """.utf8)
+        let decoded = try CodecFactory.makeDecoder().decode(StructuredPrompt.self, from: legacy)
+        XCTAssertEqual(decoded.chapterGoal, "g")
+        XCTAssertEqual(decoded.continuityAlerts, [])
     }
 
-    func test_directive_absentKeyDecodesAsNil() throws {
-        // Legacy payload with no chapter_directive key at all.
+    func test_continuityAlerts_roundTripsSnakeCase() throws {
+        var sp = StructuredPrompt(chapterGoal: "g")
+        sp.continuityAlerts = ["第三章提到的信物本章未回收"]
+        let data = try CodecFactory.makeEncoder().encode(sp)
+        let json = String(data: data, encoding: .utf8) ?? ""
+        XCTAssertTrue(json.contains("\"continuity_alerts\""), "expected snake_case key, got: \(json)")
+        let decoded = try CodecFactory.makeDecoder().decode(StructuredPrompt.self, from: data)
+        XCTAssertEqual(decoded.continuityAlerts, ["第三章提到的信物本章未回收"])
+    }
+
+    func test_continuityAlerts_absentKeyDecodesAsEmpty() throws {
+        // Legacy payload with no continuity_alerts key at all.
         let legacy = Data("""
         {"chapter_goal":"g","must_happen":[],"must_not_happen":[],"characters_involved":[]}
         """.utf8)
         let decoded = try CodecFactory.makeDecoder().decode(StructuredPrompt.self, from: legacy)
-        XCTAssertNil(decoded.chapterDirective)
+        XCTAssertEqual(decoded.continuityAlerts, [])
         XCTAssertEqual(decoded.chapterGoal, "g")
     }
 

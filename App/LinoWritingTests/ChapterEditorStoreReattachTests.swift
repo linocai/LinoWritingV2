@@ -28,9 +28,10 @@ final class ChapterEditorStoreReattachTests: XCTestCase {
 
     private func waitUntilSettled(_ store: ChapterEditorStore, maxAttempts: Int = 800) async {
         for _ in 0..<maxAttempts {
-            if case .streaming = store.writingState {
+            switch store.writingState {
+            case .streaming, .revising:
                 try? await Task.sleep(nanoseconds: 5_000_000)
-            } else {
+            default:
                 return
             }
         }
@@ -92,7 +93,7 @@ final class ChapterEditorStoreReattachTests: XCTestCase {
                 .started(chapterId: id),
                 .snapshot(buffer: "重连补发的前半段", chars: 8),
                 .token(text: "续写到底。"),
-                .done(chapter: doneChapter),
+                .done(chapter: doneChapter, revision: nil),
             ]
         }
 
@@ -117,7 +118,7 @@ final class ChapterEditorStoreReattachTests: XCTestCase {
         doneChapter.status = .draftReady
         doneChapter.draftText = "自动重连拿到的完整稿。"
         mock.onReattach = { id in
-            [.started(chapterId: id), .snapshot(buffer: "", chars: 0), .done(chapter: doneChapter)]
+            [.started(chapterId: id), .snapshot(buffer: "", chars: 0), .done(chapter: doneChapter, revision: nil)]
         }
 
         let store = ChapterEditorStore(api: mock, errorBus: bus)
@@ -165,7 +166,7 @@ final class ChapterEditorStoreReattachTests: XCTestCase {
         var doneChapter = chapter
         doneChapter.status = .draftReady
         doneChapter.draftText = "收尾后的稿。"
-        mock.onReattach = { id in [.started(chapterId: id), .done(chapter: doneChapter)] }
+        mock.onReattach = { id in [.started(chapterId: id), .done(chapter: doneChapter, revision: nil)] }
 
         let store = ChapterEditorStore(api: mock, errorBus: bus)
         await store.load(chapterId: chapter.id)
@@ -262,7 +263,7 @@ final class ChapterEditorStoreReattachTests: XCTestCase {
         var doneChapter = chapter
         doneChapter.status = .draftReady
         doneChapter.draftText = "唤醒后重连拿到的稿。"
-        mock.onReattach = { id in [.started(chapterId: id), .done(chapter: doneChapter)] }
+        mock.onReattach = { id in [.started(chapterId: id), .done(chapter: doneChapter, revision: nil)] }
 
         // scenePhase active: status==.writing + no active task → must reattach,
         // even though writingState is (zombie) .streaming.
@@ -296,5 +297,169 @@ final class ChapterEditorStoreReattachTests: XCTestCase {
         // Definitive failure → exactly ONE reattach attempt, no 3× retry burn.
         XCTAssertEqual(mock.calls.filter { $0 == "reattachWriteStream" }.count, 1,
                        "a terminal error must not be retried as a transient disconnect")
+    }
+
+    // MARK: v1.4.0 (MM) P4 — two-pass revising phase + standalone revise()
+
+    func test_revise_callsReviseStreamEndpoint() async {
+        let mock = MockAPIClient()
+        let bus = ErrorBus()
+        let chapter = await makeReadyChapter(mock, status: .draftReady)
+
+        let store = ChapterEditorStore(api: mock, errorBus: bus)
+        await store.load(chapterId: chapter.id)
+
+        store.revise()
+        await waitUntilSettled(store)
+
+        XCTAssertTrue(mock.calls.contains("reviseStream"), "revise() must call POST /chapters/{id}/revise")
+        XCTAssertEqual(store.writingState, .done)
+    }
+
+    func test_revise_inRange_setsLastRevisionOutcome_noToast() async {
+        let mock = MockAPIClient()
+        let bus = ErrorBus()
+        let chapter = await makeReadyChapter(mock, status: .draftReady)
+        var doneChapter = chapter
+        doneChapter.draftText = "已在区间内的稿，无需压缩。"
+        mock.onRevise = { id in [.started(chapterId: id), .revising, .done(chapter: doneChapter, revision: "in_range")] }
+
+        let store = ChapterEditorStore(api: mock, errorBus: bus)
+        await store.load(chapterId: chapter.id)
+        store.revise()
+        await waitUntilSettled(store)
+
+        XCTAssertEqual(store.lastRevisionOutcome, "in_range")
+        XCTAssertNil(bus.current, "in_range must not publish a Toast")
+    }
+
+    func test_revise_unrevised_setsLastRevisionOutcome_andPublishesToast() async {
+        let mock = MockAPIClient()
+        let bus = ErrorBus()
+        let chapter = await makeReadyChapter(mock, status: .draftReady)
+        var doneChapter = chapter
+        doneChapter.draftText = "压缩失败，保留的初稿。"
+        mock.onRevise = { id in [.started(chapterId: id), .revising, .done(chapter: doneChapter, revision: "unrevised")] }
+
+        let store = ChapterEditorStore(api: mock, errorBus: bus)
+        await store.load(chapterId: chapter.id)
+        store.revise()
+        await waitUntilSettled(store)
+
+        XCTAssertEqual(store.lastRevisionOutcome, "unrevised")
+        XCTAssertEqual(bus.current?.message, "字数超标但自动修订失败，已保留初稿，可手动重试修订")
+        XCTAssertEqual(store.chapter?.draftText, "压缩失败，保留的初稿。", "the draft must be kept, never lost")
+    }
+
+    func test_write_crossingIntoRevising_carriesStreamingBufferForward() async {
+        let mock = MockAPIClient()
+        let bus = ErrorBus()
+        let chapter = await makeReadyChapter(mock)
+        mock.onWrite = { chapterId in
+            var c = mock.chapters.first { $0.id == chapterId }!
+            c.draftText = "超长初稿压缩后的正文。"
+            c.status = .draftReady
+            if let idx = mock.chapters.firstIndex(where: { $0.id == chapterId }) { mock.chapters[idx] = c }
+            return [
+                .started(chapterId: chapterId),
+                .token(text: "超长初稿"),
+                .progress(chars: 4),
+                .revising,
+                .done(chapter: c, revision: "revised"),
+            ]
+        }
+
+        let store = ChapterEditorStore(api: mock, errorBus: bus)
+        await store.load(chapterId: chapter.id)
+        store.startWriting()
+        await waitUntilSettled(store)
+
+        XCTAssertEqual(store.writingState, .done)
+        XCTAssertEqual(store.lastRevisionOutcome, "revised")
+        XCTAssertEqual(store.chapter?.draftText, "超长初稿压缩后的正文。")
+    }
+
+    /// A live reattach that lands mid-revising must replay `snapshot` then
+    /// `revising`, transitioning `.streaming` → `.revising` and carrying the
+    /// snapshot buffer/chars forward (🔵9) — never dropping the draft.
+    func test_reattach_partialThenRevising_carriesSnapshotBufferIntoRevisingState() async {
+        let mock = MockAPIClient()
+        let bus = ErrorBus()
+        let chapter = await makeReadyChapter(mock, status: .writing)
+        // Every reattach attempt replays snapshot+revising, then drops
+        // (transient) — the .revising(buffer:chars:) state persists across
+        // the retry backoff since nothing resets it on a mere disconnect.
+        mock.onReattachThrowAfterEvents = (
+            events: [.started(chapterId: chapter.id), .snapshot(buffer: "已完成的初稿全文", chars: 8), .revising],
+            error: AppError.transport("down")
+        )
+
+        let store = ChapterEditorStore(api: mock, errorBus: bus)
+        await store.load(chapterId: chapter.id)  // status == .writing → auto reattach
+
+        await waitUntil { store.isRevising }
+        if case .revising(let buffer, let chars) = store.writingState {
+            XCTAssertEqual(buffer, "已完成的初稿全文")
+            XCTAssertEqual(chars, 8)
+        } else {
+            XCTFail("expected .revising carrying the snapshot buffer forward, got \(store.writingState)")
+        }
+    }
+
+    /// `lastRevisionOutcome` is ephemeral: it must not survive a chapter
+    /// switch/reload (plan §4 P4 — never persisted).
+    func test_lastRevisionOutcome_clearsOnChapterReload() async {
+        let mock = MockAPIClient()
+        let bus = ErrorBus()
+        let chapter = await makeReadyChapter(mock, status: .draftReady)
+        var doneChapter = chapter
+        doneChapter.draftText = "压缩失败，保留的初稿。"
+        mock.onRevise = { id in [.started(chapterId: id), .revising, .done(chapter: doneChapter, revision: "unrevised")] }
+
+        let store = ChapterEditorStore(api: mock, errorBus: bus)
+        await store.load(chapterId: chapter.id)
+        store.revise()
+        await waitUntilSettled(store)
+        XCTAssertEqual(store.lastRevisionOutcome, "unrevised")
+
+        await store.load(chapterId: chapter.id)  // reload the same chapter
+        XCTAssertNil(store.lastRevisionOutcome, "ephemeral marker must vanish on reload")
+    }
+
+    /// 审后修复 🟡5 — `startWriting` must clear `lastRevisionOutcome` at
+    /// kickoff too, same as `revise()` already does (the doc comment on the
+    /// property claimed both did; `startWriting` didn't). Without this, a
+    /// stale "unrevised" from a PRIOR completed revise on this chapter keeps
+    /// showing the "未修订" tag all the way through a brand new
+    /// regeneration, pointing at content that no longer exists.
+    func test_startWriting_clearsStaleLastRevisionOutcomeFromPriorRevise() async {
+        let mock = MockAPIClient()
+        let bus = ErrorBus()
+        let chapter = await makeReadyChapter(mock, status: .draftReady)
+        var revisedDoneChapter = chapter
+        revisedDoneChapter.draftText = "压缩失败，保留的初稿。"
+        mock.onRevise = { id in
+            [.started(chapterId: id), .revising, .done(chapter: revisedDoneChapter, revision: "unrevised")]
+        }
+
+        let store = ChapterEditorStore(api: mock, errorBus: bus)
+        await store.load(chapterId: chapter.id)
+        store.revise()
+        await waitUntilSettled(store)
+        XCTAssertEqual(store.lastRevisionOutcome, "unrevised", "precondition: a completed revise left the stale marker")
+
+        // Start a brand new regeneration on the SAME chapter (no reload in
+        // between) — the stale "未修订" marker must not linger through it.
+        mock.onWrite = { chapterId in
+            var c = mock.chapters.first { $0.id == chapterId }!
+            c.draftText = "全新一稿。"
+            c.status = .draftReady
+            if let idx = mock.chapters.firstIndex(where: { $0.id == chapterId }) { mock.chapters[idx] = c }
+            return [.started(chapterId: chapterId), .token(text: "全新一稿。"), .done(chapter: c, revision: nil)]
+        }
+        store.startWriting()
+        XCTAssertNil(store.lastRevisionOutcome, "startWriting must clear the stale marker synchronously at kickoff")
+        await waitUntilSettled(store)
+        XCTAssertNil(store.lastRevisionOutcome, "must stay cleared through completion (this done carries no revision)")
     }
 }

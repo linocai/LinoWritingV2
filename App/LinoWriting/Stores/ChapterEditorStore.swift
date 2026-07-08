@@ -11,6 +11,13 @@ public final class ChapterEditorStore: ObservableObject {
     public enum WritingState: Equatable {
         case idle
         case streaming(buffer: String, chars: Int)
+        /// v1.4.0 (MM) P4 — the two-pass compression phase (non-streaming,
+        /// single blocking `WriterAgent.revise()` call server-side). Carries
+        /// its own `buffer`/`chars` (🔵9) so the editor's正文/字数 never
+        /// disappear when the badge flips from "写作中" to "修订中" —
+        /// callers transition into this case by carrying the prior
+        /// `.streaming` buffer forward, never resetting it.
+        case revising(buffer: String, chars: Int)
         case done
         case failed(AppError)
     }
@@ -64,6 +71,24 @@ public final class ChapterEditorStore: ObservableObject {
         if case .streaming = writingState { return true }
         return false
     }
+    /// v1.4.0 (MM) P4 — true while the two-pass compression phase is
+    /// in-flight (either a `write`'s post-draft revising sub-phase, or a
+    /// standalone `revise()`). Kept distinct from `isStreaming` (not folded
+    /// into it) so the badge/button layer can show a different label
+    /// ("修订中" vs "写作中") — call sites that only need "is *some* write
+    /// job actively running" combine both explicitly.
+    public var isRevising: Bool {
+        if case .revising = writingState { return true }
+        return false
+    }
+    /// v1.4.0 (MM) P4 — ephemeral (never persisted, cleared on chapter
+    /// load/reset and at the start of every fresh `startWriting`/`revise`)
+    /// two-pass outcome from the last completed write/revise this session:
+    /// `"in_range"|"revised"|"unrevised"|"short"`, or `nil` for a cancelled
+    /// job's `done` (which omits the key) or before any write/revise has
+    /// completed. Only `"unrevised"` drives visible UI (a "未修订" tag +
+    /// the one-time Toast published from `applyWriteEvent`).
+    @Published public private(set) var lastRevisionOutcome: String?
     @Published public private(set) var isExpanding: Bool = false
     @Published public private(set) var isFinalizing: Bool = false
     @Published public private(set) var isImporting: Bool = false
@@ -97,6 +122,20 @@ public final class ChapterEditorStore: ObservableObject {
     /// timer that would otherwise stay disabled forever).
     private var streamTaskActive = false
 
+    /// v1.4.0 (MM) P4 — true for either non-terminal write-job phase
+    /// (`.streaming` or `.revising`). Both mean "the backend job is still
+    /// actively running independently of this connection" — a network drop
+    /// or a stream ending without a terminal frame during EITHER phase must
+    /// attempt reattach-and-recover, never an immediate declared failure.
+    /// Shared by `startWriting`/`revise`'s drop-detection and the iOS
+    /// idle-timer/background-task guard below.
+    private static func isActiveJobPhase(_ state: WritingState) -> Bool {
+        switch state {
+        case .streaming, .revising: return true
+        case .idle, .done, .failed: return false
+        }
+    }
+
     #if os(iOS)
     /// v1.3.1 (KK) P5 — the UIKit background task token for the current
     /// streaming write, if any. `.invalid` sentinel semantics are handled by
@@ -120,10 +159,12 @@ public final class ChapterEditorStore: ObservableObject {
     /// easy-to-miss alternative of point-naming `.done`/`.failed`/
     /// `stopWriting` separately.
     private func updateStreamingSideEffects(oldValue: WritingState, newValue: WritingState) {
-        let wasStreaming: Bool = { if case .streaming = oldValue { return true }; return false }()
-        let isStreamingNow: Bool = { if case .streaming = newValue { return true }; return false }()
-        guard wasStreaming != isStreamingNow else { return }
-        if isStreamingNow {
+        // v1.4.0 (MM) P4 (🔵9): revising is a real backend job phase just
+        // like streaming — the phone must not sleep mid-compression either.
+        let wasBusy = Self.isActiveJobPhase(oldValue)
+        let isBusyNow = Self.isActiveJobPhase(newValue)
+        guard wasBusy != isBusyNow else { return }
+        if isBusyNow {
             beginStreamingProtection()
         } else {
             endStreamingProtection()
@@ -259,6 +300,9 @@ public final class ChapterEditorStore: ObservableObject {
         chapter = nil
         writingState = .idle
         thinkingBuffer = ""
+        // v1.4.0 (MM) P4 — ephemeral: vanishes on chapter switch/reload, per
+        // plan §4 P4 (never persisted, no server-side signal to restore it).
+        lastRevisionOutcome = nil
         isExpanding = false
         isFinalizing = false
         isImporting = false
@@ -335,6 +379,14 @@ public final class ChapterEditorStore: ObservableObject {
             if case .streaming(var buf, let chars) = writingState {
                 buf += text
                 writingState = .streaming(buffer: buf, chars: chars + text.count)
+            } else if case .revising(var buf, let chars) = writingState {
+                // v1.4.0 (MM) P4 — a standalone `revise()`'s seeded buffer
+                // (the existing draft) is replayed as ONE `token` chunk from
+                // an initially-empty `.revising("", 0)` local state (see
+                // `revise()`) — append (never replace) so this can't ever
+                // duplicate content.
+                buf += text
+                writingState = .revising(buffer: buf, chars: chars + text.count)
             } else {
                 writingState = .streaming(buffer: text, chars: text.count)
             }
@@ -347,11 +399,39 @@ public final class ChapterEditorStore: ObservableObject {
         case .progress(let chars):
             if case .streaming(let buf, _) = writingState {
                 writingState = .streaming(buffer: buf, chars: chars)
+            } else if case .revising(let buf, _) = writingState {
+                writingState = .revising(buffer: buf, chars: chars)
             }
             return .cont
-        case .done(let chapter):
+        case .revising:
+            // v1.4.0 (MM) P4 — one-shot, non-terminal: enter (or confirm)
+            // the compression phase, carrying the current buffer/chars
+            // forward so the draft/word count never disappear (🔵9). The
+            // `.revising` branch below is the 🔵10 reattach竞态 idempotent
+            // case: a duplicate signal across a reattach retry — no-op.
+            switch writingState {
+            case .streaming(let buf, let chars):
+                writingState = .revising(buffer: buf, chars: chars)
+            case .revising:
+                break
+            case .idle, .done, .failed:
+                // Shouldn't normally happen (the backend always sends
+                // token/progress or a snapshot before revising), but stay
+                // safe rather than silently dropping the signal.
+                writingState = .revising(buffer: "", chars: 0)
+            }
+            return .cont
+        case .done(let chapter, let revision):
             self.chapter = chapter
             writingState = .done
+            // v1.4.0 (MM) P4 — ephemeral two-pass outcome (nil for a
+            // cancelled job's done, which omits the key — decoded as nil by
+            // `SSEParser`). Only "unrevised" surfaces to the user: the draft
+            // was kept as-is because the compression call itself failed.
+            lastRevisionOutcome = revision
+            if revision == "unrevised" {
+                errorBus.publish("字数超标但自动修订失败，已保留初稿，可手动重试修订", critical: false)
+            }
             onDone?(chapter)
             return .settled
         case .error(let appError):
@@ -367,7 +447,7 @@ public final class ChapterEditorStore: ObservableObject {
             return .settled
         case .reattachNoActive:
             // Nothing is being written — silently drop to idle, NO Toast.
-            if case .streaming = writingState { writingState = .idle }
+            if Self.isActiveJobPhase(writingState) { writingState = .idle }
             return .settled
         case .other:
             return .cont
@@ -380,6 +460,12 @@ public final class ChapterEditorStore: ObservableObject {
         detach()
         writingState = .streaming(buffer: "", chars: 0)
         thinkingBuffer = ""
+        // v1.4.0 (MM) 审后修复 🟡5 — `lastRevisionOutcome` must reset on every
+        // fresh write, same as `revise()` already does: otherwise a stale
+        // "unrevised" from a PRIOR completed write/revise on this chapter
+        // keeps showing the "未修订" tag all the way through a brand new
+        // regeneration, pointing at content that no longer exists.
+        lastRevisionOutcome = nil
 
         streamTaskActive = true
         streamTask = Task { [weak self] in
@@ -391,7 +477,10 @@ public final class ChapterEditorStore: ObservableObject {
                     if case .settled = self.applyWriteEvent(event, onDone: onDone) { return }
                 }
                 // Stream ended without an explicit terminal — treat as a drop.
-                if case .streaming = self.writingState {
+                // v1.4.0 (MM) P4: also covers a mid-drop during the two-pass
+                // write's revising sub-phase (same job, same tail) — the
+                // backend keeps compressing regardless of this connection.
+                if Self.isActiveJobPhase(self.writingState) {
                     await self.handleStreamDrop(
                         originalError: .upstream("写作中断，可点重新生成", retryable: true),
                         onDone: onDone
@@ -403,17 +492,74 @@ public final class ChapterEditorStore: ObservableObject {
                 // likely) STILL running — do not declare failure. Reattach first
                 // (bounded), then reconcile. A user-initiated cancel is the one
                 // exception (handled by `stopWriting`; `.cancelled` short-circuits).
-                let wasStreaming: Bool = { if case .streaming = self.writingState { return true }; return false }()
-                if wasStreaming, error != .cancelled {
+                let wasActive = Self.isActiveJobPhase(self.writingState)
+                if wasActive, error != .cancelled {
                     await self.handleStreamDrop(originalError: error, onDone: onDone)
                 } else {
                     self.writingState = .failed(error)
                     if error != .cancelled { self.errorBus.publish(error) }
                 }
             } catch {
-                let wasStreaming: Bool = { if case .streaming = self.writingState { return true }; return false }()
+                let wasActive = Self.isActiveJobPhase(self.writingState)
                 let mapped = AppError.transport(error.localizedDescription)
-                if wasStreaming {
+                if wasActive {
+                    await self.handleStreamDrop(originalError: mapped, onDone: onDone)
+                } else {
+                    self.writingState = .failed(mapped)
+                    self.errorBus.publish(mapped)
+                }
+            }
+        }
+    }
+
+    /// v1.4.0 (MM) P4 — standalone revision of the current `draft_ready`
+    /// draft via `POST /chapters/{id}/revise` (job-ified: `started` →
+    /// `revising` → `done{chapter,revision}`). Mirrors `startWriting`'s
+    /// detach/task/drop-handling shape exactly; a disconnect only tears
+    /// down THIS local subscription — the backend keeps compressing, and
+    /// reconnection reuses the very same `reattachWriting()`/`GET
+    /// write/stream` path, since the registry tracks the job by
+    /// `chapter_id` regardless of `kind`.
+    ///
+    /// Starts locally in `.revising(buffer: "", chars: 0)` (mirrors
+    /// `startWriting`'s empty-buffer start) rather than pre-seeding the
+    /// current draft text — the backend replays the seeded buffer as a
+    /// single `token` chunk on first tail, so pre-seeding here would double
+    /// the content once that chunk arrives (see the `.token` handler above).
+    public func revise(onDone: (@MainActor (Chapter) -> Void)? = nil) {
+        guard let chapter else { return }
+        detach()
+        lastRevisionOutcome = nil
+        writingState = .revising(buffer: "", chars: 0)
+        thinkingBuffer = ""
+
+        streamTaskActive = true
+        streamTask = Task { [weak self] in
+            guard let self else { return }
+            defer { self.streamTaskActive = false }
+            do {
+                for try await event in self.api.reviseStream(chapterId: chapter.id) {
+                    if Task.isCancelled { return }
+                    if case .settled = self.applyWriteEvent(event, onDone: onDone) { return }
+                }
+                if Self.isActiveJobPhase(self.writingState) {
+                    await self.handleStreamDrop(
+                        originalError: .upstream("修订中断，可稍后重试修订", retryable: true),
+                        onDone: onDone
+                    )
+                }
+            } catch let error as AppError {
+                let wasActive = Self.isActiveJobPhase(self.writingState)
+                if wasActive, error != .cancelled {
+                    await self.handleStreamDrop(originalError: error, onDone: onDone)
+                } else {
+                    self.writingState = .failed(error)
+                    if error != .cancelled { self.errorBus.publish(error) }
+                }
+            } catch {
+                let wasActive = Self.isActiveJobPhase(self.writingState)
+                let mapped = AppError.transport(error.localizedDescription)
+                if wasActive {
                     await self.handleStreamDrop(originalError: mapped, onDone: onDone)
                 } else {
                     self.writingState = .failed(mapped)
@@ -534,10 +680,11 @@ public final class ChapterEditorStore: ObservableObject {
                 self.writingState = .done
                 onDone?(refreshed)
             } else if refreshed.status == .writing {
-                // Backend is still writing — do NOT declare failure. Keep the
-                // streaming state we already have; recovery comes from the next
+                // Backend is still writing (streaming OR revising — v1.4.0
+                // MM P4). Do NOT declare failure. Keep whatever active-job
+                // state we already have; recovery comes from the next
                 // load()/scenePhase reattach. No Toast.
-                if case .streaming = self.writingState {
+                if Self.isActiveJobPhase(self.writingState) {
                     // leave as-is (preserve any partial buffer + the stop button)
                 } else {
                     self.writingState = .streaming(buffer: "", chars: 0)

@@ -42,7 +42,7 @@ def test_writer_user_message_section_order_full_context():
     context = {
         "world_setting": "雨城常年阴雨。",
         "style_directive": "克制、留白。",
-        "chapter_directive": "本章把林夕推到抉择口。",
+        "user_prompt": "本章把林夕推到抉择口。",
         "target_word_count": 2500,
         "structured_prompt": {
             "chapter_goal": "推进剧情",
@@ -373,3 +373,53 @@ def test_writer_user_message_word_count_block_falls_back_to_structured_prompt():
     assert llm.last_user is not None
     assert "3000 字" in llm.last_user
     assert "2400" in llm.last_user and "3600" in llm.last_user
+
+
+# ---- v1.4.0 (MM) P1 — 优化师降职 + 作者本章 Bible ---------------------------
+
+
+def test_writer_user_message_user_prompt_is_primary_content_of_task_section():
+    """The author's ``user_prompt`` is the PRIMARY content of「# 本章写作任务」
+    — it appears first, labelled as 本章节 Bible / 最高权威, ahead of the
+    structured blueprint fields that follow it."""
+    llm = _CapturingLLM()
+    context = {
+        "user_prompt": "林夕在雨夜山洞里找到了那枚带血的铜钱。",
+        "structured_prompt": {"chapter_goal": "推进剧情", "must_happen": ["发现铜钱"]},
+        "characters": [],
+        "timelines": {},
+        "recent_summaries": [],
+    }
+    list(WriterAgent(llm).stream(context))
+    assert llm.last_user is not None
+    msg = llm.last_user
+    task_body = msg.split("# 本章写作任务", 1)[1].split("# 交稿要求", 1)[0]
+    bible_pos = task_body.index("林夕在雨夜山洞里找到了那枚带血的铜钱。")
+    goal_pos = task_body.index("本章目标：推进剧情")
+    assert bible_pos < goal_pos, "user_prompt (Bible) must precede the structured blueprint fields"
+    assert "本章节 Bible" in task_body
+    assert "情节的最高权威" in task_body
+
+
+def test_writer_user_message_never_renders_continuity_alerts():
+    """P1 决议 #1: continuity_alerts is a note FOR THE AUTHOR — even when it
+    rides inside ``structured_prompt`` (as the Expander would leave it after
+    a real run), the Writer's rendered user message must never surface it
+    anywhere."""
+    llm = _CapturingLLM()
+    context = {
+        "user_prompt": "林夕决定连夜追查线索。",
+        "structured_prompt": {
+            "chapter_goal": "推进剧情",
+            "continuity_alerts": [
+                "本章与第 2 章梗概矛盾：黑刀不应该已经出现。",
+            ],
+        },
+        "characters": [],
+        "timelines": {},
+        "recent_summaries": [],
+    }
+    list(WriterAgent(llm).stream(context))
+    assert llm.last_user is not None
+    assert "continuity_alerts" not in llm.last_user
+    assert "黑刀不应该已经出现" not in llm.last_user

@@ -9,10 +9,12 @@ import SwiftUI
 ///   ① 本章剧情 — `user_prompt` (a full prose account of what happens this
 ///      chapter, v1.3.0 JJ P7) + "优化师 · 生成本章指令" (`expand`, force when
 ///      prompt_ready).
-///   ② 本章创作指令 (HERO) — accent-bordered Songti box bound to
-///      `structured_prompt.chapter_directive`; below, "结构要点 · 供 Writer 参考"
-///      with the demoted goal / scene·pov·words / must·must-not·chars·focus
-///      tags. "Writer · 写正文" (SSE `write`; red "■ 停止生成" while streaming).
+///   ② 结构要点 (v1.4.0 MM P3 — directive HERO box deleted, 优化师降职为
+///      结构员+校对员) — goal / scene·pov·words / must·must-not·chars·focus
+///      tags, all editable (v1.3.1 P6); above them, an ephemeral "优化师提醒"
+///      box surfaces `structured_prompt.continuity_alerts` (read-only,醒目
+///      but explicitly a reminder, never a task). "Writer · 写正文" (SSE
+///      `write`; red "■ 停止生成" while streaming).
 ///   ③ 正文 — Songti paragraphs + word count; blinking caret while streaming.
 ///      Status-driven footer: draft_ready → finalize; finalized → 阅读模式 /
 ///      重新提取 / 重新打开编辑, plus the green 本章梗概 block above.
@@ -31,19 +33,17 @@ struct MacChapterEditor: View {
 
     // Editable drafts (commit on blur).
     @State private var promptDraft = ""
-    @State private var directiveDraft = ""
     @State private var titleDraft = ""
     @FocusState private var promptFocused: Bool
-    @FocusState private var directiveFocused: Bool
     @FocusState private var titleFocused: Bool
     @State private var titleHovered = false
 
     // v1.3.1 (KK) P6 — Step2 structured-prompt fields, all editable. Each
     // commits the *whole* `StructuredPrompt` object via
-    // `patchStructuredPrompt` (整对象 PATCH, already how `commitDirective`
-    // works) — text fields commit on blur with the same empty-guard
-    // shape as the title fix (P1); Picker / tag-add / multi-select commit
-    // immediately on change (no separate "save" step needed for those).
+    // `patchStructuredPrompt` (整对象 PATCH) — text fields commit on blur
+    // with the same empty-guard shape as the title fix (P1); Picker /
+    // tag-add / multi-select commit immediately on change (no separate
+    // "save" step needed for those).
     @State private var chapterGoalDraft = ""
     @State private var sceneSettingDraft = ""
     @State private var targetWordCountDraft = ""
@@ -84,7 +84,6 @@ struct MacChapterEditor: View {
         // exact sync (`onChange(of: chapter?.title ?? "")`); mirrored here.
         .onChange(of: chapter?.title ?? "") { _, new in if !titleFocused { titleDraft = new } }
         .onChange(of: chapter?.userPrompt ?? "") { _, new in if !promptFocused { promptDraft = new } }
-        .onChange(of: chapter?.structuredPrompt?.chapterDirective ?? "") { _, new in if !directiveFocused { directiveDraft = new } }
         // v1.3.2 (LL) P2 — reattach to a still-running write when the window
         // becomes active again (parity with iOS scenePhase recovery). Wrapped
         // in its own ViewModifier so the scenePhase `onChange` inference stays
@@ -149,7 +148,7 @@ struct MacChapterEditor: View {
                     Text("第 \(chapter.index) 章")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(LWColor.mutedText3)
-                    StatusBadge(displayStatus(chapter))
+                    StatusBadge(displayStatus(chapter), overrideLabel: displayStatusOverrideLabel())
                 }
                 TextField("未命名章节", text: $titleDraft, onCommit: commitTitle)
                     .textFieldStyle(.plain)
@@ -268,7 +267,7 @@ struct MacChapterEditor: View {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
                         LWAccentTintButton(
-                            title: chapter.status == .promptReady ? "重新起草指令" : "优化师 · 生成本章指令",
+                            title: chapter.status == .promptReady ? "重新解析结构" : "优化师 · 生成本章指令",
                             systemImage: "sparkles",
                             enabled: !chapterEditorStore.isExpanding && !promptDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                         ) { runExpand(force: chapter.status == .promptReady) }
@@ -287,7 +286,7 @@ struct MacChapterEditor: View {
                         Spacer()
                     }
                     if chapter.status == .promptReady {
-                        Text("改了上面的剧情？点这里让优化师重新起草第 ② 步的创作指令。")
+                        Text("改了上面的剧情？点这里让优化师重新解析第 ② 步的结构要点。")
                             .font(.system(size: 11))
                             .foregroundStyle(LWColor.mutedText3)
                     }
@@ -297,34 +296,34 @@ struct MacChapterEditor: View {
         }
     }
 
-    // MARK: ② HERO directive
+    // MARK: ② 结构要点（v1.4.0 MM P3 — directive HERO box 已删）
 
     private func stage2(_ chapter: Chapter) -> some View {
         let sp = chapter.structuredPrompt ?? StructuredPrompt()
         return stageCard {
             HStack(spacing: 9) {
                 stageBadge("2")
-                Text("本章创作指令")
+                Text("结构要点")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(LWColor.bodyText)
                 Spacer()
-                Text("优化师起草 · 你来定稿")
+                Text("优化师整理 · 供 Writer 参考")
                     .font(.system(size: 10.5, weight: .semibold))
                     .foregroundStyle(LWColor.accentText)
                     .padding(.horizontal, 9).padding(.vertical, 2)
                     .background(LWColor.accentStart.opacity(0.12), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
             }
-            Text("⚑ 这是你最该把关的一步 —— 审这段 200–300 字的方向与张力，改到满意再放行给 Writer。")
+            Text("这是优化师从你写的本章剧情里收束出的结构要点，全部可编辑；写作时以你的本章剧情原文为最高权威。")
                 .font(.system(size: 12))
                 .foregroundStyle(LWColor.mutedText3)
                 .lineSpacing(2)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            // HERO box — accent border + pale blue fill + Songti.
-            directiveBox
-
-            LWCenteredDivider(text: "结构要点 · 供 Writer 参考")
-                .padding(.top, 4)
+            // v1.4.0 (MM) P1/P3 — 优化师「连续性/矛盾校对」提醒：醒目但明确是
+            // 提醒非任务，只读，绝不进 Writer 输入。空数组时整块不渲染。
+            if !sp.continuityAlerts.isEmpty {
+                continuityAlertsBox(sp.continuityAlerts)
+            }
 
             // v1.3.1 (KK) P6 — 本章目标 (chapter_goal), now editable.
             // Required by the backend — empty-blur reverts, no PATCH.
@@ -423,7 +422,11 @@ struct MacChapterEditor: View {
 
             if showWriteButton(chapter) {
                 HStack(spacing: 10) {
-                    if chapterEditorStore.isStreaming {
+                    if chapterEditorStore.isStreaming || chapterEditorStore.isRevising {
+                        // v1.4.0 (MM) P4 — same button/action during revising:
+                        // "停止生成" cancels the compression and keeps the
+                        // complete draft (backend cancel×revising matrix),
+                        // wording unchanged per plan.
                         LWDangerTintButton(title: "停止生成", systemImage: "stop.fill") {
                             chapterEditorStore.stopWriting()
                         }
@@ -431,7 +434,7 @@ struct MacChapterEditor: View {
                         LWPrimaryButton(
                             title: hasDraft(chapter) ? "Writer · 重新生成" : "Writer · 写正文",
                             systemImage: "pencil",
-                            enabled: !(sp.chapterGoal.isEmpty && directiveDraft.isEmpty)
+                            enabled: !sp.chapterGoal.isEmpty || !(chapter.userPrompt ?? "").isEmpty
                         ) { startWriting() }
                     }
                     Spacer()
@@ -441,20 +444,33 @@ struct MacChapterEditor: View {
         }
     }
 
-    private var directiveBox: some View {
-        LWTextArea(
-            text: $directiveDraft,
-            placeholder: "优化师起草的 200–300 字本章创作指令…",
-            minHeight: 132,
-            font: LWFont.songti(14.5),
-            lineSpacing: 6,
-            background: LWColor.accentStart.opacity(0.04),
-            border: LWColor.accentStart.opacity(0.32),
-            borderWidth: 1,
-            glow: LWColor.accentStart.opacity(0.12)
+    /// v1.4.0 (MM) P3 — 优化师提醒（`continuity_alerts`）：醒目的警示配色，
+    /// 但文案明确标注「提醒」而非任务，只读、不可编辑。
+    private func continuityAlertsBox(_ alerts: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(LWColor.warning)
+                Text("优化师提醒 · 连续性/矛盾核对，仅供参考")
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(LWColor.warning)
+            }
+            ForEach(alerts, id: \.self) { alert in
+                Text("· \(alert)")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(LWColor.bodyText)
+                    .lineSpacing(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(.horizontal, 14).padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(LWColor.warning.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(LWColor.warning.opacity(0.28), lineWidth: 1)
         )
-        .focused($directiveFocused)
-        .onChange(of: directiveFocused) { _, focused in if !focused { commitDirective() } }
     }
 
     // MARK: ③ 正文
@@ -473,6 +489,13 @@ struct MacChapterEditor: View {
                 if chapterEditorStore.isThinking {
                     thinkingIndicator
                 }
+                // v1.4.0 (MM) P4 — mirrors thinkingIndicator's shape for the
+                // (up to 5 分钟) two-pass compression call; mutually
+                // exclusive with isThinking (thinking never coincides with
+                // revising).
+                if chapterEditorStore.isRevising {
+                    revisingIndicator
+                }
                 Text("\(draftWordCount(chapter)) 字")
                     .font(.system(size: 11)).foregroundStyle(LWColor.mutedText3)
             }
@@ -481,6 +504,13 @@ struct MacChapterEditor: View {
 
             if isFinalized(chapter), let summary = chapter.summary, !summary.isEmpty {
                 summaryBlock(summary)
+            }
+
+            // v1.4.0 (MM) P4 — ephemeral "未修订" marker (this session only,
+            // vanishes on reload/chapter switch); the 修订 button below is
+            // always available in draft_ready to retry manually.
+            if chapterEditorStore.lastRevisionOutcome == "unrevised" {
+                unrevisedBadge
             }
 
             footerButtons(chapter)
@@ -533,9 +563,21 @@ struct MacChapterEditor: View {
     @ViewBuilder
     private func footerButtons(_ chapter: Chapter) -> some View {
         HStack(spacing: 10) {
-            if chapter.status == .draftReady && !chapterEditorStore.isStreaming {
+            if chapter.status == .draftReady && !chapterEditorStore.isStreaming && !chapterEditorStore.isRevising {
                 LWSuccessButton(title: "档案员 · 提取入库", systemImage: "checkmark", enabled: !chapterEditorStore.isFinalizing) {
                     finalize()
+                }
+            }
+            // v1.4.0 (MM) P4 — 修订按钮：draft_ready 态可见（含「未修订」兜底
+            // 重试入口），running 时置灰（不隐藏，`chapter.status` 在流式/修订
+            // 期本就滞后停在 draft_ready，"置灰" 是唯一能表达"忙"的方式）。
+            if chapter.status == .draftReady {
+                LWBorderedButton(
+                    title: "修订 · 压缩字数",
+                    systemImage: "wand.and.stars",
+                    enabled: !chapterEditorStore.isStreaming && !chapterEditorStore.isRevising && !chapterEditorStore.isFinalizing
+                ) {
+                    startRevise()
                 }
             }
             if isFinalized(chapter) {
@@ -563,6 +605,38 @@ struct MacChapterEditor: View {
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(LWColor.mutedText3)
         }
+    }
+
+    /// v1.4.0 (MM) P4 — "修订中…" process indicator (stage3 header, only
+    /// while `chapterEditorStore.isRevising`). The compression call is a
+    /// single blocking round-trip (up to 300s × up to 2 attempts) — this is
+    /// the only in-flight feedback during that window besides the toolbar
+    /// badge, which may be scrolled off-screen while reading stage3.
+    private var revisingIndicator: some View {
+        HStack(spacing: 5) {
+            ProgressView().controlSize(.small)
+            Text("修订中…")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(LWColor.mutedText3)
+        }
+    }
+
+    /// v1.4.0 (MM) P4 — ephemeral "未修订" tag: the compression call itself
+    /// failed, so the (possibly still over-length) initial draft was kept
+    /// as-is. Paired with the errorBus Toast fired once from
+    /// `ChapterEditorStore.applyWriteEvent`; this tag is the persistent (for
+    /// the rest of THIS session) in-UI reminder that the 修订 button below
+    /// is the manual retry.
+    private var unrevisedBadge: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "exclamationmark.circle.fill")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(LWColor.warning)
+            Text("未修订 · 字数可能超标，可点下方「修订」重试")
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(LWColor.warning)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Stage helpers
@@ -676,7 +750,14 @@ struct MacChapterEditor: View {
     // MARK: - State machine predicates (strict)
 
     private func displayStatus(_ chapter: Chapter) -> ChapterStatus {
-        chapterEditorStore.isStreaming ? .writing : chapter.status
+        (chapterEditorStore.isStreaming || chapterEditorStore.isRevising) ? .writing : chapter.status
+    }
+    /// v1.4.0 (MM) P4 — the badge's two-stage label ("写作中"→"修订中"); both
+    /// map to the same `.writing` `ChapterStatus`/color (there is no separate
+    /// persisted status for revising), so the distinction is purely this
+    /// label override.
+    private func displayStatusOverrideLabel() -> String? {
+        chapterEditorStore.isRevising ? "修订中" : nil
     }
     private func isFinalized(_ chapter: Chapter) -> Bool { chapter.status == .finalized }
     private func hasDraft(_ chapter: Chapter) -> Bool {
@@ -706,7 +787,7 @@ struct MacChapterEditor: View {
     }
     /// "Writer · 写正文" — visible in prompt_ready / draft_ready / writing.
     private func showWriteButton(_ chapter: Chapter) -> Bool {
-        if chapterEditorStore.isStreaming { return true }
+        if chapterEditorStore.isStreaming || chapterEditorStore.isRevising { return true }
         switch chapter.status {
         case .promptReady, .draftReady: return true
         case .writing: return true
@@ -724,6 +805,11 @@ struct MacChapterEditor: View {
         if case .streaming(let buffer, _) = chapterEditorStore.writingState, !buffer.isEmpty {
             return buffer
         }
+        // v1.4.0 (MM) P4 — revising carries its own buffer forward (🔵9): the
+        // draft never disappears while the compression call is in flight.
+        if case .revising(let buffer, _) = chapterEditorStore.writingState, !buffer.isEmpty {
+            return buffer
+        }
         return chapter.draftText ?? ""
     }
     private func draftWordCount(_ chapter: Chapter) -> Int {
@@ -737,7 +823,6 @@ struct MacChapterEditor: View {
 
     private func syncDrafts(_ chapter: Chapter?) {
         promptDraft = chapter?.userPrompt ?? ""
-        directiveDraft = chapter?.structuredPrompt?.chapterDirective ?? ""
         titleDraft = chapter?.title ?? ""
         chapterGoalDraft = chapter?.structuredPrompt?.chapterGoal ?? ""
         sceneSettingDraft = chapter?.structuredPrompt?.sceneSetting ?? ""
@@ -768,15 +853,6 @@ struct MacChapterEditor: View {
         }
         Task { await chapterEditorStore.patchTitle(trimmed); refreshList() }
     }
-    private func commitDirective() {
-        guard let chapter else { return }
-        let current = chapter.structuredPrompt?.chapterDirective ?? ""
-        guard directiveDraft != current else { return }
-        var sp = chapter.structuredPrompt ?? StructuredPrompt()
-        sp.chapterDirective = directiveDraft.isEmpty ? nil : directiveDraft
-        Task { await chapterEditorStore.patchStructuredPrompt(sp); refreshList() }
-    }
-
     // MARK: - v1.3.1 (KK) P6 — Step2 full-field edit commits
 
     /// `chapter_goal` is required by the backend (`require_chapter_goal`
@@ -923,8 +999,16 @@ struct MacChapterEditor: View {
     }
 
     private func startWriting() {
-        if directiveFocused { commitDirective() }
+        if chapterGoalFocused { commitChapterGoal() }
         chapterEditorStore.startWriting { chapter in
+            chaptersStore.upsert(chapter)
+        }
+    }
+
+    /// v1.4.0 (MM) P4 — manual "修订" trigger (`POST /revise`), independent
+    /// of a fresh Writer regeneration.
+    private func startRevise() {
+        chapterEditorStore.revise { chapter in
             chaptersStore.upsert(chapter)
         }
     }
@@ -1001,7 +1085,7 @@ private struct ReattachOnScenePhaseActive: ViewModifier {
 /// otherwise blow up `MacChapterEditor.body`'s type-checker if chained
 /// inline (see the call site's doc comment). Each field mirrors the same
 /// "only overwrite the draft if the user isn't actively editing it" guard
-/// used throughout this file (`promptFocused`/`directiveFocused` etc.).
+/// used throughout this file (`promptFocused`/`titleFocused` etc.).
 private struct Stage2FieldSyncModifiers: ViewModifier {
     let chapterGoal: String
     let sceneSetting: String

@@ -17,7 +17,16 @@ public enum SSEEvent: Equatable, Sendable {
     /// reconnecting client can rebuild its streaming buffer before tailing.
     /// Never carries thinking text.
     case snapshot(buffer: String, chars: Int)
-    case done(chapter: Chapter)
+    /// v1.4.0 (MM) P4 — one-shot, non-terminal: the job entered (or was
+    /// already in, at reattach subscription time) the two-pass compression
+    /// phase. Empty payload (`{}`); the draft buffer/word count carry over
+    /// unchanged (this is a signal frame, not a buffer mutation).
+    case revising
+    /// v1.4.0 (MM) P4 — `revision` is the two-pass outcome
+    /// (`"in_range"|"revised"|"unrevised"|"short"`), present only on a
+    /// genuine terminal `done` (a `cancelled` job's `done` omits the key —
+    /// decodes here as `nil`, same as the DB-fallback reattach `done`).
+    case done(chapter: Chapter, revision: String?)
     case error(AppError)
     /// v1.3.2 (LL) P1 — reattach control signal: the DB row is stuck in
     /// `writing` but no job exists in the (single-worker) registry, i.e. the
@@ -114,10 +123,13 @@ public final class SSEParser {
             if let p = try? decoder.decode(P.self, from: jsonData) {
                 return .snapshot(buffer: p.buffer, chars: p.chars)
             }
+        case "revising":
+            // Payload is always `{}` — no fields to decode, just the signal.
+            return .revising
         case "done":
-            struct P: Decodable { let chapter: Chapter }
+            struct P: Decodable { let chapter: Chapter; let revision: String? }
             if let p = try? decoder.decode(P.self, from: jsonData) {
-                return .done(chapter: p.chapter)
+                return .done(chapter: p.chapter, revision: p.revision)
             }
             // v1.3.2 (LL) P2 审后修复 #5: `done{chapter:null}` — the backend
             // worker completed but the chapter was deleted mid-write, so there's

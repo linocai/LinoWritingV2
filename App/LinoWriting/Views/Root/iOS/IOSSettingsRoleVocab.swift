@@ -37,12 +37,13 @@ enum IOSRoleVocab {
         }
     }
 
-    /// One-line responsibility blurb for the persona cards. Matches the handoff
-    /// 人格编辑 `desc` map (`LinoWriting iOS.dc.html` L790).
+    /// One-line responsibility blurb for the persona cards.
+    /// v1.4.0 (MM) P3 — 优化师降职为结构员+校对员（删 `chapter_directive`）；
+    /// Writer 改为直接依据作者本章剧情（Bible）写作，字数落区间。
     static func desc(_ role: AgentRole) -> String {
         switch role {
-        case .expander: return "把已完成章梗概 ＋ 记忆 ＋ 你写的本章剧情，磨成 200–300 字「本章创作指令」"
-        case .writer: return "依据指令与上下文包，写出 2500–3000 字正文"
+        case .expander: return "收束结构 ＋ 校对连续性/世界观 ＋ 框定范围（不发明情节）"
+        case .writer: return "依据你写的本章剧情（Bible）＋ 上下文包写正文，字数落区间"
         case .extractor: return "把本章实际发生的事，回写进人物卡与时间线"
         }
     }

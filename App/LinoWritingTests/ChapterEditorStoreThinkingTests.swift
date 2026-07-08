@@ -53,7 +53,7 @@ final class ChapterEditorStoreThinkingTests: XCTestCase {
                 .thinking(text: "主角应该先发现线索。"),
                 .token(text: "清晨的雾"),
                 .token(text: "还没散。"),
-                .done(chapter: c)
+                .done(chapter: c, revision: nil)
             ]
         }
 
@@ -95,7 +95,7 @@ final class ChapterEditorStoreThinkingTests: XCTestCase {
                 .started(chapterId: chapterId),
                 .thinking(text: "思考中"),
                 .token(text: "正文"),
-                .done(chapter: c)
+                .done(chapter: c, revision: nil)
             ]
         }
 
@@ -144,7 +144,7 @@ final class ChapterEditorStoreThinkingTests: XCTestCase {
                 .started(chapterId: chapterId),
                 .thinking(text: "第一次思考"),
                 .token(text: "稿"),
-                .done(chapter: c)
+                .done(chapter: c, revision: nil)
             ]
         }
 
@@ -162,7 +162,7 @@ final class ChapterEditorStoreThinkingTests: XCTestCase {
             if let idx = mock.chapters.firstIndex(where: { $0.id == chapterId }) {
                 mock.chapters[idx] = c
             }
-            return [.started(chapterId: chapterId), .token(text: "第二稿"), .done(chapter: c)]
+            return [.started(chapterId: chapterId), .token(text: "第二稿"), .done(chapter: c, revision: nil)]
         }
         store.startWriting()
         await waitUntilDone(store)

@@ -10,6 +10,7 @@ auth token, and the model string passed in the payload.
 from __future__ import annotations
 
 import json
+import logging
 import time
 from collections.abc import Iterator
 from threading import Event
@@ -22,6 +23,8 @@ from app.llm.errors import LLMError
 from app.models.provider_key import ProviderKey
 from app.services.encryption import decrypt_api_key
 from app.services.secret_redaction import redact_secrets
+
+logger = logging.getLogger(__name__)
 
 # Maximum characters of an upstream 4xx response body to surface in error
 # messages / agent_log rows. Anything longer is truncated. See §5.P.1 A.
@@ -212,76 +215,101 @@ class OpenAICompatibleClient:
         cancel_event: Event | None = None,
     ) -> Iterator[StreamChunk]:
         url = f"{self.base_url}/chat/completions"
+        # v1.4.0 (MM) P2 (🟡8) — stream_options defence. Some OpenAI-compatible
+        # relays don't recognise ``stream_options`` (we send
+        # ``{"include_usage": True}`` on every stream for token观测) and reject
+        # the request with a 400 BEFORE any chunk is yielded — so dropping the
+        # field and retrying ONCE is safe/idempotent (nothing was streamed yet).
+        # This is a deliberate, no-diff-check retry: a 400 whose payload carried
+        # stream_options → strip it, log the first sanitised body once, retry.
+        # A second failure (of any kind) raises that second error.
+        retried_without_stream_options = False
         try:
-            with httpx.stream(
-                "POST",
-                url,
-                headers=self._headers(),
-                json=payload,
-                timeout=timeout,
-            ) as response:
-                if response.status_code >= 500:
-                    raise LLMError(f"LLM upstream server error: {response.status_code}", retryable=True)
-                if response.status_code >= 400:
-                    # Drain (with sanitisation) before raising so the body
-                    # error message contains useful diagnostics minus secrets.
-                    safe_body = _sanitize_error_body(response.read().decode("utf-8", errors="replace"))
-                    raise LLMError(
-                        f"LLM upstream request failed: {response.status_code} {safe_body}",
-                        retryable=False,
-                    )
-                # Pre-loop cancel check — if the caller already cancelled
-                # before we even got past the response headers, bail out
-                # immediately. Closes the httpx response on context exit.
-                if cancel_event is not None and cancel_event.is_set():
-                    return
-                for line in response.iter_lines():
-                    # Check cancel *every* iteration, before doing any work,
-                    # so a fast cancel can't burn another token by sneaking
-                    # past while we json.loads / yield. The with-block exit
-                    # is what actually closes the upstream socket.
+            while True:
+                with httpx.stream(
+                    "POST",
+                    url,
+                    headers=self._headers(),
+                    json=payload,
+                    timeout=timeout,
+                ) as response:
+                    if response.status_code >= 500:
+                        raise LLMError(f"LLM upstream server error: {response.status_code}", retryable=True)
+                    if response.status_code >= 400:
+                        # Drain (with sanitisation) before raising so the body
+                        # error message contains useful diagnostics minus secrets.
+                        safe_body = _sanitize_error_body(response.read().decode("utf-8", errors="replace"))
+                        if (
+                            response.status_code == 400
+                            and "stream_options" in payload
+                            and not retried_without_stream_options
+                        ):
+                            logger.warning(
+                                "LLM upstream 400 with stream_options; retrying once without it. body=%s",
+                                safe_body,
+                            )
+                            payload = {k: v for k, v in payload.items() if k != "stream_options"}
+                            retried_without_stream_options = True
+                            self.last_usage = None  # no usage可得 from a failed / options-less call
+                            continue  # re-enter the while-loop with the stripped payload
+                        raise LLMError(
+                            f"LLM upstream request failed: {response.status_code} {safe_body}",
+                            retryable=False,
+                        )
+                    # Pre-loop cancel check — if the caller already cancelled
+                    # before we even got past the response headers, bail out
+                    # immediately. Closes the httpx response on context exit.
                     if cancel_event is not None and cancel_event.is_set():
                         return
-                    if not line or line.startswith(":"):
-                        continue
-                    if not line.startswith("data:"):
-                        continue
-                    data = line.removeprefix("data:").strip()
-                    if data == "[DONE]":
-                        break
-                    chunk = json.loads(data)
-                    # v1.3.4 快修 — 观测: with `stream_options.include_usage`
-                    # set (see `_payload`), a usage-bearing chunk (typically
-                    # the LAST one) carries token counts alongside — or
-                    # instead of — an empty `choices` list. Extract it BEFORE
-                    # the `choices` early-continue below so it isn't skipped;
-                    # only overwrite `last_usage` when this particular chunk
-                    # actually has a `usage` object (an interim chunk without
-                    # one must not clobber a usage value a later chunk sets).
-                    usage = _extract_usage(chunk)
-                    if usage is not None:
-                        self.last_usage = usage
-                    # Some OpenAI-compatible providers (Grok / OpenAI itself
-                    # when usage stats are enabled, DeepSeek for token-limit
-                    # edge cases, ...) emit metadata-only frames with an
-                    # empty `choices` list. They aren't errors — just skip.
-                    choices = chunk.get("choices") or []
-                    if not choices:
-                        continue
-                    delta = choices[0].get("delta") or {}
-                    # v1.2.0 (HH) P7: reasoning-capable upstreams (DeepSeek-R1
-                    # style) put chain-of-thought deltas in a separate
-                    # `reasoning_content` field alongside (or instead of, for
-                    # that particular chunk) the final-answer `content`
-                    # field. Forward both as distinctly-tagged StreamChunks —
-                    # `thinking` chunks are a process indicator only and must
-                    # never be mistaken for draft prose downstream.
-                    reasoning = delta.get("reasoning_content")
-                    if reasoning:
-                        yield StreamChunk(kind="thinking", text=reasoning)
-                    token = delta.get("content")
-                    if token:
-                        yield StreamChunk(kind="token", text=token)
+                    for line in response.iter_lines():
+                        # Check cancel *every* iteration, before doing any work,
+                        # so a fast cancel can't burn another token by sneaking
+                        # past while we json.loads / yield. The with-block exit
+                        # is what actually closes the upstream socket.
+                        if cancel_event is not None and cancel_event.is_set():
+                            return
+                        if not line or line.startswith(":"):
+                            continue
+                        if not line.startswith("data:"):
+                            continue
+                        data = line.removeprefix("data:").strip()
+                        if data == "[DONE]":
+                            break
+                        chunk = json.loads(data)
+                        # v1.3.4 快修 — 观测: with `stream_options.include_usage`
+                        # set (see `_payload`), a usage-bearing chunk (typically
+                        # the LAST one) carries token counts alongside — or
+                        # instead of — an empty `choices` list. Extract it BEFORE
+                        # the `choices` early-continue below so it isn't skipped;
+                        # only overwrite `last_usage` when this particular chunk
+                        # actually has a `usage` object (an interim chunk without
+                        # one must not clobber a usage value a later chunk sets).
+                        usage = _extract_usage(chunk)
+                        if usage is not None:
+                            self.last_usage = usage
+                        # Some OpenAI-compatible providers (Grok / OpenAI itself
+                        # when usage stats are enabled, DeepSeek for token-limit
+                        # edge cases, ...) emit metadata-only frames with an
+                        # empty `choices` list. They aren't errors — just skip.
+                        choices = chunk.get("choices") or []
+                        if not choices:
+                            continue
+                        delta = choices[0].get("delta") or {}
+                        # v1.2.0 (HH) P7: reasoning-capable upstreams (DeepSeek-R1
+                        # style) put chain-of-thought deltas in a separate
+                        # `reasoning_content` field alongside (or instead of, for
+                        # that particular chunk) the final-answer `content`
+                        # field. Forward both as distinctly-tagged StreamChunks —
+                        # `thinking` chunks are a process indicator only and must
+                        # never be mistaken for draft prose downstream.
+                        reasoning = delta.get("reasoning_content")
+                        if reasoning:
+                            yield StreamChunk(kind="thinking", text=reasoning)
+                        token = delta.get("content")
+                        if token:
+                            yield StreamChunk(kind="token", text=token)
+                    # SSE stream ended ([DONE] or exhausted) — done, don't retry.
+                    return
         except (httpx.TimeoutException, httpx.TransportError) as exc:
             raise LLMError(str(exc), retryable=True) from exc
 

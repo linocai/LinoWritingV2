@@ -123,6 +123,15 @@ def delete_chapter(chapter_id: str, db: Session = Depends(get_db)) -> Response:
     # for it to wind down BEFORE deleting, so the worker doesn't resurrect / err
     # on a row we just removed. If the worker misses the window it will find the
     # chapter gone (session.get → None) and no-op safely.
+    #
+    # v1.4.0 (MM) P2 (Opus 高危专审): ``get_live`` now also returns a job mid-
+    # ``revising``. A revising worker is blocked in the non-streaming
+    # ``complete()`` call which ``cancel_event`` CANNOT interrupt (只有 read timeout
+    # 有界兜底, plan 🔵16), so ``cancel_and_wait`` may time out (~8s) while the
+    # registry job占位 until that blocking call returns (worst case ~30min). During
+    # that window a new write/revise for this chapter still 409s (bounded — same
+    # timeout决议). The DELETE itself commits immediately; the late worker then sees
+    # the row gone / superseded and no-ops.
     live = write_registry.get_live(chapter_id)
     if live is not None:
         live.cancel_and_wait(CANCEL_WAIT_SECONDS)
@@ -198,9 +207,10 @@ def write_chapter(
     subscription — the worker runs to completion regardless. Cancelling is now
     an explicit action (``POST /write/cancel``).
 
-    Mutual exclusion: if a live (``streaming``) job already exists for this
-    chapter → 409 ``chapter_write_in_progress`` (status may already be
-    ``writing`` too, but the registry is the authoritative gate).
+    Mutual exclusion: if a live (non-terminal — ``streaming`` OR ``revising``,
+    post-🔴1) job already exists for this chapter → 409
+    ``chapter_write_in_progress`` (status may already be ``writing`` too, but the
+    registry is the authoritative gate).
     """
     chapter = _get_chapter(db, chapter_id)
     ensure_chapter_status(chapter, {"prompt_ready", "draft_ready"}, "write")
@@ -327,6 +337,77 @@ def cancel_write(
     return ChapterRead.model_validate(chapter)
 
 
+@router.post("/chapters/{chapter_id}/revise")
+def revise_chapter(
+    chapter_id: str,
+    db: Session = Depends(get_db),
+    # Revision reuses the SAME Writer Key (the reviser IS the writer revising
+    # their own draft) — route to the writer's per-Agent client.
+    llm: LLMClient = Depends(get_writer_llm_client),
+) -> StreamingResponse:
+    """v1.4.0 (MM) P2 — standalone revision of an existing draft.
+
+    Runs the two-pass compression phase over the chapter's current
+    ``draft_text`` (same thresholds as the write path: only a draft 严格 > 上沿
+    is compressed; ≤ 上沿 is a zero-cost no-op landing ``in_range``/``short``).
+    Job-ified (``kind="revise"``, buffer seeded with ``[draft_text]``) so it
+    survives client disconnect / screen sleep just like a write, and treats the
+    author's stored draft as the complete buffer for cancel/reattach.
+
+    Pre-condition: ``draft_ready`` only (409 otherwise). Mutual exclusion: a
+    live job for this chapter (writing OR revising) → 409
+    ``chapter_write_in_progress``. Frame sequence: ``started`` → ``revising`` →
+    ``done{chapter, revision}`` (or ``error``).
+    """
+    chapter = _get_chapter(db, chapter_id)
+    ensure_chapter_status(chapter, {"draft_ready"}, "revise")
+    if write_registry.get_live(chapter_id) is not None:
+        raise i18n_conflict("chapter_write_in_progress")
+    book = _get_book(db, chapter.book_id)
+    # Same writer context the draft was written from — the reviser only pulls
+    # the小 subset it needs (range + must/must-not + style) out of it.
+    context = build_writer_context(db, book, chapter)
+    writer_persona = get_persona(db, "writer")
+    previous_status = chapter.status  # draft_ready
+    draft_text = chapter.draft_text or ""
+
+    # Reserve the revise slot FIRST (raises on a live-job race) so a conflict
+    # never strands us with status already flipped to writing.
+    try:
+        job = write_registry.reserve(
+            chapter_id,
+            previous_status=previous_status,
+            context=context,
+            llm=llm,
+            writer_persona=writer_persona,
+            kind="revise",
+            buffer_seed=[draft_text],
+        )
+    except WriteJobConflict:
+        raise i18n_conflict("chapter_write_in_progress")
+
+    # Flip to the persistent "writing" marker (drives mutual exclusion for
+    # import/admin_reset + the reattach fallback) and commit. On failure abort
+    # the reservation so no orphan job lingers.
+    try:
+        chapter.status = "writing"
+        chapter.updated_at = utc_now()
+        db.commit()
+    except Exception:
+        write_registry.abort(chapter_id, job)
+        raise
+
+    write_registry.launch(job, db.get_bind())
+
+    return StreamingResponse(
+        _iterate_sync_stream_cancellable(
+            _stream_job(job, send_started=True, send_snapshot=False),
+            chapter_id,
+        ),
+        media_type="text/event-stream",
+    )
+
+
 class _SyncStreamStopIteration(Exception):
     """Private stand-in for ``StopIteration`` when crossing an ``await``
     boundary (worker thread → event loop). Mirrors
@@ -418,12 +499,19 @@ def _stream_job(job: WriteJob, *, send_started: bool, send_snapshot: bool) -> It
 
     Closing this generator (client disconnect, via the wrapper) is a plain
     unsubscribe: it must NOT set ``cancel_event`` or save anything (plan §4 🟡1).
+
+    v1.4.0 (MM) P2: emits a one-shot ``revising`` frame when the job enters (or
+    is already in, at subscription time — the 🔵10 reattach竞态格) the non-
+    terminal ``revising`` phase, between the draft ``token``/``progress`` frames
+    and the terminal ``done``. The ``done`` frame carries ``revision`` for a
+    genuine ``done`` (two-pass outcome); a ``cancelled`` job's ``done`` omits it.
     """
     if send_started:
         yield _sse("started", {"chapter_id": job.chapter_id})
 
     cursor = 0
     thinking_seen = 0
+    revising_sent = False
     if send_snapshot:
         with job.condition:
             snapshot_text = "".join(job.buffer)
@@ -434,10 +522,14 @@ def _stream_job(job: WriteJob, *, send_started: bool, send_snapshot: bool) -> It
 
     while True:
         with job.condition:
+            # Break the wait when a ``revising`` frame is pending (phase flipped
+            # to revising and we haven't sent it yet) so it emits promptly rather
+            # than after a KEEPALIVE_SECONDS timeout.
             while (
                 cursor >= len(job.buffer)
                 and job.thinking_epoch == thinking_seen
                 and not job.is_terminal
+                and not (job.phase == "revising" and not revising_sent)
             ):
                 if not job.condition.wait(timeout=KEEPALIVE_SECONDS):
                     break  # timed out — emit keepalive below if nothing new
@@ -448,9 +540,15 @@ def _stream_job(job: WriteJob, *, send_started: bool, send_snapshot: bool) -> It
             thinking_seen = job.thinking_epoch
             terminal = job.is_terminal
             phase = job.phase
+            revision = job.revision
             done_chapter = job.terminal_done_chapter
             error_payload = job.terminal_error
-            timed_out = not new_tokens and thinking_text is None and not terminal
+            # A revising job (write: flipped from streaming; revise: from the
+            # start) that hasn't had its ``revising`` frame sent yet.
+            emit_revising = phase == "revising" and not revising_sent
+            timed_out = (
+                not new_tokens and thinking_text is None and not terminal and not emit_revising
+            )
 
         if timed_out:
             yield ": keepalive\n\n"
@@ -461,13 +559,21 @@ def _stream_job(job: WriteJob, *, send_started: bool, send_snapshot: bool) -> It
             yield _sse("token", {"text": token})
         if new_tokens:
             yield _sse("progress", {"chars": chars})
+        if emit_revising:
+            yield _sse("revising", {})
+            revising_sent = True
         if terminal:
             # Buffer is final once terminal is set under the lock, so all tokens
             # are already drained above. Emit the terminal frame and stop.
             if phase == "failed":
                 yield _sse("error", error_payload or {})
             else:  # done or cancelled → the client sees a normal `done`
-                yield _sse("done", {"chapter": done_chapter})
+                data: dict[str, object] = {"chapter": done_chapter}
+                # Only a genuine ``done`` carries a revision outcome; a
+                # ``cancelled`` job's done frame omits the key (→ frontend nil).
+                if phase == "done" and revision is not None:
+                    data["revision"] = revision
+                yield _sse("done", data)
             return
 
 
@@ -807,6 +913,16 @@ def admin_reset_chapter(
     # commit, so its final DB write can't clobber the reset we're about to make
     # authoritative. Then re-read the row so ``from_status`` reflects the
     # worker's settled state.
+    #
+    # v1.4.0 (MM) P2 (Opus 高危专审): ``get_live`` now also returns a job mid-
+    # ``revising``, whose blocking ``complete()`` ``cancel_event`` cannot
+    # interrupt (只有 read timeout 有界兜底, plan 🔵16). So ``cancel_and_wait`` may
+    # time out (~8s) and this reset commits while the registry job占位 until the
+    # blocking revise returns (worst case ~30min); during that window a new
+    # write/revise for this chapter still 409s (bounded — same timeout决议). When
+    # the late worker's revise finally returns it sees status != 'writing'
+    # (superseded) and the revising-cancel path only logs, never clobbers the
+    # reset.
     live = write_registry.get_live(chapter_id)
     if live is not None:
         live.cancel_and_wait(CANCEL_WAIT_SECONDS)

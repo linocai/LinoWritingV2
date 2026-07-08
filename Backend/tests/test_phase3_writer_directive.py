@@ -1,15 +1,26 @@
 from __future__ import annotations
 
-# v1.0.0 EE Phase 3 (archive/v1.0.0_plan.md §7-Phase 3) gates:
-#   A. Writer 接 chapter_directive — the Expander's 200-300 字 directive actually
-#      enters the Writer's user message, surfaced as its OWN top-level line
-#      (方向), distinct from the characters / timelines knowledge line (知识).
-#      P1 红线 "两条线分明": the directive does NOT replace card injection.
-#   B. 降级 — when the directive is missing (old / un-expanded chapter), the
-#      Writer still runs (no raise) and the cards/timelines line is unaffected.
-#   C. Writer 人格/边界 — the §8.2 boundary ("执行 directive / 连贯优先 / 不越权
-#      推进 directive 之外的剧情 / 角色卡是水库") is in the DB persona, and the
-#      directive-handling + two-line rule is in the fixed operational rules.
+# v1.0.0 EE Phase 3 (archive/v1.0.0_plan.md §7-Phase 3) gates, REWRITTEN by
+# v1.4.0 (MM) P1 优化师降职 + 作者本章 Bible (see PROJECT_PLAN §4 P1). The
+# original gates A/B/C covered the now-deleted ``chapter_directive`` steering
+# line; they are rewritten below for the author's own ``user_prompt`` instead
+# (ported over, not dropped — same shape of coverage: 主体渲染 / 降级 / 人格
+# 教学). Gate D (extractor append-only) is untouched — it never depended on
+# the directive at all.
+#
+#   A. Writer 接 user_prompt Bible — the author's own ``chapter.user_prompt``
+#      actually enters the Writer's user message as the PRIMARY content of
+#      「# 本章写作任务」, distinct from the characters / timelines knowledge
+#      line (知识). The Bible does NOT replace card injection — both lines
+#      coexist.
+#   B. 降级 — when ``user_prompt`` is missing/blank (should not normally
+#      happen — Step 1 requires it — but guards against malformed rows), the
+#      Writer still runs (no raise) and the cards/timelines line is
+#      unaffected.
+#   C. Writer 人格/边界 — the persona's boundary ("请严格根据本章剧情来发挥
+#      并写作 / 连贯优先 / 不越权推进 Bible 之外的剧情 / 角色卡是水库") is in
+#      the DB persona, and the Bible-handling rule is in the fixed
+#      operational rules.
 #   D. 档案员 append-only — extracting chapter N never wipes chapter N-1's
 #      already-written timeline; re-extracting chapter N is idempotent for its
 #      OWN events only. §8.3 extractor boundary is in the DB persona.
@@ -51,21 +62,26 @@ class _CapturingStreamLLM:
             yield ""
 
 
-# A realistic 本章创作指令 (steering prose), carrying NO card / timeline content.
-_DIRECTIVE = (
-    "本章把林夕推到第一个真正的抉择口：他必须决定独自追下去还是回城求援。"
-    "张力压在「信任」上，请把犹疑写进停顿与回头，落点收在他做出选择的瞬间。"
+# A realistic 本章剧情叙述 (the author's own words) — legitimately mentions a
+# character's motivation/status because it IS the author's narrative, not a
+# card dump. Distinct from the separate 「# 在场角色」 card-knowledge section.
+_USER_PROMPT = (
+    "林夕在返程途中意识到自己掌握的线索并不完整，他必须决定是独自追下去还是"
+    "回城求援。全章的张力压在「信任」二字上：他既想保护身边的人，又无法判断"
+    "谁值得托付。中段安排一次看似偶然的相遇，把上一卷埋下的那枚铜钱伏笔轻轻"
+    "拨动一下，但不要揭晓它的来历。落点收在他做出选择的瞬间。"
 )
 
 
 # --------------------------------------------------------------------------
-# Gate A — chapter_directive enters the Writer, as its own line, beside cards
+# Gate A — user_prompt (本章节 Bible) enters the Writer, as its own primary
+# line, beside cards
 # --------------------------------------------------------------------------
 
 
-def test_writer_context_surfaces_chapter_directive_as_top_level_line(db_session):
-    """build_writer_context lifts chapter_directive out of structured_prompt to a
-    top-level key — its own 方向 line, distinct from the 知识 (cards/timelines)."""
+def test_writer_context_surfaces_user_prompt_as_top_level_key(db_session):
+    """build_writer_context lifts chapter.user_prompt to a top-level ``user_prompt``
+    key — its own 剧情 line, distinct from the 知识 (cards/timelines)."""
     book = Book(title="长夜", world_setting="雨城", style_directive="克制")
     db_session.add(book)
     db_session.flush()
@@ -81,28 +97,28 @@ def test_writer_context_surfaces_chapter_directive_as_top_level_line(db_session)
     current = Chapter(
         book_id=book.id,
         index=1,
-        user_prompt="找线索",
+        user_prompt=_USER_PROMPT,
         status="prompt_ready",
         structured_prompt={
             "chapter_goal": "推进",
             "characters_involved": [character.id],
-            "chapter_directive": _DIRECTIVE,
         },
     )
     db_session.add(current)
     db_session.commit()
 
     ctx = build_writer_context(db_session, book, current)
-    # 方向 line present as its own top-level key.
-    assert ctx["chapter_directive"] == _DIRECTIVE
-    # 知识 line still present and independent — the card was NOT replaced by the
-    # directive; both lines coexist (P1 两条线分明).
+    # 剧情 line present as its own top-level key, verbatim.
+    assert ctx["user_prompt"] == _USER_PROMPT
+    # 知识 line still present and independent — the Bible does NOT replace the
+    # card; both lines coexist (P1 两条线，author's plot vs card knowledge).
     assert [c["id"] for c in ctx["characters"]] == [character.id]
     assert ctx["characters"][0]["frozen_fields"] == {"core_traits": "谨慎"}
 
 
-def test_writer_user_message_carries_chapter_directive(db_session):
-    """The directive actually reaches the LLM's user message via the Writer."""
+def test_writer_user_message_carries_user_prompt_as_bible(db_session):
+    """The author's own narrative actually reaches the LLM's user message via
+    the Writer, labelled as 本章节 Bible / highest authority."""
     book = Book(title="长夜")
     db_session.add(book)
     db_session.flush()
@@ -114,12 +130,11 @@ def test_writer_user_message_carries_chapter_directive(db_session):
     current = Chapter(
         book_id=book.id,
         index=1,
-        user_prompt="x",
+        user_prompt=_USER_PROMPT,
         status="prompt_ready",
         structured_prompt={
             "chapter_goal": "推进",
             "characters_involved": [character.id],
-            "chapter_directive": _DIRECTIVE,
         },
     )
     db_session.add(current)
@@ -129,19 +144,27 @@ def test_writer_user_message_carries_chapter_directive(db_session):
     llm = _CapturingStreamLLM()
     list(WriterAgent(llm).stream(ctx))
     assert llm.last_user is not None
-    # The directive text rides in the user message, under its own labelled
-    # line in the「# 本章写作任务」section (v1.3.4 快修: no more JSON blob —
-    # top-level 方向 line, not buried as a nested structured_prompt sub-field).
-    assert f"本章创作指令：{_DIRECTIVE}" in llm.last_user
-    # 知识 line still independently present — directive did NOT replace cards —
-    # on its own「# 在场角色」section, naming the character by id-bearing name.
-    assert "# 在场角色" in llm.last_user
-    assert character.name in llm.last_user
+    msg = llm.last_user
+    # The Bible text rides in the user message, under its own labelled intro
+    # inside the「# 本章写作任务」section — as the PRIMARY / first content.
+    assert "本章节 Bible" in msg
+    assert "情节的最高权威" in msg
+    assert _USER_PROMPT in msg
+    task_section = msg.split("# 本章写作任务", 1)[1]
+    assert task_section.lstrip().startswith("作者本章剧情叙述")
+    # No trace of the deleted directive concept.
+    assert "本章创作指令" not in msg
+    assert "chapter_directive" not in msg
+    # 知识 line still independently present — the Bible did NOT replace cards —
+    # on its own「# 在场角色」section, naming the character.
+    assert "# 在场角色" in msg
+    assert character.name in msg
 
 
-def test_directive_is_separate_line_from_card_knowledge(db_session):
-    """P1 红线 assertion: the directive is steering only; the character's card
-    knowledge reaches the Writer on its OWN line, NOT through the directive."""
+def test_user_prompt_bible_is_separate_line_from_card_knowledge(db_session):
+    """P1 红线 assertion: the Bible is the author's own plot narrative; the
+    character's card knowledge reaches the Writer on its OWN line — the two
+    coexist, neither replaces the other."""
     book = Book(title="长夜")
     db_session.add(book)
     db_session.flush()
@@ -158,24 +181,21 @@ def test_directive_is_separate_line_from_card_knowledge(db_session):
     current = Chapter(
         book_id=book.id,
         index=1,
-        user_prompt="x",
+        user_prompt=_USER_PROMPT,
         status="prompt_ready",
         structured_prompt={
             "chapter_goal": "推进",
             "characters_involved": [character.id],
-            "chapter_directive": _DIRECTIVE,  # carries NO card content
         },
     )
     db_session.add(current)
     db_session.commit()
 
     ctx = build_writer_context(db_session, book, current)
-    # The directive line carries none of the card knowledge — that all lives on
-    # the characters line. The two are distinct keys in the context.
-    assert "current_status" not in ctx["chapter_directive"]
-    assert "为妹妹复仇" not in ctx["chapter_directive"]
-    assert "退役追踪员" not in ctx["chapter_directive"]
-    # Knowledge IS delivered, just on the separate characters line.
+    # The Bible line is the author's own words — verbatim, untouched — while
+    # the card's knowledge (frozen/live/author_notes) lives entirely on the
+    # separate characters line, never folded into user_prompt.
+    assert ctx["user_prompt"] == _USER_PROMPT
     card = ctx["characters"][0]
     assert card["live_fields"]["current_status"] == "调查失踪案"
     assert card["frozen_fields"]["background"] == "退役追踪员"
@@ -183,13 +203,16 @@ def test_directive_is_separate_line_from_card_knowledge(db_session):
 
 
 # --------------------------------------------------------------------------
-# Gate B — graceful degradation when the directive is absent
+# Gate B — graceful degradation when user_prompt is missing/blank
+# (ported from the old chapter_directive-absent gate — ``user_prompt``
+# should always be non-empty in practice per Step 1, but the Writer must not
+# raise on a malformed/old row either)
 # --------------------------------------------------------------------------
 
 
-def test_writer_context_directive_none_for_old_chapter(db_session):
-    """Old / un-expanded chapter: no chapter_directive in structured_prompt →
-    None, never a raise; the cards line is unaffected."""
+def test_writer_context_user_prompt_blank_for_missing_row_field(db_session):
+    """A chapter with no ``user_prompt`` at all (``None`` on the ORM column)
+    degrades to an empty string, never a raise; the cards line is unaffected."""
     book = Book(title="长夜")
     db_session.add(book)
     db_session.flush()
@@ -201,48 +224,45 @@ def test_writer_context_directive_none_for_old_chapter(db_session):
     current = Chapter(
         book_id=book.id,
         index=1,
-        user_prompt="x",
+        user_prompt=None,
         status="prompt_ready",
-        # No chapter_directive key at all (pre-P3 / un-expanded chapter).
         structured_prompt={"chapter_goal": "推进", "characters_involved": [character.id]},
     )
     db_session.add(current)
     db_session.commit()
 
     ctx = build_writer_context(db_session, book, current)
-    assert ctx["chapter_directive"] is None
+    assert ctx["user_prompt"] == ""
     # Cards line still intact — degradation didn't drop knowledge.
     assert [c["id"] for c in ctx["characters"]] == [character.id]
 
 
-def test_writer_context_directive_none_when_blank(db_session):
-    """A whitespace-only directive collapses to None (treated as absent)."""
+def test_writer_task_block_omits_bible_line_when_user_prompt_blank():
+    """A whitespace-only (or empty) user_prompt renders no Bible line at all —
+    the task block falls back to whatever structured_prompt fields exist."""
+    context = {
+        "user_prompt": "   \n  ",
+        "structured_prompt": {"chapter_goal": "推进"},
+        "characters": [],
+        "timelines": {},
+        "recent_summaries": [],
+    }
+    llm = _CapturingStreamLLM()
+    list(WriterAgent(llm).stream(context))
+    assert llm.last_user is not None
+    assert "本章节 Bible" not in llm.last_user
+    assert "本章目标：推进" in llm.last_user
+
+
+def test_writer_still_streams_without_user_prompt(db_session):
+    """Writer must run end-to-end when user_prompt is missing (降级)."""
     book = Book(title="长夜")
     db_session.add(book)
     db_session.flush()
     current = Chapter(
         book_id=book.id,
         index=1,
-        user_prompt="x",
-        status="prompt_ready",
-        structured_prompt={"chapter_goal": "推进", "characters_involved": [], "chapter_directive": "   \n  "},
-    )
-    db_session.add(current)
-    db_session.commit()
-
-    ctx = build_writer_context(db_session, book, current)
-    assert ctx["chapter_directive"] is None
-
-
-def test_writer_still_streams_without_directive(db_session):
-    """Writer must run end-to-end when the directive is missing (降级)."""
-    book = Book(title="长夜")
-    db_session.add(book)
-    db_session.flush()
-    current = Chapter(
-        book_id=book.id,
-        index=1,
-        user_prompt="x",
+        user_prompt=None,
         status="prompt_ready",
         structured_prompt={"chapter_goal": "推进", "characters_involved": []},
     )
@@ -257,47 +277,51 @@ def test_writer_still_streams_without_directive(db_session):
 
 
 # --------------------------------------------------------------------------
-# Gate C — Writer persona (§8.2) + operational rules teach directive handling
+# Gate C — Writer persona + operational rules teach the Bible-authority rule
 # --------------------------------------------------------------------------
 
 
 def test_writer_persona_carries_boundary_segment():
-    """§8.2 boundary must live in the DB-editable persona (not the rules)."""
+    """The boundary must live in the DB-editable persona (not the rules)."""
     persona = DEFAULT_PERSONAS["writer"]
-    assert "执行 chapter_directive" in persona
-    assert "不越权推进 directive 之外的剧情" in persona
+    assert "Bible" in persona
+    assert "不越权推进 Bible 之外的剧情" in persona
     assert "连贯优先" in persona
     assert "水库" in persona  # 角色卡是水库不是清单
+    # The deleted directive concept must not survive in the persona.
+    assert "chapter_directive" not in persona
 
 
-def test_writer_operational_rules_teach_two_line_separation():
-    """The directive-handling + 两条线分明 rule rides in the fixed operational
-    rules, and the graceful-degrade instruction is present.
-
-    v1.3.4 快修: the rules no longer reference the raw JSON key
-    ``chapter_directive`` (the model never sees that literal string any more
-    — the user message renders it as「本章创作指令」in the「# 本章写作任务」
-    section) — locks the Chinese label instead."""
+def test_writer_operational_rules_teach_bible_authority():
+    """The Bible-authority rule + the exact required semantic sentence ride in
+    the fixed operational rules, and the graceful-degrade instruction is
+    present. The deleted directive/两条线 wording must be gone."""
     rules = WriterAgent.OPERATIONAL_RULES
-    assert "本章创作指令" in rules
-    assert "方向盘" in rules
-    assert "两条线" in rules  # 方向 vs 知识
-    assert "不越权推进" in rules and "之外的剧情" in rules
-    # Degrade instruction: behave when the directive is absent.
-    assert "没有" in rules or "缺少" in rules
+    assert "本章节 Bible" in rules
+    assert "情节的最高权威" in rules
+    # P1 决议 #2 exact required semantic sentence.
+    assert "请严格根据本章剧情来发挥并写作" in rules
+    # Degrade instruction: behave when structured hints are absent.
+    assert "结构要点为空时" in rules
+    # Deleted concepts must not survive as dead text.
+    assert "chapter_directive" not in rules
+    assert "本章创作指令" not in rules
+    assert "方向盘" not in rules
 
 
 def test_writer_default_system_prompt_composes_persona_then_rules():
-    """The composed default system prompt carries both the §8.2 persona and the
-    directive operational rule (regression surface for keyword tests)."""
+    """The composed default system prompt carries both the persona and the
+    Bible-authority operational rule (regression surface for keyword tests)."""
     sp = WriterAgent.system_prompt
     assert sp.startswith(DEFAULT_PERSONAS["writer"])
-    assert "chapter_directive" in sp
+    assert "本章节 Bible" in sp
     assert "只输出正文纯文本" in sp  # existing mechanics survive
+    assert "chapter_directive" not in sp
 
 
 # --------------------------------------------------------------------------
-# Gate D — extractor append-only across chapters + §8.3 persona
+# Gate D — extractor append-only across chapters + §8.3 persona (untouched by
+# P1 — never depended on chapter_directive)
 # --------------------------------------------------------------------------
 
 

@@ -36,6 +36,10 @@ public protocol APIClientProtocol: Sendable {
     // just-finished) write; explicitly cancel one.
     func reattachWriteStream(chapterId: String) -> AsyncThrowingStream<SSEEvent, Error>
     func cancelWrite(chapterId: String) async throws -> Chapter
+    // v1.4.0 (MM) P4 — standalone revision of an existing draft_ready draft:
+    // `POST /chapters/{id}/revise` (SSE, same shape as `writeStream`).
+    // Disconnect/reattach reuses `reattachWriteStream` (job-agnostic).
+    func reviseStream(chapterId: String) -> AsyncThrowingStream<SSEEvent, Error>
     func finalize(chapterId: String) async throws -> FinalizeResult
     func reopen(chapterId: String) async throws -> Chapter
     func importChapter(id: String, payload: ChapterImportRequest) async throws -> ChapterImportResponse
@@ -384,6 +388,28 @@ public final class APIClient: APIClientProtocol, @unchecked Sendable {
             request = try makeRequest(
                 method: "GET",
                 path: "/api/v1/chapters/\(chapterId)/write/stream",
+                accept: "text/event-stream"
+            )
+        } catch {
+            return AsyncThrowingStream { continuation in
+                continuation.finish(throwing: error)
+            }
+        }
+        return sseClient.stream(request: request)
+    }
+
+    /// v1.4.0 (MM) P4 — `POST /chapters/{id}/revise`. Standalone two-pass
+    /// compression of an existing `draft_ready` draft, job-ified exactly
+    /// like `writeStream` (SSE `started` → `revising` → `done{chapter,
+    /// revision}`); a disconnect only tears down this subscription, and
+    /// reconnection reuses `reattachWriteStream` (job-agnostic by design).
+    public func reviseStream(chapterId: String) -> AsyncThrowingStream<SSEEvent, Error> {
+        let request: URLRequest
+        do {
+            request = try makeRequest(
+                method: "POST",
+                path: "/api/v1/chapters/\(chapterId)/revise",
+                body: "{}".data(using: .utf8),
                 accept: "text/event-stream"
             )
         } catch {

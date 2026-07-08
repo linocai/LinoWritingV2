@@ -412,7 +412,7 @@ public final class MockAPIClient: APIClientProtocol, @unchecked Sendable {
                     .started(chapterId: chapterId),
                     .token(text: "Mock "),
                     .token(text: "body."),
-                    .done(chapter: c)
+                    .done(chapter: c, revision: nil)
                 ]
             } else {
                 events = [.error(.notFound("chapter"))]
@@ -453,10 +453,44 @@ public final class MockAPIClient: APIClientProtocol, @unchecked Sendable {
             events = [
                 .started(chapterId: chapterId),
                 .snapshot(buffer: c.draftText ?? "", chars: (c.draftText ?? "").count),
-                .done(chapter: c),
+                .done(chapter: c, revision: nil),
             ]
         } else {
             events = [.reattachNoActive]
+        }
+        return AsyncThrowingStream { continuation in
+            Task {
+                for event in events {
+                    continuation.yield(event)
+                    if case .done = event { break }
+                    // 审后修复 #4 — graceful finish on terminal `.error` (see writeStream).
+                    if case .error = event { continuation.finish(); return }
+                }
+                continuation.finish()
+            }
+        }
+    }
+
+    /// v1.4.0 (MM) P4 — pluggable standalone-revise (`POST /revise`) events.
+    /// Script `.started`/`.revising`/`.done(chapter:revision:)`/`.error`
+    /// sequences exactly like `onWrite`. Defaults to an in-range no-op revise
+    /// (draft already within bounds) when unset.
+    public var onRevise: ((String) -> [SSEEvent])?
+
+    public func reviseStream(chapterId: String) -> AsyncThrowingStream<SSEEvent, Error> {
+        recordCall("reviseStream")
+        let events: [SSEEvent]
+        if let onRevise {
+            events = onRevise(chapterId)
+        } else if let idx = chapters.firstIndex(where: { $0.id == chapterId }) {
+            let c = chapters[idx]
+            events = [
+                .started(chapterId: chapterId),
+                .revising,
+                .done(chapter: c, revision: "in_range"),
+            ]
+        } else {
+            events = [.error(.notFound("chapter"))]
         }
         return AsyncThrowingStream { continuation in
             Task {

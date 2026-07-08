@@ -19,7 +19,45 @@ final class SSEClientTests: XCTestCase {
         if case .token(let t) = events[1] { XCTAssertEqual(t, "hello ") } else { XCTFail() }
         if case .token(let t) = events[2] { XCTAssertEqual(t, "world") } else { XCTFail() }
         if case .progress(let chars) = events[3] { XCTAssertEqual(chars, 11) } else { XCTFail() }
-        if case .done(let chapter) = events[4] { XCTAssertEqual(chapter.status, .draftReady) } else { XCTFail() }
+        if case .done(let chapter, let revision) = events[4] {
+            XCTAssertEqual(chapter.status, .draftReady)
+            XCTAssertNil(revision, "a done frame with no revision key must decode as nil")
+        } else { XCTFail() }
+    }
+
+    /// v1.4.0 (MM) P4 — `revising` is a one-shot, empty-payload frame; `done`
+    /// now carries an optional `revision` outcome string.
+    func test_parser_yieldsRevisingAndDoneWithRevision() throws {
+        let chapterJSON = """
+        {"id":"c1","book_id":"b1","index":1,"title":null,"user_prompt":null,"structured_prompt":null,"draft_text":"压缩后全文","summary":null,"status":"draft_ready","created_at":"2026-05-22T10:00:00Z","updated_at":"2026-05-22T10:00:00Z"}
+        """
+        let stream = """
+        event: started\ndata: {"chapter_id":"c1"}\n\nevent: revising\ndata: {}\n\nevent: done\ndata: {"chapter": \(chapterJSON), "revision": "revised"}\n\n
+        """
+        let parser = SSEParser()
+        let events = parser.consume(buffer: stream)
+        XCTAssertEqual(events.count, 3)
+        if case .started = events[0] {} else { XCTFail("expected .started") }
+        if case .revising = events[1] {} else { XCTFail("expected .revising") }
+        if case .done(let chapter, let revision) = events[2] {
+            XCTAssertEqual(chapter.draftText, "压缩后全文")
+            XCTAssertEqual(revision, "revised")
+        } else { XCTFail("expected .done with revision") }
+    }
+
+    /// A cancelled job's `done` frame omits the `revision` key entirely
+    /// (never `null`) — must decode as `nil`, same as the pre-P4 shape.
+    func test_parser_doneWithoutRevisionKey_decodesRevisionAsNil() throws {
+        let chapterJSON = """
+        {"id":"c1","book_id":"b1","index":1,"title":null,"user_prompt":null,"structured_prompt":null,"draft_text":"取消时的稿","summary":null,"status":"draft_ready","created_at":"2026-05-22T10:00:00Z","updated_at":"2026-05-22T10:00:00Z"}
+        """
+        let buffer = "event: done\ndata: {\"chapter\": \(chapterJSON)}\n\n"
+        let parser = SSEParser()
+        let events = parser.consume(buffer: buffer)
+        XCTAssertEqual(events.count, 1)
+        if case .done(_, let revision) = events[0] {
+            XCTAssertNil(revision)
+        } else { XCTFail("expected .done") }
     }
 
     func test_parser_handlesCRLFAndChunkedDelivery() {

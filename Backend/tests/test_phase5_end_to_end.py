@@ -25,10 +25,12 @@ from __future__ import annotations
 # rolling, multi-chapter run — that the architecture red lines hold:
 #
 #   闭环 (closed loop):
-#     author imports initial cards → create chapter → expand (优化师
-#     just-in-time reads 已完成章梗概 recent_summaries + relevant memory, emits
-#     chapter_directive) → write (Writer uses directive + cards/timelines) →
-#     finalize (档案员 writes back structured memory) → next chapter, whose
+#     author imports initial cards → create chapter (with the author's own
+#     ``user_prompt`` 本章剧情叙述) → expand (优化师 just-in-time reads
+#     已完成章梗概 recent_summaries + relevant memory, emits structured fields
+#     + continuity_alerts — v1.4.0 MM P1: NO MORE chapter_directive) → write
+#     (Writer reads the author's user_prompt as 本章节 Bible + cards/timelines)
+#     → finalize (档案员 writes back structured memory) → next chapter, whose
 #     expander/writer context can read the PREVIOUS chapter's written-back
 #     memory (proves memory rolls + the story advances without a position
 #     pointer).
@@ -56,8 +58,19 @@ from __future__ import annotations
 #     INV-2  (P4) the Expander context carries NO ``outline`` key and NO
 #            pre-sliced per-chapter 章纲 key — it locates itself purely by
 #            memory (recent_summaries, no position pointer).
-#     INV-3  (P1) the directive leaks no card content; the Writer reads 方向
-#            (directive) and 知识 (cards/timeline) on two distinct lines.
+#     INV-3  (P1, REWRITTEN by v1.4.0 MM P1 — 优化师降职 + 作者本章 Bible) the
+#            author's own ``user_prompt`` reaches the Writer VERBATIM as the
+#            PRIMARY content of「# 本章写作任务」(ahead of the structured
+#            blueprint fields), and there is NO trace of the deleted
+#            ``chapter_directive``/「本章创作指令」line anywhere. The 知识
+#            (cards/timeline) line still coexists on its own separate
+#            「# 在场角色」section — the Bible does not replace card
+#            injection. (Old INV-3 asserted the DIRECTIVE leaked no card
+#            content — that whole concept no longer exists; a card-content
+#            leak-marker check is deliberately NOT ported onto the
+#            user_prompt line, because the author's own narrative may
+#            legitimately mention a character's motivation/state — that's
+#            not a leak, that's the author's plot.)
 #     INV-4  (P3) under multiple chapters the Context Pack selects only the
 #            relevant (involved) cards, never dump-all.
 #     INV-5  (P2) the 档案员 write-back is append-only — chapter N's extraction
@@ -77,23 +90,6 @@ from app.llm.base import (
 from app.main import app
 from tests.conftest import MockLLMClient
 
-# Directive prose (STEERING) — carries no card field name / author_notes.
-_DIRECTIVE = (
-    "本章把林夕推到一个抉择口：独自追下去还是回城求援。张力压在「信任」上，"
-    "请把犹疑写进停顿与回头，落点收在他做出选择的瞬间，结尾留一个向下一章敞开的钩子。"
-)
-
-# Markers that would betray a card-content leak into the directive (P1).
-_CARD_LEAK_MARKERS = (
-    "frozen_fields",
-    "live_fields",
-    "author_notes",
-    "core_traits",
-    "current_status",
-    "为妹妹复仇",  # author_notes.motivation fragment we seed below
-)
-
-
 # --------------------------------------------------------------------------
 # Recording mock LLMs — produce valid output AND capture the context each agent
 # saw, keyed by the chapter index, so we can assert invariants per chapter.
@@ -108,10 +104,9 @@ class _RecordingExpanderLLM(MockLLMClient):
         context = json.loads(user)
         self.contexts.append(context)
         # Pick involved characters from the all_characters pool (MockLLMClient
-        # default selects the first), then bolt on a clean directive.
-        base = super().complete_json(system=system, user=user, schema=schema, **kwargs)
-        base["chapter_directive"] = _DIRECTIVE
-        return base
+        # default selects the first). v1.4.0 (MM) P1: no more chapter_directive
+        # to bolt on — the base MockLLMClient output already omits it entirely.
+        return super().complete_json(system=system, user=user, schema=schema, **kwargs)
 
 
 # Bounded style-reference window (the v0.6 §5.A "学习前文文风" channel). The
@@ -236,7 +231,9 @@ def _run_chapter(client, auth_headers, book_id: str, index_hint: int) -> dict:
     r = client.post(f"/api/v1/chapters/{chapter_id}/expand", headers=auth_headers)
     assert r.status_code == 200, r.text
     sp = r.json()["structured_prompt"]
-    assert sp.get("chapter_directive") == _DIRECTIVE
+    # v1.4.0 (MM) P1: chapter_directive is gone entirely — the Expander no
+    # longer produces it, and it must not survive as a stray key.
+    assert "chapter_directive" not in sp
     # Stamp the chapter index into structured_prompt so the writer mock can label
     # its prose uniquely. Goes through the PATCH allowlist (structured_prompt).
     sp["_chapter_index"] = index_hint
@@ -430,26 +427,36 @@ def test_end_to_end_three_chapter_closed_loop_holds_all_invariants(client, auth_
     assert "recent_fulltext" not in last_writer_user
     assert "style_samples" not in last_writer_user
 
-    # ----- INV-3 (P1): directive leaks no card content; Writer reads two lines. --
-    # v1.3.4 快修: the Writer's user message is a rendered document — extract
-    # just the「本章创作指令」line and check card-leak markers against THAT
-    # line specifically (they're expected to appear elsewhere, in the card's
-    # own「# 在场角色」section — that's the whole point of "two lines").
-    for wri_user in writer_llm.users:
-        assert f"本章创作指令：{_DIRECTIVE}" in wri_user
-        directive_line = next(line for line in wri_user.splitlines() if line.startswith("本章创作指令："))
-        directive_text = directive_line.removeprefix("本章创作指令：")
-        assert directive_text == _DIRECTIVE
-        for marker in _CARD_LEAK_MARKERS:
-            assert marker not in directive_text, f"directive leaked card marker {marker!r}"
+    # ----- INV-3 (P1, REWRITTEN by v1.4.0 MM P1 — 优化师降职 + 作者本章 Bible):
+    # the author's own user_prompt ("第N章意图", set at chapter-creation time in
+    # ``_run_chapter`` — deliberately a SHORT, FIXED string, never confused
+    # with ``_chapter_body``'s giant filler+MIDMARKER, which is the Writer's
+    # simulated OUTPUT, not its input) reaches the Writer VERBATIM as the
+    # PRIMARY / first content of「# 本章写作任务」— and the deleted
+    # chapter_directive/「本章创作指令」line is gone entirely. The 知识
+    # (cards/timeline) line still coexists on its own separate「# 在场角色」
+    # section — the Bible does not replace card injection.
+    for n, wri_user in enumerate(writer_llm.users, start=1):
+        expected_user_prompt = f"第{n}章意图"
+        assert expected_user_prompt in wri_user
+        task_body = wri_user.split("# 本章写作任务", 1)[1].split("# 交稿要求", 1)[0]
+        # The Bible line is the task section's PRIMARY (first) content.
+        assert task_body.lstrip().startswith("作者本章剧情叙述")
+        assert "本章节 Bible" in task_body
+        bible_pos = task_body.index(expected_user_prompt)
+        goal_pos = task_body.index("本章目标：")
+        assert bible_pos < goal_pos, "user_prompt (Bible) must precede the structured blueprint fields"
+        # The deleted directive concept must not survive anywhere in the message.
+        assert "本章创作指令" not in wri_user
+        assert "chapter_directive" not in wri_user
         # 知识 line: the card reaches the Writer on its own, separate「# 在场角色」section.
         assert "# 在场角色" in wri_user
         assert character["name"] in wri_user
         assert "core_traits：谨慎" in wri_user
-        # author_notes reaches the Writer overall (in the「作者笔记」block)...
+        # author_notes reaches the Writer overall (in the「作者笔记」block) —
+        # via the card-knowledge line, never via the (short, fixed, unrelated)
+        # user_prompt Bible text for this fixture.
         assert "为妹妹复仇" in wri_user
-        # ...but never inside the directive line itself.
-        assert "为妹妹复仇" not in directive_text
 
     # ----- INV-4 (P3): Context Pack selects only the involved card, not dump-all.
     # (Only 林夕 is involved; add a decoy character to prove non-involved cards are

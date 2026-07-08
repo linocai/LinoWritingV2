@@ -98,8 +98,10 @@ def _distill_headline(summary: str | None) -> str | None:
 def build_expander_context(db: Session, book: Book, chapter: Chapter) -> dict[str, Any]:
     # v1.3.0 (II/JJ) P4 — 去大纲化: the Expander's job is now "read already-
     # finished chapter summaries + the author's this-chapter narrative,
-    # structure it + check continuity + distill a directive" (no more whole-
-    # book outline input). Assembled just-in-time from:
+    # structure it + check continuity + frame scope" (no more whole-book
+    # outline input; v1.4.0 MM P1 dropped the "distill a directive" 4th
+    # responsibility entirely — see ``PromptExpanderAgent.OPERATIONAL_RULES``).
+    # Assembled just-in-time from:
     #   ① persona — injected as the system prompt (not here), DB-stored.
     #   ② relevant memory slice — involved cards + their recent timeline (via
     #      the existing ``characters_involved`` selection, NOT dump-all — P3) +
@@ -148,6 +150,14 @@ def build_expander_context(db: Session, book: Book, chapter: Chapter) -> dict[st
             "title": chapter.title,
             "user_prompt": chapter.user_prompt,
         },
+        # v1.4.0 (MM) P1 决议 #1 — the author's own extra_notes value BEFORE
+        # this expand() call overwrites ``chapter.structured_prompt`` wholesale
+        # (see routers/chapters.py ``expand_chapter``: context is built first,
+        # then ``chapter.structured_prompt = structured_prompt`` replaces it).
+        # ``PromptExpanderAgent.expand`` falls back to this when its own LLM
+        # call's output leaves extra_notes empty, so re-expand never silently
+        # wipes an author-written note.
+        "existing_extra_notes": (chapter.structured_prompt or {}).get("extra_notes"),
         # relevant memory slice: involved cards + their recent timeline.
         "involved_characters": [
             _character_full(character, include_author_notes=True) for character in involved
@@ -164,23 +174,25 @@ def build_expander_context(db: Session, book: Book, chapter: Chapter) -> dict[st
 
 
 def build_writer_context(db: Session, book: Book, chapter: Chapter) -> dict[str, Any]:
-    # v1.0.0 EE Phase 3 (§4.2) — the Writer reads along TWO distinct lines (P1
-    # 红线, "两条线分明"):
-    #   · 方向 (direction): ``chapter_directive`` — the Expander's 200-300 字
-    #     steering, surfaced as a TOP-LEVEL key (lifted out of structured_prompt)
-    #     so it reads as its own input, not buried inside the blueprint JSON.
+    # v1.4.0 (MM) P1 — 优化师降职后, the Writer reads along TWO distinct lines,
+    # but the 方向 (direction) line is now the AUTHOR'S OWN WORDS instead of an
+    # Expander-authored directive:
+    #   · 剧情 (plot, highest authority): ``user_prompt`` — ``chapter.user_prompt``
+    #     verbatim, surfaced as a TOP-LEVEL key (mirrors how ``chapter_directive``
+    #     used to be lifted out, but this is the author's own narrative, never
+    #     agent-authored). This is 本章节 Bible — see ``agents.writer`` for how
+    #     it's rendered as the「本章写作任务」section's primary content.
     #   · 知识 (knowledge): ``characters`` / ``timelines`` / ``recent_summaries``
     #     / ``recent_headlines`` / ``previous_chapter_summary`` — the relevant
     #     cards + memory, delivered by Context Pack on the same separate line
-    #     they always were. The directive NEVER carries this knowledge (the
-    #     Expander is forbidden from copying cards into it); it only points
-    #     the Writer where to go. (v1.3.4 快修: no raw prior-chapter prose is
-    #     ever in this line any more — see the ``_recent_finalized`` call
-    #     below.)
-    # The directive degrades gracefully: old / un-expanded chapters have no
-    # ``chapter_directive`` in their structured_prompt → ``None`` here, and the
-    # Writer simply falls back to the structured_prompt blueprint (the pre-P3
-    # behaviour). Never raises.
+    #     they always were. (v1.3.4 快修: no raw prior-chapter prose is ever in
+    #     this line any more — see the ``_recent_finalized`` call below.)
+    # ``chapter_directive`` is GONE entirely (schema field deleted, P1)  — no
+    # more Expander-authored steering standing in front of the author's own
+    # words. Graceful degrade: an empty/blank ``user_prompt`` (should not
+    # normally happen — Step 1 requires it — but old/malformed rows are
+    # possible) simply omits the「本章写作任务」Bible line; the Writer still
+    # runs off the structured_prompt blueprint fields. Never raises.
     structured_prompt = chapter.structured_prompt or {}
     involved_ids = structured_prompt.get("characters_involved") or []
     characters = _book_characters(db, book.id)
@@ -219,23 +231,17 @@ def build_writer_context(db: Session, book: Book, chapter: Chapter) -> dict[str,
     else:
         previous_chapter_summary = None
         recent_summaries = []
-    # 方向 line: lift chapter_directive out so it's its own top-level input.
-    # ``None`` (or empty/whitespace) means "no directive" — graceful degrade.
-    raw_directive = structured_prompt.get("chapter_directive")
-    chapter_directive = (
-        raw_directive.strip()
-        if isinstance(raw_directive, str) and raw_directive.strip()
-        else None
-    )
     return {
         "world_setting": book.world_setting or "",
         "style_directive": book.style_directive or "",
-        # 方向 (steering) — the Expander's directive, its own line.
-        "chapter_directive": chapter_directive,
+        # 剧情 (plot, highest authority) — v1.4.0 (MM) P1 决议 #2: the
+        # author's own chapter narrative, verbatim, its own top-level line.
+        # This is 本章节 Bible — see ``agents.writer._render_task_block``.
+        "user_prompt": chapter.user_prompt or "",
         # v1.3.3 快修 — 字数服从性: lifted out of structured_prompt as its own
-        # top-level key (same pattern as chapter_directive) so the Writer's
-        # trailing「# 交稿要求」block and the model's attention both read it
-        # without digging through the blueprint JSON.
+        # top-level key so the Writer's trailing「# 交稿要求」block and the
+        # model's attention both read it without digging through the
+        # blueprint JSON.
         "target_word_count": structured_prompt.get("target_word_count"),
         "structured_prompt": structured_prompt,
         # 知识 (knowledge) — Writer reads author_notes for backstage

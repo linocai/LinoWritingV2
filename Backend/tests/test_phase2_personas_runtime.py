@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 # v1.0.0 EE Phase 2 (archive/v1.0.0_plan.md §7-Phase 2) gates, updated by
-# v1.3.0 (II/JJ) P4/P8 去大纲化 (see PROJECT_PLAN §4.0 / §4 P4 / §4 P8):
+# v1.3.0 (II/JJ) P4/P8 去大纲化 (see PROJECT_PLAN §4.0 / §4 P4 / §4 P8) and by
+# v1.4.0 (MM) P1 优化师降职 (see PROJECT_PLAN §4 P1):
 #   1. persona runtime生效 — PATCHing a persona changes the Agent's runtime
 #      ``system`` prompt (asserted against the captured LLM system, not the old
 #      hardcoded literal).
-#   2. directive 合规 — the Expander emits a 200-300 字 ``chapter_directive`` and
-#      it does NOT leak character-card / author_notes content (P1 红线).
+#   2. continuity_alerts 合规 — the Expander emits ``continuity_alerts``
+#      (list[str], a note FOR THE AUTHOR) and never invents plot to "fix" a
+#      gap; the deleted ``chapter_directive`` slot (and its card-leak-guard
+#      gate) is gone entirely — P1 决议 #1.
 #   3. 优化师 context — ``build_expander_context`` carries NO ``outline`` key
 #      (whole-book outline input deleted with the outline module), carries
 #      ``recent_summaries`` (已完成章梗概, the new continuity-grounding input),
@@ -16,11 +19,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from app.agents.prompt_expander import (
-    CHAPTER_DIRECTIVE_MAX_CHARS,
-    CHAPTER_DIRECTIVE_MIN_CHARS,
-    PromptExpanderAgent,
-)
+from app.agents.prompt_expander import PromptExpanderAgent
 from app.agents.writer import WriterAgent
 from app.llm.base import StreamChunk
 from app.models.book import Book
@@ -122,82 +121,218 @@ def test_writer_agent_composes_persona_in_front_of_operational_rules():
 
 
 # --------------------------------------------------------------------------
-# Gate 2 — directive 合规 (200-300 字 + 不泄漏人物卡)
+# Gate 2 — continuity_alerts 合规 (给作者的连续性提醒，绝不发明剧情去"修复")
+#
+# v1.4.0 (MM) P1 — 优化师降职: this gate used to cover the deleted
+# ``chapter_directive`` slot (200-300 字 + card-leak guard). That whole
+# steering-directive concept is gone — the author's own ``user_prompt`` is
+# now the Writer's direct highest-authority input (see test_phase3). What
+# remains of the Expander's "steering-adjacent" output is
+# ``continuity_alerts`` — notes FOR THE AUTHOR, never read by the Writer.
 # --------------------------------------------------------------------------
 
-# A leak-bait directive: realistic 本章创作指令 prose that stays STEERING —
-# direction / tension / open伏笔 — and deliberately avoids any card field name
-# or author_notes fragment. ~250 chars (between MIN and MAX).
-_CLEAN_DIRECTIVE = (
-    "本章要把林夕推到第一个真正的抉择口。开篇延续上一章山洞的余震，让他在"
-    "返程途中意识到自己掌握的线索并不完整，必须决定是独自追下去还是回城求援。"
-    "全章的张力压在「信任」二字上：他既想保护身边的人，又无法判断谁值得托付。"
-    "请把这种犹疑写进他的每一个停顿与回头，而不是直接说明。中段安排一次看似偶然的"
-    "相遇，把上一卷埋下的那枚铜钱伏笔轻轻拨动一下，但不要揭晓它的来历，留到后续。"
-    "落点收在他做出选择的瞬间，让读者明白代价已经种下，却还看不清全貌。整体节奏"
-    "前缓后紧，结尾留一个向下一章敞开的钩子。"
-)
 
-# Field names / author_notes fragments that MUST NOT appear in the directive.
-_CARD_LEAK_MARKERS = (
-    "frozen_fields",
-    "live_fields",
-    "author_notes",
-    "core_traits",
-    "current_status",
-    "为妹妹复仇",  # author_notes.motivation fragment
-    "童年纵火",  # author_notes.secret fragment
-)
-
-
-class _DirectiveLLM(MockLLMClient):
-    """Expander LLM that returns a full structured prompt + clean directive."""
+class _AlertingLLM(MockLLMClient):
+    """Expander LLM that returns a full structured prompt + continuity alerts."""
 
     def complete_json(self, *, system: str, user: str, schema: dict, **kwargs):
         base = super().complete_json(system=system, user=user, schema=schema, **kwargs)
-        base["chapter_directive"] = _CLEAN_DIRECTIVE
+        base["continuity_alerts"] = [
+            "本章说林夕第一次见到黑刀，但第 2 章的梗概里两人已经交过手。",
+            "world_setting 里雨城没有海，本章却写主角去了海边——与世界观冲突。",
+        ]
         return base
 
 
-def test_expander_emits_chapter_directive_within_length_band():
-    result = PromptExpanderAgent(_DirectiveLLM()).expand(
+def test_expander_emits_continuity_alerts_as_string_list():
+    """The Expander's continuity/contradiction notes land in
+    ``continuity_alerts`` — a plain list of one-sentence strings, distinct
+    from every other structured field."""
+    result = PromptExpanderAgent(_AlertingLLM()).expand(
         {"all_characters": [{"id": "c1", "name": "林夕", "role": "主角"}]}
     )
-    directive = result["chapter_directive"]
-    assert directive is not None
-    assert CHAPTER_DIRECTIVE_MIN_CHARS <= len(directive) <= CHAPTER_DIRECTIVE_MAX_CHARS
+    alerts = result["continuity_alerts"]
+    assert alerts == [
+        "本章说林夕第一次见到黑刀，但第 2 章的梗概里两人已经交过手。",
+        "world_setting 里雨城没有海，本章却写主角去了海边——与世界观冲突。",
+    ]
 
 
-def test_expander_directive_does_not_leak_character_card_content():
-    """P1 红线: chapter_directive is steering, never copied card / author_notes."""
-    result = PromptExpanderAgent(_DirectiveLLM()).expand(
+def test_expander_continuity_alerts_defensively_drop_non_string_and_blank_items():
+    """Same server-side defensive shape as ``focus_traits`` — a model that
+    over-delivers junk into the list must not blow up the contract."""
+
+    class _JunkAlertLLM(MockLLMClient):
+        def complete_json(self, *, system: str, user: str, schema: dict, **kwargs):
+            base = super().complete_json(system=system, user=user, schema=schema, **kwargs)
+            base["continuity_alerts"] = ["真实提醒。", "   ", 42, {"not": "a string"}, ""]
+            return base
+
+    result = PromptExpanderAgent(_JunkAlertLLM()).expand(
         {"all_characters": [{"id": "c1", "name": "林夕", "role": "主角"}]}
     )
-    directive = result["chapter_directive"]
-    for marker in _CARD_LEAK_MARKERS:
-        assert marker not in directive, f"directive leaked card marker: {marker!r}"
+    assert result["continuity_alerts"] == ["真实提醒。"]
 
 
-def test_expander_schema_advertises_chapter_directive_with_no_leak_guard():
-    """The JSON schema must offer the slot AND tell the model not to copy card
-    content into it (double guard alongside the persona [边界] 段)."""
+def test_expander_continuity_alerts_empty_when_no_conflict():
+    """No conflict found (the common case, and always true on chapter 1 with
+    no prior memory) → an empty list, never a fabricated alert."""
+    result = PromptExpanderAgent(MockLLMClient()).expand(
+        {"all_characters": [{"id": "c1", "name": "林夕", "role": "主角"}]}
+    )
+    assert result.get("continuity_alerts") == []
+
+
+def test_expander_continuity_alerts_persist_through_the_expand_endpoint(client, auth_headers):
+    """继续性提醒落库: the alerts round-trip through the DB via the real
+    ``/expand`` endpoint (not just the in-process agent call) — proving
+    they're actually persisted into ``chapter.structured_prompt``, not just
+    an in-memory agent return value."""
+    from app.llm.base import get_expander_llm_client
+    from app.main import app
+
+    book = client.post(
+        "/api/v1/books", headers=auth_headers, json={"title": "长夜", "cover_color": "#111111"}
+    ).json()
+    client.post(
+        f"/api/v1/books/{book['id']}/characters",
+        headers=auth_headers,
+        json={"name": "林夕", "role": "主角", "frozen_fields": {}, "live_fields": {}},
+    )
+    chapter = client.post(
+        f"/api/v1/books/{book['id']}/chapters",
+        headers=auth_headers,
+        json={"user_prompt": "林夕在雨城调查一桩失踪案。"},
+    ).json()
+
+    app.dependency_overrides[get_expander_llm_client] = lambda: _AlertingLLM()
+    try:
+        resp = client.post(f"/api/v1/chapters/{chapter['id']}/expand", headers=auth_headers)
+    finally:
+        app.dependency_overrides[get_expander_llm_client] = lambda: MockLLMClient()
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["structured_prompt"]["continuity_alerts"] == [
+        "本章说林夕第一次见到黑刀，但第 2 章的梗概里两人已经交过手。",
+        "world_setting 里雨城没有海，本章却写主角去了海边——与世界观冲突。",
+    ]
+
+    # Re-fetch confirms the DB row itself carries it, not just the response.
+    refetched = client.get(f"/api/v1/chapters/{chapter['id']}", headers=auth_headers).json()
+    assert refetched["structured_prompt"]["continuity_alerts"] == [
+        "本章说林夕第一次见到黑刀，但第 2 章的梗概里两人已经交过手。",
+        "world_setting 里雨城没有海，本章却写主角去了海边——与世界观冲突。",
+    ]
+
+
+def test_expander_operational_rules_describe_continuity_alerts_as_author_facing():
+    """P1 决议 #1: the rules must teach the model this is a note FOR THE
+    AUTHOR (never a Writer input, never a "fix"), and the deleted
+    ``chapter_directive``/200-300-字 concept must not survive as dead text."""
+    rules = PromptExpanderAgent.OPERATIONAL_RULES
+    assert "continuity_alerts" in rules
+    assert "chapter_directive" not in rules
+    # The boundary wording must survive a future "small tweak".
+    assert "作者" in rules
+    assert "author_notes" in rules
+
+
+def test_expander_schema_advertises_continuity_alerts_and_no_directive():
+    """The JSON schema must offer the ``continuity_alerts`` slot and no
+    longer offer ``chapter_directive`` at all."""
     from app.agents.prompt_expander import _expander_json_schema
 
     schema = _expander_json_schema()
-    directive = schema["properties"]["chapter_directive"]
-    assert "string" in directive["type"]
-    desc = directive["description"].lower()
-    assert "steering" in desc
-    assert "never copy" in desc
+    alerts = schema["properties"]["continuity_alerts"]
+    assert alerts["type"] == "array"
+    assert alerts["items"] == {"type": "string"}
+    assert "chapter_directive" not in schema["properties"]
 
 
-def test_expander_operational_rules_forbid_copying_cards_into_directive():
-    rules = PromptExpanderAgent.OPERATIONAL_RULES
-    assert "chapter_directive" in rules
-    assert "200" in rules and "300" in rules
-    # The boundary wording must survive a future "small tweak".
-    assert "绝不" in rules
-    assert "author_notes" in rules
+def test_expander_preserves_authors_extra_notes_when_llm_output_leaves_it_blank(db_session):
+    """P1 决议 #1: re-expand 不覆盖作者已填 extra_notes — when this call's LLM
+    output leaves ``extra_notes`` empty, ``PromptExpanderAgent.expand`` falls
+    back to whatever ``build_expander_context`` surfaced as
+    ``existing_extra_notes`` (the value BEFORE this expand call)."""
+
+    class _BlankExtraNotesLLM(MockLLMClient):
+        def complete_json(self, *, system: str, user: str, schema: dict, **kwargs):
+            base = super().complete_json(system=system, user=user, schema=schema, **kwargs)
+            base["extra_notes"] = ""  # model leaves the author channel untouched
+            return base
+
+    result = PromptExpanderAgent(_BlankExtraNotesLLM()).expand(
+        {
+            "all_characters": [{"id": "c1", "name": "林夕", "role": "主角"}],
+            "existing_extra_notes": "作者手填：这章要埋一个后面才揭晓的伏笔。",
+        }
+    )
+    assert result["extra_notes"] == "作者手填：这章要埋一个后面才揭晓的伏笔。"
+
+
+def test_expander_authors_extra_notes_wins_even_when_llm_also_fills_it(db_session):
+    """审后修复 🟡2 (archive/REVIEW_REPORT_v1.4.0.md): the original guard only
+    fired when THIS call's LLM output left extra_notes blank — an author-filled
+    note could still be clobbered by a model that (against OPERATIONAL_RULES)
+    ALSO filled the field with its own text. extra_notes is a pure author-owned
+    channel (P1 决议 #1): once the author has written something, it wins
+    UNCONDITIONALLY, even when the model's own output is non-empty."""
+
+    class _AlsoFillsExtraNotesLLM(MockLLMClient):
+        def complete_json(self, *, system: str, user: str, schema: dict, **kwargs):
+            base = super().complete_json(system=system, user=user, schema=schema, **kwargs)
+            base["extra_notes"] = "模型不听话自己编的补充说明。"
+            return base
+
+    result = PromptExpanderAgent(_AlsoFillsExtraNotesLLM()).expand(
+        {
+            "all_characters": [{"id": "c1", "name": "林夕", "role": "主角"}],
+            "existing_extra_notes": "作者手填：这章要埋一个后面才揭晓的伏笔。",
+        }
+    )
+    assert result["extra_notes"] == "作者手填：这章要埋一个后面才揭晓的伏笔。"
+    assert "模型不听话自己编的补充说明。" not in result["extra_notes"]
+
+
+def test_expander_pops_dead_chapter_directive_key_before_persisting(db_session):
+    """审后修复 🔵 (archive/REVIEW_REPORT_v1.4.0.md): ``StructuredPrompt`` uses
+    ``extra="allow"``, so a model that ignores OPERATIONAL_RULES could still
+    smuggle a dead ``chapter_directive`` key back into a NEW chapter's
+    structured_prompt. ``expand()`` must defensively pop it before returning
+    (i.e. before the router persists the result) — the dead key must never be
+    able to resurrect itself in freshly-written data, even though old rows
+    that already have it are left alone (extra="allow" tolerates those)."""
+
+    class _ResurrectsDirectiveLLM(MockLLMClient):
+        def complete_json(self, *, system: str, user: str, schema: dict, **kwargs):
+            base = super().complete_json(system=system, user=user, schema=schema, **kwargs)
+            base["chapter_directive"] = "模型自己编的方向盘，不该活下来。"
+            return base
+
+    result = PromptExpanderAgent(_ResurrectsDirectiveLLM()).expand(
+        {"all_characters": [{"id": "c1", "name": "林夕", "role": "主角"}]}
+    )
+    assert "chapter_directive" not in result
+
+
+def test_build_expander_context_surfaces_existing_extra_notes(db_session):
+    """``build_expander_context`` reads the author's CURRENT extra_notes value
+    (before this expand() call overwrites structured_prompt) into
+    ``existing_extra_notes`` so ``expand()`` can preserve it."""
+    book = Book(title="长夜")
+    db_session.add(book)
+    db_session.flush()
+    chapter = Chapter(
+        book_id=book.id,
+        index=1,
+        user_prompt="找线索",
+        status="prompt_ready",
+        structured_prompt={"chapter_goal": "推进", "extra_notes": "作者的旧补充说明"},
+    )
+    db_session.add(chapter)
+    db_session.commit()
+
+    ctx = build_expander_context(db_session, book, chapter)
+    assert ctx["existing_extra_notes"] == "作者的旧补充说明"
 
 
 def test_expander_operational_rules_describe_three_tier_memory_input():

@@ -114,6 +114,23 @@ def test_write_rate_limit_appliesTo_characterParseEndpoint(client, auth_headers)
     assert response.headers.get("Retry-After") == "60"
 
 
+def test_write_rate_limit_appliesTo_reviseEndpoint(client, auth_headers):
+    """v1.4.0 (MM) P2 (🔵11) — POST /chapters/{id}/revise is LLM-spending and
+    must share the tight 30/minute budget. We don't care about the actual
+    per-call status (409 for a non-draft_ready chapter) — only that the 31st
+    call trips 429 first, proving it's on the write allowlist not the 600/min
+    default."""
+    chapter = _create_chapter(client, auth_headers)
+    path = f"/api/v1/chapters/{chapter['id']}/revise"
+
+    for _ in range(30):
+        client.post(path, headers=auth_headers)
+
+    response = client.post(path, headers=auth_headers)
+    assert response.status_code == 429
+    assert response.headers.get("Retry-After") == "60"
+
+
 def test_read_rate_limit_higher(client, auth_headers):
     """GET /chapters/{id} sits on the 600/minute default budget — 31
     consecutive reads must all succeed (or 404 for synthetic id, but

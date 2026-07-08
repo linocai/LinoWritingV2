@@ -180,6 +180,10 @@ struct LWBorderedButton: View {
     var foreground: Color = LWColor.secondaryText2
     var height: CGFloat = LWMetrics.primaryButtonHeight
     var fullWidth: Bool = false
+    /// v1.4.0 (MM) P4 — the "修订" button stays *visible* while a write/revise
+    /// job is running (draft_ready 态可见不隐藏) but must "置灰" (disabled +
+    /// dimmed), mirroring `LWSuccessButton`'s `enabled` shape.
+    var enabled: Bool = true
     let action: () -> Void
 
     @State private var hovered = false
@@ -204,9 +208,11 @@ struct LWBorderedButton: View {
                 RoundedRectangle(cornerRadius: 11, style: .continuous)
                     .stroke(LWColor.hex(0x282D46, opacity: 0.12), lineWidth: 0.5)
             )
+            .opacity(enabled ? 1 : 0.5)
         }
         .buttonStyle(.plain)
-        .onHover { h in hovered = h; pointer(h) }
+        .disabled(!enabled)
+        .onHover { h in hovered = h; pointer(h && enabled) }
     }
 }
 

@@ -29,6 +29,14 @@ _NARRATIVE_POV_LABELS: dict[str, str] = {
 
 
 class WriterAgent:
+    # v1.4.0 (MM) P1 — 优化师降职: v1.3.4 治好了素材污染，但作者审出了更深的
+    # **权威倒置**——Expander 的 200-300 字 ``chapter_directive`` 在质感/
+    # 笔触层二次创作，Writer 把它当最高指令而作者的 ``chapter.user_prompt``
+    # 原文反而缺席，违背"只文学化作者输入"的红线。``chapter_directive`` 整条
+    # 链路（schema 字段 + Expander 产出 + 这里的读取/渲染规则）全部删除。
+    # 作者的本章剧情叙述（``user_prompt``，本章节 Bible）现在直接是「本章
+    # 写作任务」节的主体、全流程最高权威——见 ``_render_task_block``。
+    #
     # v1.3.4 快修 (作者实测报障): 线上实测一次 Writer 输入 12.5k 字里 10.4k 字
     # (83%) 是最近三章的原文 (recent_fulltext) —— 模型把这坨原文当"待续写的
     # 素材"，续出一章跟本章任务毫不相关的 11236 字。根因是 Writer 的输入形态
@@ -41,14 +49,16 @@ class WriterAgent:
     OPERATIONAL_RULES = """
 你是一个中文小说的写作执行者。
 
-# 本章方向（本章写作任务·本章创作指令）
-user 消息「# 本章写作任务」节里的「本章创作指令」是优化师给你的「本章创作指令」
-(200–300 字)——本章的**方向盘**：本章要达成什么、张力在哪、承接什么落点、
-注意哪条还开着的伏笔。**严格按它执行**，不越权推进指令之外的剧情。
-它只给方向，**不给知识**——角色是谁、知道什么、当前状态，全在「在场角色」节
-里（另一条线，见下）；本章创作指令与角色卡是**分开的两条线**，不要把
-创作指令当角色资料。若本章没有「本章创作指令」，就退回按「本章写作任务」节
-其余字段写，不要因为缺少创作指令而停笔或编一个方向出来。
+# 本章写作任务（作者本章剧情叙述——本章节 Bible）
+user 消息「# 本章写作任务」节最前面是作者亲笔写的本章剧情完整叙述——这是
+**本章节 Bible，情节的最高权威**，全流程任何其它输入与它冲突时都以它为准。
+请严格根据本章剧情来发挥并写作：发挥空间在文笔与细节（怎么铺陈、用什么
+节奏和场景把它写活），情节骨架（发生了什么、按什么顺序发生）不能越出这段
+叙述划定的范围。跟在 Bible 后面的结构要点（本章目标/场景/视角/必须发生/
+不可发生/聚焦特质/补充说明）是对 Bible 的整理辅助，帮你确认没漏掉关键点——
+它们**不是另一份独立指令**，任何结构要点与 Bible 本身冲突时，以 Bible 为
+准。结构要点为空时，就完全按 Bible 原文发挥，不要因为缺少结构要点而停笔或
+等待更多指令。
 
 # 世界观（世界观设定）
 「# 世界观设定」节是这本书的世界观设定全文，是**硬约束**：能力体系、地理、
@@ -253,16 +263,29 @@ def _render_characters_block(context: dict[str, Any]) -> str:
 def _render_task_block(context: dict[str, Any]) -> str:
     """Render the "本章写作任务" section body (everything after the header).
 
-    Sourced from the top-level ``chapter_directive`` key plus the
-    ``structured_prompt`` blueprint fields. Returns ``""`` (section omitted
-    entirely) when every one of these is empty.
+    v1.4.0 (MM) P1 — 优化师降职: the PRIMARY content is now the author's own
+    ``user_prompt`` (top-level context key, lifted by
+    ``context_pack.build_writer_context`` from ``chapter.user_prompt``) — 本章
+    节 Bible, the highest authority in the whole pipeline. The
+    ``chapter_directive`` line is GONE entirely (schema field deleted — no
+    more Expander-authored steering standing in front of the author's own
+    words). The ``structured_prompt`` blueprint fields that follow are
+    rendered as supporting structure notes, never a replacement for the
+    Bible. ``continuity_alerts`` — the Expander's ONE remaining
+    steering-adjacent output — is intentionally NEVER read here (or anywhere
+    in this module): it's a note FOR THE AUTHOR, not a Writer input (P1
+    decision #1). Returns ``""`` (section omitted entirely) when the Bible
+    and every blueprint field are all empty.
     """
     structured_prompt = context.get("structured_prompt") or {}
     lines: list[str] = []
 
-    directive = context.get("chapter_directive")
-    if isinstance(directive, str) and directive.strip():
-        lines.append(f"本章创作指令：{directive.strip()}")
+    user_prompt = (context.get("user_prompt") or "").strip()
+    if user_prompt:
+        lines.append(
+            "作者本章剧情叙述——本章节 Bible，情节的最高权威，"
+            "任何结构要点与它冲突时以它为准：\n" + user_prompt
+        )
 
     goal = structured_prompt.get("chapter_goal")
     if isinstance(goal, str) and goal.strip():

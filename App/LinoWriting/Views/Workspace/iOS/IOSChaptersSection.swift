@@ -153,9 +153,14 @@ struct IOSChaptersSection: View {
 /// `StatusBadge` (and the handoff `statusMeta`) so the two stay in lock-step.
 struct IOSStatusChip: View {
     let status: ChapterStatus
+    /// v1.4.0 (MM) P4 — optional label swap while keeping `status`'s color
+    /// (mirrors macOS `StatusBadge.overrideLabel`; "修订中" over the
+    /// `.writing` blue during the two-pass compression sub-phase, which
+    /// server-side is still `status=="writing"`).
+    var overrideLabel: String? = nil
 
     var body: some View {
-        Text(status.label)
+        Text(overrideLabel ?? status.label)
             .font(.system(size: 10.5, weight: .semibold))
             .foregroundStyle(palette.text)
             .padding(.horizontal, 8)

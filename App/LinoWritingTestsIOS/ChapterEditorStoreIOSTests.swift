@@ -168,4 +168,51 @@ final class ChapterEditorStoreIOSTests: XCTestCase {
             "idle timer must be re-enabled once writingState leaves .streaming"
         )
     }
+
+    // MARK: - v1.4.0 (MM) P4 — revising treated as busy for the idle-timer guard
+
+    /// (🔵9) `updateStreamingSideEffects` must treat `.revising` exactly like
+    /// `.streaming` for the screen-sleep guard — a standalone `revise()`'s
+    /// (up to 300s) compression call must not let the phone sleep either.
+    func test_revise_disablesIdleTimerDuringRevising_restoresOnDone() async {
+        let mock = MockAPIClient()
+        let bus = ErrorBus()
+        let book = try! await mock.createBook(BookCreateRequest(title: "B", coverColor: nil))
+        var chapter = try! await mock.createChapter(
+            bookId: book.id,
+            ChapterCreateRequest(userPrompt: "想法", title: nil)
+        )
+        if let idx = mock.chapters.firstIndex(where: { $0.id == chapter.id }) {
+            mock.chapters[idx].status = .draftReady
+            mock.chapters[idx].draftText = "已有草稿。"
+            chapter = mock.chapters[idx]
+        }
+
+        let editor = ChapterEditorStore(api: mock, errorBus: bus)
+        await editor.load(chapterId: chapter.id)
+
+        UIApplication.shared.isIdleTimerDisabled = false
+        editor.revise()
+        // `revise()` sets writingState = .revising(...) synchronously before
+        // kicking off the SSE task — same shape as `startWriting`'s
+        // synchronous `.streaming` transition (see the test above).
+        XCTAssertTrue(
+            UIApplication.shared.isIdleTimerDisabled,
+            "idle timer must be disabled while revising, same as while streaming"
+        )
+
+        for _ in 0..<400 {
+            if editor.isRevising {
+                try? await Task.sleep(nanoseconds: 5_000_000)
+            } else {
+                break
+            }
+        }
+
+        XCTAssertEqual(editor.writingState, .done)
+        XCTAssertFalse(
+            UIApplication.shared.isIdleTimerDisabled,
+            "idle timer must be re-enabled once revising settles to done"
+        )
+    }
 }

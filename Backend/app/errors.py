@@ -79,6 +79,8 @@ CHAPTER_ACTION_CN: dict[str, str] = {
     "import": "导入正文",
     "reopen": "重新打开",
     "extract": "提取角色/时间线",
+    # v1.4.0 (MM) P2 — standalone revision endpoint.
+    "revise": "修订",
 }
 
 # §5.N — Agent role English code → Chinese label. Mirrors the
