@@ -1,7 +1,9 @@
 # Backend/deploy/ — HZ 部署三件套
 
-> 生产环境自 v0.8 起运行于 HZ 阿里云 ECS（`lw.linotsai.top`，systemd + Nginx + certbot + PostgreSQL 16，无 Docker）。
-> `/Users/linotsai/hz_info.md` 是 HZ 云端**单一事实文件**，任何 HZ 改动后必须同步更新（PROJECT_PLAN §0.2.1 铁律）。
+> **🗄️ ARCHIVED (2026-07-11) — 生产环境已下线。** 本目录三件套仅为历史发版留档，**请勿再对 HZ 执行 `deploy-hz.sh`**：`lw.linotsai.top` 的 systemd / Nginx / 证书 / PostgreSQL 库+role / `/opt/linowriting` / 系统用户均已于 2026-07-11 彻底删除，目标已不存在。退役前 DB 已 `pg_dump` 归档至 `~/Lino/Archive/linowriting_decommission_20260711/`。云端现状见 `~/Lino/hz_info.md`。
+>
+> 生产环境自 v0.8 起曾运行于 HZ 阿里云 ECS（`lw.linotsai.top`，systemd + Nginx + certbot + PostgreSQL 16，无 Docker）。
+> `~/Lino/hz_info.md` 是 HZ 云端**单一事实文件**，任何 HZ 改动后必须同步更新（PROJECT_PLAN §0.2.1 铁律）。
 
 ## 三件套
 

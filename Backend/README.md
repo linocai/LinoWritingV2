@@ -1,5 +1,7 @@
 # Lino Writing v2 Backend
 
+> **🗄️ ARCHIVED (2026-07-11) — 项目已退役。** 后端不再部署；HZ 生产环境（`lw.linotsai.top`）已于 2026-07-11 整体拆除（systemd / Nginx / 证书 / PostgreSQL 库+role / `/opt/linowriting` / 系统用户全删）。退役前 DB 已 `pg_dump` 归档至 `~/Lino/Archive/linowriting_decommission_20260711/`。以下为历史活跃期文档，仅供本地参考运行。
+
 FastAPI backend for Lino Writing v2. Project authority document: `../PROJECT_PLAN.md`.
 
 ## Local Setup (SQLite, fastest)

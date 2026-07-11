@@ -1,5 +1,7 @@
 # LinoWriting — 项目经验与约束
 
+> **🗄️ 项目已退役 / ARCHIVED（2026-07-11）**：已停止使用，代码仅作参考保留。HZ 云端资产（systemd / Nginx / 证书 / PG 库+role / `/opt/linowriting` / 系统用户）已全部拆除，`lw.linotsai.top` 后端下线；退役前 DB 已 `pg_dump` 归档至 `~/Lino/Archive/linowriting_decommission_20260711/`。详见 `~/Lino/hz_info.md`。以下经验仅供参考。
+
 > 从全局 CLAUDE.md 抽出的项目级经验。放在 LinoWriting 项目根目录，重命名为 `CLAUDE.md`。
 
 ## macOS Developer ID 分发 + keychain entitlement 启动炸弹
